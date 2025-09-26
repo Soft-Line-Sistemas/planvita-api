@@ -7,3 +7,106 @@ datasource db {
   provider = "sqlserver"
   url      = env("DATABASE_URL")
 }
+
+model Titular {
+  id              Int              @id @default(autoincrement())
+  nome            String
+  email           String           @unique
+  telefone        String?
+  dataNascimento  DateTime
+  statusPlano     String
+  dataContratacao DateTime
+  dependentes     Dependente[]
+  corresponsaveis Corresponsavel[]
+  pagamentos      Pagamento[]
+  vendedor        Vendedor?        @relation(fields: [vendedorId], references: [id])
+  vendedorId      Int?
+
+  comissoes       Comissao[] @relation("TitularComissoes")
+  documentos      Documento[]
+}
+
+model Dependente {
+  id             Int      @id @default(autoincrement())
+  titular        Titular  @relation(fields: [titularId], references: [id])
+  titularId      Int
+  nome           String
+  dataNascimento DateTime
+  tipoDependente String
+}
+
+model Corresponsavel {
+  id             Int      @id @default(autoincrement())
+  titular        Titular  @relation(fields: [titularId], references: [id])
+  titularId      Int
+  nome           String
+  email          String
+  telefone       String?
+  relacionamento String
+}
+
+model Plano {
+  id          Int             @id @default(autoincrement())
+  nome        String
+  valorBase   Float
+  faixaEtaria String
+  status      String
+  beneficios  PlanoBeneficio[]
+}
+
+model Beneficio {
+  id        Int               @id @default(autoincrement())
+  nome      String
+  tipo      String
+  descricao String
+  validade  Int
+  planos    PlanoBeneficio[]
+}
+
+model PlanoBeneficio {
+  plano       Plano     @relation(fields: [planoId], references: [id])
+  planoId     Int
+  beneficio   Beneficio @relation(fields: [beneficioId], references: [id])
+  beneficioId Int
+
+  @@id([planoId, beneficioId])
+}
+
+model Pagamento {
+  id             Int      @id @default(autoincrement())
+  titular        Titular  @relation(fields: [titularId], references: [id])
+  titularId      Int
+  valor          Float
+  dataPagamento  DateTime
+  status         String
+  metodoPagamento String
+}
+
+model Vendedor {
+  id         Int        @id @default(autoincrement())
+  nome       String
+  email      String
+  titulares  Titular[]
+
+  comissoes  Comissao[] @relation("VendedorComissoes")
+}
+
+model Comissao {
+  id             Int       @id @default(autoincrement())
+  vendedor       Vendedor  @relation("VendedorComissoes", fields: [vendedorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vendedorId     Int
+  titular        Titular   @relation("TitularComissoes", fields: [titularId], references: [id])
+  titularId      Int
+  valor          Float
+  dataGeracao    DateTime
+  statusPagamento String
+}
+
+model Documento {
+  id            Int      @id @default(autoincrement())
+  titular       Titular  @relation(fields: [titularId], references: [id])
+  titularId     Int
+  tipoDocumento String
+  arquivoUrl    String
+  dataUpload    DateTime
+}

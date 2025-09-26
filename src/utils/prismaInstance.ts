@@ -1,4 +1,4 @@
-import { PrismaClient } from "../../generated/prisma/client";
+import { PrismaClient } from '../../generated/prisma/client';
 
 class PrismaInstance {
   private static _instance: PrismaClient;
@@ -8,7 +8,7 @@ class PrismaInstance {
   public static get instance(): PrismaClient {
     if (!PrismaInstance._instance) {
       PrismaInstance._instance = new PrismaClient({
-        log: ["error"],
+        log: ['query', 'error', 'info'],
       });
     }
     return PrismaInstance._instance;

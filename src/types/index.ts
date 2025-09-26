@@ -6,6 +6,7 @@ export interface ServerConfig {
   port: number;
   nodeEnv: string;
   apiVersion: string;
+  allowedOrigins: string[];
 }
 
 export interface JwtConfig {
@@ -25,10 +26,10 @@ export interface AppConfig {
 }
 
 export interface HealthCheckResult {
-  status: "healthy" | "unhealthy";
+  status: 'healthy' | 'unhealthy';
   timestamp: Date;
   services: {
-    database: "up" | "down";
+    database: 'up' | 'down';
   };
   version: string;
   uptime: number;
