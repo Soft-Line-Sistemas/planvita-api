@@ -28,6 +28,39 @@ export class BaseError extends Error implements AppError {
   }
 }
 
+interface ErrorResponseMeta {
+  requestId: string;
+  provider?: string;
+  [key: string]: any;
+}
+
+export interface ErrorResponse {
+  success: false;
+  error: {
+    code: string;
+    message: string;
+    details?: any;
+    meta?: ErrorResponseMeta;
+  };
+}
+
+export function createErrorResponse(
+  code: string,
+  message: string,
+  details?: any,
+  meta?: ErrorResponseMeta
+): ErrorResponse {
+  return {
+    success: false,
+    error: {
+      code,
+      message,
+      ...(details && { details }),
+      ...(meta && { meta })
+    }
+  };
+}
+
 // Validation Errors (400)
 export class ValidationError extends BaseError {
   constructor(message: string, details?: any) {
@@ -101,6 +134,12 @@ export function isNotFoundError(error: any): error is NotFoundError {
     error instanceof NotFoundError ||
     (isAppError(error) && error.statusCode === 404)
   );
+}
+
+export class InvalidApiKeyError extends BaseError {
+  constructor(message: string = 'Invalid API key') {
+    super(message, 'AUTH_001', 401);
+  }
 }
 
 // Error codes mapping

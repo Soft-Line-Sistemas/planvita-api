@@ -6,10 +6,18 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import cors from 'cors';
 import { tenantMiddleware, TenantRequest } from './middlewares/tenant';
+import rateLimitMiddleware from "./middlewares/rateLimit";
+import { notFoundHandler, errorHandler } from './middlewares/error';
+import { addRequestId, logRequest } from "./middlewares/auth";
 
 dotenv.config({ quiet: true });
 
 const app = express();
+app.set("trust proxy", 1);
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -45,16 +53,24 @@ app.use(
   }),
 );
 
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
 
 const API_VERSION = config.server.apiVersion;
 
 // app.use(morgan("combined"));
 
+app.use(addRequestId);
+app.use(logRequest);
+
+// Rate limiting
+app.use("/api", rateLimitMiddleware.general);
+app.use("/health", rateLimitMiddleware.healthCheck);
+
 app.use(tenantMiddleware);
 app.use('/health', healthRoutes);
-
 // app.use(`/api/${API_VERSION}/auth`, authRoutes);
+
+// Handler error
+app.use(notFoundHandler);
+app.use(errorHandler);
 
 export default app;

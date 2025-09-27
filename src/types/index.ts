@@ -1,3 +1,29 @@
+import { IncomingHttpHeaders } from 'http';
+
+type ExpressRequestWithHeaders = Request & { headers: IncomingHttpHeaders };
+
+export interface TenantContext {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  isActive: boolean;
+  settings: Record<string, any>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AuthenticatedRequest extends ExpressRequestWithHeaders {
+  ip?: string;
+  tenant?: TenantContext;
+  apiKey?: {
+    id: string;
+    name: string;
+    permissions: Record<string, any>;
+  };
+  requestId: string;
+}
+
 export interface DatabaseConfig {
   url: string;
 }
@@ -59,4 +85,10 @@ export interface ApiResponse<T = any> {
     tenantId?: string;
     provider?: string;
   };
+}
+
+export interface RateLimitInfo {
+  limit: number;
+  remaining: number;
+  reset: Date;
 }

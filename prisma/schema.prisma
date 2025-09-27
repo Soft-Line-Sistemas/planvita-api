@@ -8,6 +8,31 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model ApiKey {
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  name        String
+  keyHash     String   @unique @map("key_hash")
+  isActive    Boolean  @default(true) @map("is_active")
+  permissions String   @default("{}")
+  
+  // Rate limiting
+  rateLimit   Int      @default(100) @map("rate_limit")
+  windowMs    Int      @default(900000) @map("window_ms")
+  
+  // Relacionamentos
+  
+  // Timestamps
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  lastUsedAt  DateTime? @map("last_used_at")
+  
+  // Índices
+  @@index([isActive])
+  @@map("api_keys")
+}
+
+
 model Titular {
   id              Int              @id @default(autoincrement())
   nome            String
