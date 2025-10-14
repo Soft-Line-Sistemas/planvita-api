@@ -12,6 +12,9 @@ import {
   DatabaseError,
   ConfigurationError
 } from '../utils/errors';
+import config from '../config';
+
+const API_VERSION = config.server.apiVersionStatic;
 
 const logger = new Logger({ service: 'error-middleware' });
 
@@ -269,7 +272,8 @@ export function notFoundHandler(
         method: req.method,
         url: req.url,
         availableEndpoints: [
-          'GET /health'
+          `GET /health`
+          // `GET /api/${API_VERSION}/`,
         ]
       },
       { requestId }

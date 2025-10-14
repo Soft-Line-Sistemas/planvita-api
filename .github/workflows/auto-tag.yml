@@ -1,0 +1,49 @@
+name: Criar Tag Automática Após Merge PR
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configurar Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Buscar tags
+        run: git fetch --tags
+
+      - name: Obter última tag
+        id: get_tag
+        run: |
+          LAST_TAG=$(git tag --sort=-v:refname | head -n 1)
+          echo "Última tag encontrada: $LAST_TAG"
+          if [ -z "$LAST_TAG" ]; then
+            echo "tag=1.0.0" >> $GITHUB_OUTPUT
+          else
+            IFS='.' read -r MAJOR MINOR PATCH <<< "${LAST_TAG#v}"
+            PATCH=$((PATCH + 1))
+            echo "tag=v$MAJOR.$MINOR.$PATCH" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Criar nova tag
+        run: |
+          git tag ${{ steps.get_tag.outputs.tag }}
+          git push origin ${{ steps.get_tag.outputs.tag }}
+          

@@ -1,29 +1,34 @@
 import dotenv from 'dotenv';
 import { AppConfig } from '../types';
+import type { StringValue } from 'ms';
 
 dotenv.config();
 
 export const config: AppConfig = {
   database: {
-    url: getEnvVar('DATABASE_URL'),
+    url: getEnvVarOptional('DATABASE_URL'),
   },
 
   server: {
-    apiVersion: getEnvVar('API_VERSION', 'v1'),
-    port: getEnvVarAsNumber('PORT', 3000),
+    apiVersion: getEnvVar('API_VERSION', '1.0.0'),
+    apiVersionStatic: getEnvVar('API_VERSION_STATIC', 'v1'),
+    port: getEnvVarAsNumber('PORT', 61348),
     nodeEnv: getEnvVar('NODE_ENV', 'development'),
     allowedOrigins: getEnvVarAsArray('ALLOWED_ORIGINS'),
   },
 
   jwt: {
-    secret: getEnvVar('JWT_SECRET'),
-    expiresIn: getEnvVar('JWT_EXPIRES_IN', '24h'),
+    secret: getEnvVar(
+      'JWT_SECRET',
+      '5b75be29b1aafd1b19d85c99f1ecf824faccd406083800ac4481f743c037860a',
+    ),
+    expiresIn: getEnvVar('JWT_EXPIRES_IN', '1d') as StringValue | number,
   },
 
   rateLimitWindowMs: getEnvVarAsNumber('RATE_LIMIT_WINDOW_MS', 900000), // 15 minutes
   rateLimitMaxRequests: getEnvVarAsNumber('RATE_LIMIT_MAX_REQUESTS', 100),
   logLevel: getEnvVar('LOG_LEVEL', 'info'),
-  logFile: getEnvVar('LOG_FILE', 'logs/vitalsoft-api.log'),
+  logFile: getEnvVar('LOG_FILE', 'logs/planvita-api.log'),
 
   encryptionKey: getEnvVar('ENCRYPTION_KEY'),
 };
@@ -58,9 +63,9 @@ function getEnvVarAsArray(name: string, separator = ','): string[] {
 export function validateConfig(): void {
   const errors: string[] = [];
 
-  if (!config.database.url) {
-    errors.push('DATABASE_URL is required');
-  }
+  // if (!config.database.url) {
+  //   errors.push('DATABASE_URL is required');
+  // }
 
   if (!config.jwt.secret) {
     errors.push('JWT_SECRET is required');

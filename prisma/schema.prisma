@@ -8,6 +8,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ----------------- API KEYS -----------------
 model ApiKey {
   id          String   @id @default(uuid())
   tenantId    String   @map("tenant_id")
@@ -16,23 +17,89 @@ model ApiKey {
   isActive    Boolean  @default(true) @map("is_active")
   permissions String   @default("{}")
   
-  // Rate limiting
   rateLimit   Int      @default(100) @map("rate_limit")
   windowMs    Int      @default(900000) @map("window_ms")
-  
-  // Relacionamentos
-  
-  // Timestamps
+    
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
   lastUsedAt  DateTime? @map("last_used_at")
   
-  // Índices
   @@index([isActive])
   @@map("api_keys")
 }
 
+// ----------------- ROLES E PERMISSIONS -----------------
+model Role {
+  id          Int          @id @default(autoincrement())
+  name        String       @unique
+  description String?
 
+  permissions Permission[] @relation("RolePermissions")
+  users       UserRole[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  RolePermission RolePermission[]
+}
+
+model Permission {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  description String?
+  roles       Role[]    @relation("RolePermissions")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  RolePermission RolePermission[]
+}
+
+// Tabela de ligação Usuário <-> Role
+model UserRole {
+  user   User @relation(fields: [userId], references: [id])
+  userId Int
+  role   Role @relation(fields: [roleId], references: [id])
+  roleId Int
+
+  @@id([userId, roleId])
+}
+
+// Tabela de ligação Role <-> Permission
+model RolePermission {
+  role         Role       @relation(fields: [roleId], references: [id])
+  roleId       Int
+  permission   Permission @relation(fields: [permissionId], references: [id])
+  permissionId Int
+
+  @@id([roleId, permissionId])
+}
+
+// ----------------- USUÁRIOS -----------------
+model User {
+  id        Int       @id @default(autoincrement())
+  nome      String
+  email     String    @unique
+  senhaHash String
+  ativo     Boolean   @default(true)
+
+  roles       UserRole[]
+  consultor   Consultor? @relation("UserConsultor")
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Consultor {
+  id     Int    @id @default(autoincrement())
+  nome   String
+
+  user   User?  @relation("UserConsultor", fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  userId Int?   @unique
+
+  titulares  Titular[]
+  comissoes  Comissao[] @relation("ConsultorComissoes")
+}
+
+// ----------------- TITULAR -----------------
 model Titular {
   id              Int              @id @default(autoincrement())
   nome            String
@@ -41,16 +108,18 @@ model Titular {
   dataNascimento  DateTime
   statusPlano     String
   dataContratacao DateTime
+
   dependentes     Dependente[]
   corresponsaveis Corresponsavel[]
   pagamentos      Pagamento[]
-  vendedor        Vendedor?        @relation(fields: [vendedorId], references: [id])
-  vendedorId      Int?
-
-  comissoes       Comissao[] @relation("TitularComissoes")
   documentos      Documento[]
+  comissoes       Comissao[] @relation("TitularComissoes")
+
+  vendedor        Consultor? @relation(fields: [vendedorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vendedorId      Int?
 }
 
+// ----------------- DEPENDENTES -----------------
 model Dependente {
   id             Int      @id @default(autoincrement())
   titular        Titular  @relation(fields: [titularId], references: [id])
@@ -60,6 +129,7 @@ model Dependente {
   tipoDependente String
 }
 
+// ----------------- CORRESPONSÁVEIS -----------------
 model Corresponsavel {
   id             Int      @id @default(autoincrement())
   titular        Titular  @relation(fields: [titularId], references: [id])
@@ -70,21 +140,47 @@ model Corresponsavel {
   relacionamento String
 }
 
+// ----------------- PLANOS -----------------
 model Plano {
-  id          Int             @id @default(autoincrement())
-  nome        String
-  valorBase   Float
-  faixaEtaria String
-  status      String
-  beneficios  PlanoBeneficio[]
+  id               Int             @id @default(autoincrement())
+  nome             String
+  valorBase        Float
+  idadeMaxima      Int
+  coberturaMaxima  Int
+  carenciaDias     Int
+  vigenciaMeses    Int
+  status           String
+
+  beneficiarios       String
+  beneficios          PlanoBeneficio[]
+  tiposBeneficiarios  PlanoBeneficiarioTipo[]
 }
 
+// ----------------- TIPOS DE BENEFICIÁRIO -----------------
+model BeneficiarioTipo {
+  id       Int     @id @default(autoincrement())
+  nome     String
+  idadeMax Int?
+  planos   PlanoBeneficiarioTipo[]
+}
+
+model PlanoBeneficiarioTipo {
+  plano            Plano            @relation(fields: [planoId], references: [id])
+  planoId          Int
+  beneficiarioTipo BeneficiarioTipo @relation(fields: [beneficiarioTipoId], references: [id])
+  beneficiarioTipoId Int
+
+  @@id([planoId, beneficiarioTipoId])
+}
+
+// ----------------- BENEFÍCIOS -----------------
 model Beneficio {
   id        Int               @id @default(autoincrement())
   nome      String
   tipo      String
   descricao String
-  validade  Int
+  valor     Float?
+  validade  Int?
   planos    PlanoBeneficio[]
 }
 
@@ -97,36 +193,30 @@ model PlanoBeneficio {
   @@id([planoId, beneficioId])
 }
 
+// ----------------- PAGAMENTOS -----------------
 model Pagamento {
-  id             Int      @id @default(autoincrement())
-  titular        Titular  @relation(fields: [titularId], references: [id])
-  titularId      Int
-  valor          Float
-  dataPagamento  DateTime
-  status         String
+  id              Int      @id @default(autoincrement())
+  titular         Titular  @relation(fields: [titularId], references: [id])
+  titularId       Int
+  valor           Float
+  dataPagamento   DateTime
+  status          String
   metodoPagamento String
 }
 
-model Vendedor {
-  id         Int        @id @default(autoincrement())
-  nome       String
-  email      String
-  titulares  Titular[]
-
-  comissoes  Comissao[] @relation("VendedorComissoes")
-}
-
+// ----------------- COMISSÕES -----------------
 model Comissao {
-  id             Int       @id @default(autoincrement())
-  vendedor       Vendedor  @relation("VendedorComissoes", fields: [vendedorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  vendedorId     Int
-  titular        Titular   @relation("TitularComissoes", fields: [titularId], references: [id])
-  titularId      Int
-  valor          Float
-  dataGeracao    DateTime
+  id              Int       @id @default(autoincrement())
+  vendedor        Consultor  @relation("ConsultorComissoes", fields: [vendedorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  vendedorId      Int
+  titular         Titular   @relation("TitularComissoes", fields: [titularId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  titularId       Int
+  valor           Float
+  dataGeracao     DateTime
   statusPagamento String
 }
 
+// ----------------- DOCUMENTOS -----------------
 model Documento {
   id            Int      @id @default(autoincrement())
   titular       Titular  @relation(fields: [titularId], references: [id])
@@ -134,4 +224,35 @@ model Documento {
   tipoDocumento String
   arquivoUrl    String
   dataUpload    DateTime
+}
+
+// ----------------- LAYOUT CONFIG -----------------
+model LayoutConfig {
+  id                Int       @id @default(autoincrement())
+  tenantId          String
+  nomeTema          String    @default("Padrão")
+
+  corPrimaria        String    @default("#007bff")
+  corSecundaria      String    @default("#6c757d")
+  corFundo           String    @default("#ffffff")
+  corTexto           String    @default("#000000")
+  corBotaoPrimario   String    @default("#007bff")
+  corBotaoSecundario String    @default("#6c757d")
+  corLink            String    @default("#007bff")
+
+  fontePrimaria      String    @default("Arial, sans-serif")
+  fonteSecundaria    String?
+  tamanhoFonteBase   Int       @default(14)
+  tamanhoFonteTitulo Int       @default(18)
+
+  logoUrl            String?
+  faviconUrl         String?
+  backgroundUrl      String?
+
+  bordaRadius        Int?      @default(4)
+  sombraPadrao       String?   @default("0px 2px 4px rgba(0,0,0,0.1)")
+
+  ativo              Boolean   @default(true)
+  criadoEm           DateTime  @default(now())
+  atualizadoEm       DateTime  @updatedAt
 }

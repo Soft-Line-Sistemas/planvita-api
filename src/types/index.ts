@@ -1,6 +1,8 @@
 import { IncomingHttpHeaders } from 'http';
-
-type ExpressRequestWithHeaders = Request & { headers: IncomingHttpHeaders };
+import { ParsedQs } from 'qs';
+import { Request as CoreRequest } from 'express-serve-static-core';
+import * as jwt from 'jsonwebtoken';
+import type { StringValue } from 'ms';
 
 export interface TenantContext {
   id: string;
@@ -13,8 +15,12 @@ export interface TenantContext {
   updatedAt: Date;
 }
 
-export interface AuthenticatedRequest extends ExpressRequestWithHeaders {
-  ip?: string;
+export interface AuthenticatedRequest<
+  TBody = any,
+  TQuery = ParsedQs,
+  TParams extends Record<string, string> = Record<string, string>,
+> extends CoreRequest<TParams, any, TBody, TQuery> {
+  headers: IncomingHttpHeaders;
   tenant?: TenantContext;
   apiKey?: {
     id: string;
@@ -32,16 +38,17 @@ export interface ServerConfig {
   port: number;
   nodeEnv: string;
   apiVersion: string;
+  apiVersionStatic: string;
   allowedOrigins: string[];
 }
 
 export interface JwtConfig {
-  secret: string;
-  expiresIn: string;
+  secret: jwt.Secret;
+  expiresIn: StringValue | number;
 }
 
 export interface AppConfig {
-  database: DatabaseConfig;
+  database?: DatabaseConfig;
   server: ServerConfig;
   jwt: JwtConfig;
   rateLimitWindowMs: number;

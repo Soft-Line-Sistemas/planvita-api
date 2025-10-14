@@ -1,6 +1,6 @@
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { Request, Response } from 'express';
-import { prisma } from '../models/database';
+import { prisma} from '../utils/prisma';
 import { AuthenticatedRequest, RateLimitInfo } from '../types';
 import { Logger } from '../utils/logger';
 import { config } from '../config';

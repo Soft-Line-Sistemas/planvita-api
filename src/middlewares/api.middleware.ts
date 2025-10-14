@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { prisma } from '../models/database';
+import { prisma} from '../utils/prisma';
 import { AuthenticatedRequest } from '../types';
 import { Logger } from '../utils/logger';
 import { 

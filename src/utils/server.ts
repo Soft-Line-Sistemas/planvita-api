@@ -1,4 +1,4 @@
-import { databaseManager } from '../models/database';
+import { databaseManager} from '../utils/prisma';
 import { Logger } from './logger';
 import config from '../config';
 

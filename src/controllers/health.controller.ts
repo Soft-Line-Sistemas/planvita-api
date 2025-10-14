@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { databaseManager } from "../models/database";
+import { databaseManager} from '../utils/prisma';
 import { HealthCheckResult } from "../types";
 import { Logger } from "../utils/logger";
 import { createSuccessResponse } from "../utils/helpers";

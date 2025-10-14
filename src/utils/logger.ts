@@ -44,7 +44,7 @@ const logger = winston.createLogger({
   level: config.logLevel,
   format: customFormat,
   defaultMeta: {
-    service: "vitalsoft-api",
+    service: "planvita-api",
     version: config.server.apiVersion,
   },
   transports: [
