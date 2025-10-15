@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import Logger from '../utils/logger';
 import { PrismaClient } from '../../generated/prisma/client';
+import { getPrismaForTenant } from '../utils/prisma';
+import { AuthRequest } from '../types/auth';
 
 export interface TenantRequest extends Request {
   tenantId?: string;
@@ -47,12 +49,49 @@ export class AuthController {
     }
   }
 
-  async check(req: TenantRequest, res: Response) {
-    if (!req.tenantId) {
-      return res.status(401).json({ message: 'Não autenticado' });
-    }
+  async check(req: AuthRequest, res: Response) {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ message: 'Não autenticado' });
+      }
+      const prisma = getPrismaForTenant(req.user.tenant);
 
-    res.json({ message: 'Autenticado', user: req.tenantId });
+      const user = await prisma.user.findUnique({
+        where: { id: req.user.id },
+        include: {
+          roles: {
+            include: {
+              role: {
+                include: {
+                  RolePermission: {
+                    include: { permission: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!user) return res.status(404).json({ message: 'Usuário não encontrado' });
+
+      const role = user.roles[0]?.role || null;
+      const permissions = user.roles.flatMap((r) =>
+        r.role.RolePermission.map((rp) => rp.permission.name),
+      );
+
+      res.json({
+        id: user.id,
+        nome: user.nome,
+        email: user.email,
+        role: role ? { id: role.id, name: role.name } : null,
+        permissions,
+        tenant: req.user.tenant,
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: 'Erro ao verificar autenticação' });
+    }
   }
 
   async logout(req: Request, res: Response) {
