@@ -47,6 +47,14 @@ export class AuthController {
     }
   }
 
+  async check(req: TenantRequest, res: Response) {
+    if (!req.tenantId) {
+      return res.status(401).json({ message: 'Não autenticado' });
+    }
+
+    res.json({ message: 'Autenticado', user: req.tenantId });
+  }
+
   async logout(req: Request, res: Response) {
     res.cookie('auth_token', '', { maxAge: -1 });
     res.json({ message: 'Logout realizado com sucesso' });
