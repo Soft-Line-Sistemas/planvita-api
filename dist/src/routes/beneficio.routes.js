@@ -1,0 +1,12 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const beneficio_controller_1 = require("../controllers/beneficio.controller");
+const router = (0, express_1.Router)();
+const controller = new beneficio_controller_1.BeneficioController();
+router.get('/', controller.getAll.bind(controller));
+router.get('/:id', controller.getById.bind(controller));
+router.post('/', controller.create.bind(controller));
+router.put('/:id', controller.update.bind(controller));
+router.delete('/:id', controller.delete.bind(controller));
+exports.default = router;
