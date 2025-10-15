@@ -7,15 +7,6 @@ const authController = new AuthController();
 
 router.post('/login', authController.login.bind(authController));
 router.post('/logout', authController.logout.bind(authController));
-router.get('/check', authenticate);
-
-// router.get(
-//   '/users',
-//   authenticate,
-//   authorize(['USERS_VIEW']), // exemplo de permissão pelo nome
-//   (req, res) => {
-//     res.json({ message: 'Você tem permissão para acessar!' });
-//   },
-// );
+router.get('/check', authenticate, authController.check.bind(authController));
 
 export default router;
