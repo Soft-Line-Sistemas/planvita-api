@@ -6,6 +6,7 @@
     "dev": "nodemon src/server.ts",
     "copy-prisma": "mkdir -p dist/generated/prisma && cp -r generated/prisma/* dist/generated/prisma/",
     "build": "tsc && npm run copy-prisma",
+    "type": "module",
     "start": "node dist/src/server.js",
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate",
