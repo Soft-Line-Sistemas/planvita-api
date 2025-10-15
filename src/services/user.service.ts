@@ -1,6 +1,21 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
+import bcrypt from 'bcryptjs';
 
 type UserType = Prisma.UserGetPayload<{}>;
+
+type UserTypeCreate = {
+  nome: string;
+  email: string;
+  roleId?: number;
+  password?: string; // senha em texto puro
+};
+
+type User = {
+  id: number;
+  name: string;
+  email: string;
+  roleId?: number | null;
+};
 
 type UserRoleType = Prisma.UserGetPayload<{
   include: {
@@ -60,8 +75,33 @@ export class UserService {
     });
   }
 
-  async create(data: UserType): Promise<UserType> {
-    return this.prisma.user.create({ data });
+  async create(data: UserTypeCreate): Promise<User> {
+    const plainPassword = '123456';
+    const senhaHash = await bcrypt.hash(plainPassword, 10);
+
+    const user = await this.prisma.user.create({
+      data: {
+        nome: data.nome,
+        email: data.email,
+        senhaHash,
+      },
+    });
+
+    if (data.roleId) {
+      await this.prisma.userRole.create({
+        data: {
+          userId: user.id,
+          roleId: data.roleId,
+        },
+      });
+    }
+
+    return {
+      id: user.id,
+      name: user.nome,
+      email: user.email,
+      roleId: data.roleId,
+    };
   }
 
   async update(id: number, data: Partial<UserType>): Promise<UserType> {
