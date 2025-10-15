@@ -1,10 +1,20 @@
-import prisma, { Prisma } from '../utils/prisma';
+import { Prisma, getPrismaForTenant } from '../utils/prisma';
 
 type RoleType = Prisma.RoleGetPayload<{}>;
 
 export class RoleService {
+  private prisma;
+
+  constructor(private tenantId: string) {
+    if (!tenantId) {
+      throw new Error('Tenant ID must be provided');
+    }
+
+    this.prisma = getPrismaForTenant(tenantId);
+  }
+
   async getAll() {
-    return prisma.role.findMany({
+    return this.prisma.role.findMany({
       include: {
         RolePermission: {
           select: { permissionId: true },
@@ -14,7 +24,7 @@ export class RoleService {
   }
 
   async getById(id: number) {
-    return prisma.role.findUnique({
+    return this.prisma.role.findUnique({
       where: { id },
       include: {
         RolePermission: {
@@ -25,26 +35,26 @@ export class RoleService {
   }
 
   async create(data: RoleType): Promise<RoleType> {
-    return prisma.role.create({ data });
+    return this.prisma.role.create({ data });
   }
 
   async update(id: number, data: Partial<RoleType>): Promise<RoleType> {
-    return prisma.role.update({ where: { id: Number(id) }, data });
+    return this.prisma.role.update({ where: { id: Number(id) }, data });
   }
 
   async delete(id: number): Promise<RoleType> {
-    return prisma.role.delete({ where: { id: Number(id) } });
+    return this.prisma.role.delete({ where: { id: Number(id) } });
   }
 
   async updatePermissions(roleId: number, permissionIds: number[]) {
-    await prisma.rolePermission.deleteMany({ where: { roleId } });
+    await this.prisma.rolePermission.deleteMany({ where: { roleId } });
 
     const newPermissions = permissionIds.map((pid) => ({
       roleId,
       permissionId: pid,
     }));
 
-    await prisma.rolePermission.createMany({ data: newPermissions });
+    await this.prisma.rolePermission.createMany({ data: newPermissions });
 
     return {
       roleId,

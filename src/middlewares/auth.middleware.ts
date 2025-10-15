@@ -6,7 +6,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'supersecret';
 
 export function authenticate(req: AuthRequest, res: Response, next: NextFunction) {
   const token = req.cookies.auth_token;
-
+  console.log(req.cookies);
   if (!token) return res.status(401).json({ message: 'Não autenticado' });
 
   try {

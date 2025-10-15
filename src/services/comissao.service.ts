@@ -1,25 +1,35 @@
-import prisma, { Prisma } from '../utils/prisma';
+import { Prisma, getPrismaForTenant } from '../utils/prisma';
 
 type ComissaoType = Prisma.ComissaoGetPayload<{}>;
 
 export class ComissaoService {
+  private prisma;
+
+  constructor(private tenantId: string) {
+    if (!tenantId) {
+      throw new Error('Tenant ID must be provided');
+    }
+
+    this.prisma = getPrismaForTenant(tenantId);
+  }
+
   async getAll(): Promise<ComissaoType[]> {
-    return prisma.comissao.findMany();
+    return this.prisma.comissao.findMany();
   }
 
   async getById(id: number): Promise<ComissaoType | null> {
-    return prisma.comissao.findUnique({ where: { id: Number(id) } });
+    return this.prisma.comissao.findUnique({ where: { id: Number(id) } });
   }
 
   async create(data: ComissaoType): Promise<ComissaoType> {
-    return prisma.comissao.create({ data });
+    return this.prisma.comissao.create({ data });
   }
 
   async update(id: number, data: Partial<ComissaoType>): Promise<ComissaoType> {
-    return prisma.comissao.update({ where: { id: Number(id) }, data });
+    return this.prisma.comissao.update({ where: { id: Number(id) }, data });
   }
 
   async delete(id: number): Promise<ComissaoType> {
-    return prisma.comissao.delete({ where: { id: Number(id) } });
+    return this.prisma.comissao.delete({ where: { id: Number(id) } });
   }
 }

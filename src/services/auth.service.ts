@@ -1,12 +1,22 @@
-import prisma from '../utils/prisma';
+import { getPrismaForTenant } from '../utils/prisma';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { UserPayload } from '../types/auth';
 import config from '../config';
 
 export class AuthService {
-  async validateUser(email: string, senha: string, tenant: string): Promise<UserPayload | null> {
-    const user = await prisma.user.findUnique({
+  private prisma;
+
+  constructor(private tenantId: string) {
+    if (!tenantId) {
+      throw new Error('Tenant ID must be provided');
+    }
+
+    this.prisma = getPrismaForTenant(tenantId);
+  }
+
+  async validateUser(email: string, senha: string): Promise<UserPayload | null> {
+    const user = await this.prisma.user.findUnique({
       where: { email },
       include: {
         roles: {
@@ -33,7 +43,6 @@ export class AuthService {
     if (!isValid) return null;
 
     const roleData = user.roles?.[0]?.role || null;
-
     const permissions = roleData ? roleData.RolePermission.map((rp) => rp.permission.name) : [];
 
     const role = roleData ? { id: roleData.id, name: roleData.name } : null;
@@ -44,7 +53,7 @@ export class AuthService {
       email: user.email,
       role,
       permissions,
-      tenant: tenant,
+      tenant: this.tenantId,
     };
   }
 

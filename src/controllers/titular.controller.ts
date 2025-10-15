@@ -1,15 +1,24 @@
 import { Request, Response } from 'express';
 import { TitularService } from '../services/titular.service';
 import Logger from '../utils/logger';
+import { PrismaClient } from '../../generated/prisma/client';
+
+export interface TenantRequest extends Request {
+  tenantId?: string;
+  prisma?: PrismaClient;
+}
 
 export class TitularController {
-  private service = new TitularService();
   private logger = new Logger({ service: 'TitularController' });
 
-  async getAll(req: Request, res: Response) {
+  async getAll(req: TenantRequest, res: Response) {
     try {
-      const result = await this.service.getAll();
-      this.logger.info('getAll executed successfully');
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const service = new TitularService(req.tenantId);
+      const result = await service.getAll();
+
+      this.logger.info('getAll executed successfully', { tenant: req.tenantId });
       res.json(result);
     } catch (error) {
       this.logger.error('Failed to get all Titular', error);
@@ -17,27 +26,36 @@ export class TitularController {
     }
   }
 
-  async getById(req: Request, res: Response) {
+  async getById(req: TenantRequest, res: Response) {
     try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const service = new TitularService(req.tenantId);
       const { id } = req.params;
-      const result = await this.service.getById(Number(id));
+      const result = await service.getById(Number(id));
+
       if (!result) {
-        this.logger.warn(`Titular not found for id: ${id}`);
+        this.logger.warn(`Titular not found for id: ${id}`, { tenant: req.tenantId });
         return res.status(404).json({ message: 'Titular not found' });
       }
-      this.logger.info(`getById executed successfully for id: ${id}`);
+
+      this.logger.info(`getById executed successfully for id: ${id}`, { tenant: req.tenantId });
       res.json(result);
     } catch (error) {
-      this.logger.error(`Failed to get Titular by id`, error, { params: req.params });
+      this.logger.error('Failed to get Titular by id', error, { params: req.params });
       res.status(500).json({ message: 'Internal server error' });
     }
   }
 
-  async create(req: Request, res: Response) {
+  async create(req: TenantRequest, res: Response) {
     try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const service = new TitularService(req.tenantId);
       const data = req.body;
-      const result = await this.service.create(data);
-      this.logger.info('create executed successfully', { data });
+      const result = await service.create(data);
+
+      this.logger.info('create executed successfully', { tenant: req.tenantId, data });
       res.status(201).json(result);
     } catch (error) {
       this.logger.error('Failed to create Titular', error, { body: req.body });
@@ -45,27 +63,38 @@ export class TitularController {
     }
   }
 
-  async update(req: Request, res: Response) {
+  async update(req: TenantRequest, res: Response) {
     try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const service = new TitularService(req.tenantId);
       const { id } = req.params;
       const data = req.body;
-      const result = await this.service.update(Number(id), data);
-      this.logger.info(`update executed successfully for id: ${id}`, { data });
+      const result = await service.update(Number(id), data);
+
+      this.logger.info(`update executed successfully for id: ${id}`, {
+        tenant: req.tenantId,
+        data,
+      });
       res.json(result);
     } catch (error) {
-      this.logger.error(`Failed to update Titular`, error, { params: req.params, body: req.body });
+      this.logger.error('Failed to update Titular', error, { params: req.params, body: req.body });
       res.status(500).json({ message: 'Internal server error' });
     }
   }
 
-  async delete(req: Request, res: Response) {
+  async delete(req: TenantRequest, res: Response) {
     try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const service = new TitularService(req.tenantId);
       const { id } = req.params;
-      await this.service.delete(Number(id));
-      this.logger.info(`delete executed successfully for id: ${id}`);
+      await service.delete(Number(id));
+
+      this.logger.info(`delete executed successfully for id: ${id}`, { tenant: req.tenantId });
       res.status(204).send();
     } catch (error) {
-      this.logger.error(`Failed to delete Titular`, error, { params: req.params });
+      this.logger.error('Failed to delete Titular', error, { params: req.params });
       res.status(500).json({ message: 'Internal server error' });
     }
   }

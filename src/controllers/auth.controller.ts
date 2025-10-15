@@ -9,7 +9,6 @@ export interface TenantRequest extends Request {
 }
 
 export class AuthController {
-  private service = new AuthService();
   private logger = new Logger({ service: 'AuthController' });
 
   async login(req: TenantRequest, res: Response) {
@@ -25,18 +24,19 @@ export class AuthController {
         res.status(400).json({ message: 'Tenant unknown' });
         return;
       }
+      const service = new AuthService(req.tenantId);
 
-      const user = await this.service.validateUser(email, password, req.tenantId);
+      const user = await service.validateUser(email, password);
 
       if (!user) return res.status(401).json({ message: 'Credenciais inválidas' });
 
-      const token = this.service.generateToken(user);
+      const token = service.generateToken(user);
 
       res.cookie('auth_token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
-        domain: process.env.APP_MODE === 'PROD' ? '.planvita.com.br' : undefined,
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        domain: process.env.NODE_ENV === 'production' ? '.planvita.com.br' : undefined,
         maxAge: 1000 * 60 * 60 * 24, // 1 dia
       });
 

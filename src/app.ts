@@ -57,6 +57,8 @@ app.use(
 app.use(
   cors({
     origin: (origin, callback) => {
+      console.log('Origin request:', origin);
+
       if (!origin) return callback(null, true);
       const allowed = config.server.allowedOrigins.map((o) => o.toLowerCase().trim());
       if (allowed.includes(origin.toLowerCase())) {

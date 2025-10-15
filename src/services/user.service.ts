@@ -1,4 +1,4 @@
-import prisma, { Prisma } from '../utils/prisma';
+import { Prisma, getPrismaForTenant } from '../utils/prisma';
 
 type UserType = Prisma.UserGetPayload<{}>;
 
@@ -18,8 +18,18 @@ type UserRoleType = Prisma.UserGetPayload<{
 }>;
 
 export class UserService {
+  private prisma;
+
+  constructor(private tenantId: string) {
+    if (!tenantId) {
+      throw new Error('Tenant ID must be provided');
+    }
+
+    this.prisma = getPrismaForTenant(tenantId);
+  }
+
   async getAll(): Promise<UserRoleType[]> {
-    return prisma.user.findMany({
+    return this.prisma.user.findMany({
       include: {
         roles: {
           select: {
@@ -36,7 +46,7 @@ export class UserService {
   }
 
   async getById(id: number): Promise<UserRoleType | null> {
-    return prisma.user.findUnique({
+    return this.prisma.user.findUnique({
       where: { id },
       include: {
         roles: {
@@ -51,21 +61,21 @@ export class UserService {
   }
 
   async create(data: UserType): Promise<UserType> {
-    return prisma.user.create({ data });
+    return this.prisma.user.create({ data });
   }
 
   async update(id: number, data: Partial<UserType>): Promise<UserType> {
-    return prisma.user.update({ where: { id: Number(id) }, data });
+    return this.prisma.user.update({ where: { id: Number(id) }, data });
   }
 
   async delete(id: number): Promise<UserType> {
-    return prisma.user.delete({ where: { id: Number(id) } });
+    return this.prisma.user.delete({ where: { id: Number(id) } });
   }
 
   async updateUserRole(userId: number, roleId: number) {
-    await prisma.userRole.deleteMany({ where: { userId } });
+    await this.prisma.userRole.deleteMany({ where: { userId } });
 
-    const newRole = await prisma.userRole.create({
+    const newRole = await this.prisma.userRole.create({
       data: {
         userId,
         roleId,
