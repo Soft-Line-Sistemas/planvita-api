@@ -1,14 +1,6 @@
-import { v4 as uuidv4 } from "uuid";
-import crypto from "crypto";
-import bcrypt from "bcryptjs";
-import { ApiResponse } from "../types";
-
-/**
- * Generate a unique UUID
- */
-export function generateId(): string {
-  return uuidv4();
-}
+import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
+import { ApiResponse } from '../types';
 
 /**
  * Generate a unique request ID for tracing
@@ -21,7 +13,7 @@ export function generateRequestId(): string {
  * Generate a secure API key
  */
 export function generateApiKey(): string {
-  return `pk_${crypto.randomBytes(32).toString("hex")}`;
+  return `pk_${crypto.randomBytes(32).toString('hex')}`;
 }
 
 /**
@@ -34,10 +26,7 @@ export async function hashApiKey(apiKey: string): Promise<string> {
 /**
  * Verify an API key against its hash
  */
-export async function verifyApiKey(
-  apiKey: string,
-  hash: string,
-): Promise<boolean> {
+export async function verifyApiKey(apiKey: string, hash: string): Promise<boolean> {
   return bcrypt.compare(apiKey, hash);
 }
 
@@ -87,12 +76,7 @@ export function createErrorResponse(
     provider?: string;
   },
 ): ApiResponse {
-  return createApiResponse(
-    false,
-    undefined,
-    { code, message, details },
-    metadata,
-  );
+  return createApiResponse(false, undefined, { code, message, details }, metadata);
 }
 
 /**
@@ -108,7 +92,7 @@ export function isValidEmail(email: string): boolean {
  */
 export function isValidCPF(cpf: string): boolean {
   // Remove non-numeric characters
-  const cleanCpf = cpf.replace(/\D/g, "");
+  const cleanCpf = cpf.replace(/\D/g, '');
 
   // Check if has 11 digits
   if (cleanCpf.length !== 11) return false;
@@ -142,7 +126,7 @@ export function isValidCPF(cpf: string): boolean {
  */
 export function isValidCNPJ(cnpj: string): boolean {
   // Remove non-numeric characters
-  const cleanCnpj = cnpj.replace(/\D/g, "");
+  const cleanCnpj = cnpj.replace(/\D/g, '');
 
   // Check if has 14 digits
   if (cleanCnpj.length !== 14) return false;
@@ -177,7 +161,7 @@ export function isValidCNPJ(cnpj: string): boolean {
  * Validate Brazilian document (CPF or CNPJ)
  */
 export function isValidDocument(document: string): boolean {
-  const cleanDoc = document.replace(/\D/g, "");
+  const cleanDoc = document.replace(/\D/g, '');
 
   if (cleanDoc.length === 11) {
     return isValidCPF(cleanDoc);
@@ -191,12 +175,9 @@ export function isValidDocument(document: string): boolean {
 /**
  * Format currency value
  */
-export function formatCurrency(
-  amount: number,
-  currency: string = "BRL",
-): string {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
+export function formatCurrency(amount: number, currency: string = 'BRL'): string {
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
     currency: currency,
   }).format(amount);
 }
@@ -219,7 +200,7 @@ export function fromCents(cents: number): number {
  * Sanitize phone number
  */
 export function sanitizePhone(phone: string): string {
-  return phone.replace(/\D/g, "");
+  return phone.replace(/\D/g, '');
 }
 
 /**
@@ -240,16 +221,13 @@ export function formatPhone(phone: string): string {
 /**
  * Mask sensitive data for logging
  */
-export function maskSensitiveData(
-  data: string,
-  visibleChars: number = 4,
-): string {
+export function maskSensitiveData(data: string, visibleChars: number = 4): string {
   if (data.length <= visibleChars) {
-    return "*".repeat(data.length);
+    return '*'.repeat(data.length);
   }
 
   const visible = data.slice(-visibleChars);
-  const masked = "*".repeat(data.length - visibleChars);
+  const masked = '*'.repeat(data.length - visibleChars);
 
   return masked + visible;
 }
@@ -293,7 +271,7 @@ export async function retry<T>(
  * Deep clone an object
  */
 export function deepClone<T>(obj: T): T {
-  if (obj === null || typeof obj !== "object") {
+  if (obj === null || typeof obj !== 'object') {
     return obj;
   }
 
@@ -305,7 +283,7 @@ export function deepClone<T>(obj: T): T {
     return obj.map((item) => deepClone(item)) as unknown as T;
   }
 
-  if (typeof obj === "object") {
+  if (typeof obj === 'object') {
     const cloned = {} as T;
     for (const key in obj) {
       if (obj.hasOwnProperty(key)) {
@@ -323,8 +301,8 @@ export function deepClone<T>(obj: T): T {
  */
 export function isEmpty(obj: any): boolean {
   if (obj == null) return true;
-  if (Array.isArray(obj) || typeof obj === "string") return obj.length === 0;
-  if (typeof obj === "object") return Object.keys(obj).length === 0;
+  if (Array.isArray(obj) || typeof obj === 'string') return obj.length === 0;
+  if (typeof obj === 'object') return Object.keys(obj).length === 0;
   return false;
 }
 
@@ -334,6 +312,6 @@ export function isEmpty(obj: any): boolean {
 export function randomString(length: number = 10): string {
   return crypto
     .randomBytes(Math.ceil(length / 2))
-    .toString("hex")
+    .toString('hex')
     .slice(0, length);
 }
