@@ -14,8 +14,54 @@ export class TitularService {
     this.prisma = getPrismaForTenant(tenantId);
   }
 
-  async getAll(): Promise<TitularType[]> {
-    return this.prisma.titular.findMany();
+  async getAll(params?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: string;
+    plano?: string;
+  }) {
+    const { page = 1, limit = 10, search, status, plano } = params || {};
+
+    const where: any = {};
+
+    if (search) {
+      where.OR = [
+        { nome: { contains: search, mode: "insensitive" } },
+        { email: { contains: search, mode: "insensitive" } },
+        { cpf: { contains: search, mode: "insensitive" } },
+        { telefone: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    if (status && status !== "todos") {
+      where.statusPlano = status;
+    }
+
+    if (plano && plano !== "todos") {
+      where.plano = { nome: plano };
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.titular.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          plano: true,
+          dependentes: true,
+        },
+        orderBy: { nome: "asc" },
+      }),
+      this.prisma.titular.count({ where }),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async getById(id: number): Promise<TitularType | null> {

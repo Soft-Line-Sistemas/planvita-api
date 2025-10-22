@@ -1,0 +1,22 @@
+BEGIN TRY
+
+BEGIN TRAN;
+
+-- AlterTable
+ALTER TABLE [dbo].[Titular] ADD [planoId] INT;
+
+-- AddForeignKey
+ALTER TABLE [dbo].[Titular] ADD CONSTRAINT [Titular_planoId_fkey] FOREIGN KEY ([planoId]) REFERENCES [dbo].[Plano]([id]) ON DELETE SET NULL ON UPDATE CASCADE;
+
+COMMIT TRAN;
+
+END TRY
+BEGIN CATCH
+
+IF @@TRANCOUNT > 0
+BEGIN
+    ROLLBACK TRAN;
+END;
+THROW
+
+END CATCH
