@@ -159,19 +159,42 @@ model Corresponsavel {
 
 // ----------------- PLANOS -----------------
 model Plano {
-  id               Int             @id @default(autoincrement())
-  nome             String
-  valorBase        Float
-  idadeMaxima      Int
-  coberturaMaxima  Int
-  carenciaDias     Int
-  vigenciaMeses    Int
-  status           String
+  id                           Int     @id @default(autoincrement())
+  nome                         String
+  valorMensal                  Float
+  idadeMaxima                  Int?
+  coberturaMaxima              Int
+  carenciaDias                 Int
+  vigenciaMeses                Int
+  ativo                        Boolean @default(true)
+  totalClientes                Int     @default(0)
+  receitaMensal                Float   @default(0)
+  assistenciaFuneral           Int
+  auxilioCemiterio             Int?
+  taxaInclusaCemiterioPublico  Boolean @default(false)
 
-  beneficiarios       String
-  beneficios          PlanoBeneficio[]
-  tiposBeneficiarios  PlanoBeneficiarioTipo[]
-  titulares   Titular[]
+  beneficiarios                PlanoBeneficiario[]
+  coberturas                   PlanoCobertura[]
+  beneficios                   PlanoBeneficio[]
+  tiposBeneficiarios           PlanoBeneficiarioTipo[]
+  titulares                    Titular[]
+}
+
+// ----------------- BENEFICIÁRIOS -----------------
+model PlanoBeneficiario {
+  id       Int    @id @default(autoincrement())
+  plano    Plano  @relation(fields: [planoId], references: [id])
+  planoId  Int
+  nome     String
+}
+
+// ----------------- COBERTURAS -----------------
+model PlanoCobertura {
+  id       Int    @id @default(autoincrement())
+  plano    Plano  @relation(fields: [planoId], references: [id])
+  planoId  Int
+  tipo     String // "servicosPadrao", "coberturaTranslado", "servicosEspecificos"
+  descricao String
 }
 
 // ----------------- TIPOS DE BENEFICIÁRIO -----------------
