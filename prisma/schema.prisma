@@ -480,3 +480,49 @@ model Sepultamento {
   dataSepultamento DateTime
   observacoes     String?
 }
+
+model BusinessRules {
+  tenantId                   String  @id
+
+  // -------------------- Fluxo de Notificações --------------------
+  diasAvisoVencimento        Int?    // dias antes do vencimento
+  diasAvisoPendencia         Int?    // dias após vencimento para aviso de pendência
+  repeticaoPendenciaDias     Int?    // repetição do aviso de pendência
+  diasSuspensaoPreventiva    Int?    // alerta preventivo antes da suspensão
+  diasSuspensao              Int?    // dia da suspensão
+  diasPosSuspensao           Int?    // pós-suspensão
+  avisoReajusteAnual         Boolean? // enviar aviso de reajuste
+  diasAntesReajusteAnual     Int?    // aviso antecipado de reajuste
+  avisoRenovacaoAutomatica   Boolean? // aviso de renovação automática
+  diasAntesRenovacao         Int?    // aviso X dias antes da renovação
+
+  // -------------------- Estoque --------------------
+  permitirEstoqueNegativo    Boolean?
+  notificarEstoqueBaixo      Boolean?
+  quantidadeMinimaEstoque    Int?    // limiar para notificação de estoque baixo
+  notificarServicoPendente   Boolean? // se serviço composto depende de materiais
+
+  // -------------------- Planos e Beneficiários --------------------
+  idadeMaximaDependente      Int?
+  limiteBeneficiarios        Int?
+  maximoBeneficiariosPorTipo Int?    // limite por tipo de beneficiário
+
+  // -------------------- Frota --------------------
+  quilometragemMaxVeiculo    Int?
+  notificarManutencao        Boolean?
+  intervaloManutencaoKm      Int?    // km entre manutenções preventivas
+  intervaloManutencaoDias    Int?    // dias entre manutenções preventivas
+
+  // -------------------- Cemitérios --------------------
+  diasAntesAvisoRenovacaoSepultamento Int? // aviso antecipado de renovação de uso
+  limiteTempoUsoSepultamento          Int? // limite máximo de tempo permitido
+
+  // -------------------- Financeiro --------------------
+  notificarTaxaVencida       Boolean? // aviso de taxa vencida
+  tipoAvisoTaxaVencida       String?  // detalhamento do tipo de aviso
+
+  ativo                      Boolean? @default(true)
+  criadoEm                   DateTime @default(now())
+  atualizadoEm               DateTime @updatedAt
+}
+
