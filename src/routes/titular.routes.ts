@@ -10,4 +10,6 @@ router.post('/', controller.create.bind(controller));
 router.put('/:id', controller.update.bind(controller));
 router.delete('/:id', controller.delete.bind(controller));
 
+router.post('/full', controller.createFull.bind(controller));
+
 export default router;

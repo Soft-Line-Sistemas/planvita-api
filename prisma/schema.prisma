@@ -109,6 +109,14 @@ model Titular {
   dataNascimento  DateTime
   statusPlano     String
   dataContratacao DateTime
+  
+  cep       String?
+  uf        String?
+  cidade    String?
+  bairro    String?
+  logradouro String?
+  complemento String?
+  numero      String?
 
   dependentes     Dependente[]
   corresponsaveis Corresponsavel[]

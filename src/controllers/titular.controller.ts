@@ -63,6 +63,21 @@ export class TitularController {
     }
   }
 
+  async createFull(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const service = new TitularService(req.tenantId);
+      const data = req.body;
+      const result = await service.createFull(data);
+
+      res.status(201).json(result);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
   async update(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
