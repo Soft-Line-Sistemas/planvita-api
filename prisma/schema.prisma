@@ -83,7 +83,8 @@ model User {
 
   roles       UserRole[]
   consultor   Consultor? @relation("UserConsultor")
-
+  
+  autorizacoesTecnico AutorizacaoLegal[] @relation("UserToAutorizacaoLegal") 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 }
@@ -108,12 +109,23 @@ model Titular {
   dataNascimento  DateTime
   statusPlano     String
   dataContratacao DateTime
+  
+  cep       String?
+  uf        String?
+  cidade    String?
+  bairro    String?
+  logradouro String?
+  complemento String?
+  numero      String?
 
   dependentes     Dependente[]
   corresponsaveis Corresponsavel[]
   pagamentos      Pagamento[]
   documentos      Documento[]
   comissoes       Comissao[] @relation("TitularComissoes")
+  contasReceber   ContaReceber[]
+  orcamentos      Orcamento[]
+  recibos         Recibo[]
 
   vendedor        Consultor? @relation(fields: [vendedorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   vendedorId      Int?
@@ -138,6 +150,8 @@ model Corresponsavel {
   email          String
   telefone       String?
   relacionamento String
+
+  autorizacoesLegais AutorizacaoLegal[] @relation("CorresponsavelToAutorizacaoLegal")
 }
 
 // ----------------- PLANOS -----------------
@@ -256,3 +270,267 @@ model LayoutConfig {
   criadoEm           DateTime  @default(now())
   atualizadoEm       DateTime  @updatedAt
 }
+
+// ----------------- FINANCEIRO -----------------
+
+model Imposto {
+  id        Int      @id @default(autoincrement())
+  nome      String
+  aliquota  Float     // percentual (%)
+  tipo      String    // ISS, ICMS, etc.
+  ativo     Boolean   @default(true)
+}
+
+model TaxaCartao {
+  id          Int      @id @default(autoincrement())
+  bandeira    String
+  percentual  Float
+  fixo        Float?   // taxa fixa
+  ativo       Boolean  @default(true)
+}
+
+model ContaPagar {
+  id           Int      @id @default(autoincrement())
+  descricao    String
+  valor        Float
+  vencimento   DateTime
+  dataPagamento DateTime?
+  status       String   // "Pendente", "Pago", "Atrasado"
+  fornecedor   String?
+}
+
+model ContaReceber {
+  id           Int      @id @default(autoincrement())
+  descricao    String
+  valor        Float
+  vencimento   DateTime
+  dataRecebimento DateTime?
+  status       String
+  clienteId    Int?
+  cliente      Titular? @relation(fields: [clienteId], references: [id])
+}
+
+model Orcamento {
+  id          Int       @id @default(autoincrement())
+  cliente     Titular?  @relation(fields: [clienteId], references: [id])
+  clienteId   Int?
+  valorTotal  Float
+  dataEmissao DateTime  @default(now())
+  status      String    // "Aberto", "Aprovado", "Rejeitado"
+  observacao  String?
+}
+
+model Recibo {
+  id          Int       @id @default(autoincrement())
+  numero      String    @unique
+  cliente     Titular?  @relation(fields: [clienteId], references: [id])
+  clienteId   Int?
+  valor       Float
+  dataEmissao DateTime  @default(now())
+  descricao   String?
+}
+
+model NotaFiscal {
+  id          Int       @id @default(autoincrement())
+  numero      String    @unique
+  valorTotal  Float
+  dataEmissao DateTime  @default(now())
+  status      String
+  chaveAcesso String?
+}
+
+// ----------------- ESTOQUE E SERVIÇOS -----------------
+
+model Produto {
+  id            Int      @id @default(autoincrement())
+  nome          String
+  descricao     String?
+  quantidade    Int       @default(0)
+  precoUnitario Float
+  tipo          String    // urna, coroa, ornamento, etc.
+  movimentos MovimentoEstoque[]
+  itensServico ServicoItem[]
+  ativo         Boolean   @default(true)
+}
+
+model MovimentoEstoque {
+  id           Int      @id @default(autoincrement())
+  produto      Produto  @relation(fields: [produtoId], references: [id])
+  produtoId    Int
+  tipo         String   // "Entrada" ou "Saída"
+  quantidade   Int
+  dataMovimento DateTime @default(now())
+  observacao   String?
+}
+
+model Servico {
+  id           Int      @id @default(autoincrement())
+  nome         String
+  descricao    String?
+  custoBase    Float
+  precoVenda   Float
+  ativo        Boolean   @default(true)
+
+  itens ServicoItem[] 
+}
+
+model ServicoItem {
+  id          Int      @id @default(autoincrement())
+  servico     Servico  @relation(fields: [servicoId], references: [id])
+  servicoId   Int
+  produto     Produto? @relation(fields: [produtoId], references: [id])
+  produtoId   Int?
+  quantidade  Int       @default(1)
+  custo       Float?
+}
+
+// ----------------- AUTORIZAÇÕES E FALECIDOS -----------------
+
+model Falecido {
+  id            Int                 @id @default(autoincrement())
+  nome          String
+  dataFalecimento DateTime?
+  autorizacoes  AutorizacaoLegal[]  @relation("FalecidoToAutorizacaoLegal")
+
+  Sepultamento Sepultamento[]
+}
+
+model AutorizacaoLegal {
+  id             Int       @id @default(autoincrement())
+  falecido       Falecido  @relation("FalecidoToAutorizacaoLegal", fields: [falecidoId], references: [id], onDelete: NoAction, onUpdate: Cascade)
+  falecidoId     Int
+  responsavel    Corresponsavel? @relation("CorresponsavelToAutorizacaoLegal", fields: [responsavelId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  responsavelId  Int?
+  tecnico        User?     @relation("UserToAutorizacaoLegal", fields: [tecnicoId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  tecnicoId      Int?
+  tipo           String
+  dataAssinatura DateTime  @default(now())
+  assinaturaUrl  String?
+}
+
+// ----------------- FROTA -----------------
+
+model Veiculo {
+  id          Int      @id @default(autoincrement())
+  placa       String   @unique
+  modelo      String
+  ano         Int
+  tipo        String   // carro funerário, van, etc.
+  ativo       Boolean  @default(true)
+  quilometragemAtual Int?
+
+  manutencoes    Manutencao[]
+  abastecimentos Abastecimento[]
+}
+
+model Motorista {
+  id          Int      @id @default(autoincrement())
+  nome        String
+  cpf         String?
+  cnh         String?
+  telefone    String?
+  ativo       Boolean  @default(true)
+  
+  abastecimentos Abastecimento[]
+}
+
+model Manutencao {
+  id          Int       @id @default(autoincrement())
+  veiculo     Veiculo   @relation(fields: [veiculoId], references: [id])
+  veiculoId   Int
+  data        DateTime
+  descricao   String
+  custo       Float
+}
+
+model Abastecimento {
+  id          Int       @id @default(autoincrement())
+  veiculo     Veiculo   @relation(fields: [veiculoId], references: [id])
+  veiculoId   Int
+  motorista   Motorista? @relation(fields: [motoristaId], references: [id])
+  motoristaId Int?
+  data        DateTime
+  litros      Float
+  valorTotal  Float
+}
+
+// ----------------- CEMITÉRIOS -----------------
+
+model Cemiterio {
+  id          Int      @id @default(autoincrement())
+  nome        String
+  endereco    String
+  cidade      String
+  bairro      String?
+  observacoes String?
+  ativo       Boolean   @default(true)
+
+  sepultamentos Sepultamento[]
+}
+
+model TipoSepultamento {
+  id          Int      @id @default(autoincrement())
+  nome        String
+  descricao   String?
+  valor       Float?
+
+  sepultamentos Sepultamento[]
+}
+
+model Sepultamento {
+  id              Int          @id @default(autoincrement())
+  falecido        Falecido     @relation(fields: [falecidoId], references: [id])
+  falecidoId      Int
+  cemiterio       Cemiterio    @relation(fields: [cemiterioId], references: [id])
+  cemiterioId     Int
+  tipo            TipoSepultamento @relation(fields: [tipoId], references: [id])
+  tipoId          Int
+  dataSepultamento DateTime
+  observacoes     String?
+}
+
+model BusinessRules {
+  tenantId                   String  @id
+
+  // -------------------- Fluxo de Notificações --------------------
+  diasAvisoVencimento        Int?    // dias antes do vencimento
+  diasAvisoPendencia         Int?    // dias após vencimento para aviso de pendência
+  repeticaoPendenciaDias     Int?    // repetição do aviso de pendência
+  diasSuspensaoPreventiva    Int?    // alerta preventivo antes da suspensão
+  diasSuspensao              Int?    // dia da suspensão
+  diasPosSuspensao           Int?    // pós-suspensão
+  avisoReajusteAnual         Boolean? // enviar aviso de reajuste
+  diasAntesReajusteAnual     Int?    // aviso antecipado de reajuste
+  avisoRenovacaoAutomatica   Boolean? // aviso de renovação automática
+  diasAntesRenovacao         Int?    // aviso X dias antes da renovação
+
+  // -------------------- Estoque --------------------
+  permitirEstoqueNegativo    Boolean?
+  notificarEstoqueBaixo      Boolean?
+  quantidadeMinimaEstoque    Int?    // limiar para notificação de estoque baixo
+  notificarServicoPendente   Boolean? // se serviço composto depende de materiais
+
+  // -------------------- Planos e Beneficiários --------------------
+  idadeMaximaDependente      Int?
+  limiteBeneficiarios        Int?
+  maximoBeneficiariosPorTipo Int?    // limite por tipo de beneficiário
+
+  // -------------------- Frota --------------------
+  quilometragemMaxVeiculo    Int?
+  notificarManutencao        Boolean?
+  intervaloManutencaoKm      Int?    // km entre manutenções preventivas
+  intervaloManutencaoDias    Int?    // dias entre manutenções preventivas
+
+  // -------------------- Cemitérios --------------------
+  diasAntesAvisoRenovacaoSepultamento Int? // aviso antecipado de renovação de uso
+  limiteTempoUsoSepultamento          Int? // limite máximo de tempo permitido
+
+  // -------------------- Financeiro --------------------
+  notificarTaxaVencida       Boolean? // aviso de taxa vencida
+  tipoAvisoTaxaVencida       String?  // detalhamento do tipo de aviso
+
+  ativo                      Boolean? @default(true)
+  criadoEm                   DateTime @default(now())
+  atualizadoEm               DateTime @updatedAt
+}
+

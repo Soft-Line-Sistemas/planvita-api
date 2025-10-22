@@ -26,7 +26,10 @@ export const config: AppConfig = {
   },
 
   rateLimitWindowMs: getEnvVarAsNumber('RATE_LIMIT_WINDOW_MS', 900000), // 15 minutes
-  rateLimitMaxRequests: getEnvVarAsNumber('RATE_LIMIT_MAX_REQUESTS', 100),
+  rateLimitMaxRequests:
+    process.env.NODE_ENV === 'development'
+      ? 1000
+      : getEnvVarAsNumber('RATE_LIMIT_MAX_REQUESTS', 100),
   logLevel: getEnvVar('LOG_LEVEL', 'info'),
   logFile: getEnvVar('LOG_FILE', 'logs/planvita-api.log'),
 

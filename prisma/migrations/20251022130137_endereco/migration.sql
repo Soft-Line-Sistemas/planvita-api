@@ -1,0 +1,25 @@
+BEGIN TRY
+
+BEGIN TRAN;
+
+-- AlterTable
+ALTER TABLE [dbo].[Titular] ADD [bairro] NVARCHAR(1000),
+[cep] NVARCHAR(1000),
+[cidade] NVARCHAR(1000),
+[complemento] NVARCHAR(1000),
+[logradouro] NVARCHAR(1000),
+[numero] NVARCHAR(1000),
+[uf] NVARCHAR(1000);
+
+COMMIT TRAN;
+
+END TRY
+BEGIN CATCH
+
+IF @@TRANCOUNT > 0
+BEGIN
+    ROLLBACK TRAN;
+END;
+THROW
+
+END CATCH
