@@ -40,9 +40,8 @@ export function getPrismaForTenant(tenantId: string): PrismaClient {
   const envVarName = `DATABASE_URL_${tenantId}`;
   const databaseUrl = process.env[envVarName];
 
-  console.log(
-    `[TENANT-LOADER] tenantId=${tenantId} | env=${envVarName} | url=${process.env[envVarName]}`,
-  );
+  dbLogger.info(`[TENANT-LOADER] tenantId=${tenantId} | env=${envVarName} | url=${process.env[envVarName]}`);
+
   if (!databaseUrl) {
     throw new Error(
       `No database URL found for tenant: ${tenantId} (missing ${envVarName} in .env)`,
@@ -50,7 +49,6 @@ export function getPrismaForTenant(tenantId: string): PrismaClient {
   }
 
   dbLogger.info(`Initializing Prisma client for tenant: ${tenantId}`);
-  console.log(databaseUrl);
 
   const tenantPrisma = new PrismaClient({
     log: [

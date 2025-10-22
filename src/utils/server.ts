@@ -1,6 +1,8 @@
 import { databaseManager } from '../utils/prisma';
 import { Logger } from './logger';
 import config from '../config';
+import https from 'https';
+import fs from 'fs';
 
 const logger = new Logger({ service: 'main' });
 let server: any;
@@ -42,21 +44,35 @@ export async function startServer(app: any): Promise<void> {
     await databaseManager.connect();
     logger.info('Database connected successfully');
 
-    // Start HTTP server
-    server = app.listen(config.server.port, '0.0.0.0', () => {
-      logger.info('VitalSoft API started successfully', {
-        port: config.server.port,
-        nodeEnv: config.server.nodeEnv,
-        version: config.server.apiVersion,
-        pid: process.pid,
-      });
 
-      logger.info('Available endpoints:', {
-        api: `http://localhost:${config.server.port}/api/v1`,
-        health: `http://localhost:${config.server.port}/health`,
-        // docs: `http://localhost:${config.server.port}/api-docs`,
+    const startListening = (serverInstance: any, baseUrl: string) => {
+      server = serverInstance.listen(config.server.port, '0.0.0.0', () => {
+        logger.info(`VitalSoft API started successfully${baseUrl.startsWith('https') ? ' (HTTPS)' : ''}`, {
+          port: config.server.port,
+          nodeEnv: config.server.nodeEnv,
+          version: config.server.apiVersion,
+          pid: process.pid,
+        });
+
+        logger.info('Available endpoints:', {
+          api: `${baseUrl}/api/v1`,
+          health: `${baseUrl}/health`,
+        });
       });
-    });
+    };
+
+    // Start HTTP server
+    if (process.env.NODE_ENV === 'production') {
+      startListening(app, `http://localhost:${config.server.port}`);
+    } else {
+      const options = {
+        key: fs.readFileSync('./certs/key.pem'),
+        cert: fs.readFileSync('./certs/cert.pem'),
+      };
+
+      const httpsServer = https.createServer(options, app);
+      startListening(httpsServer, `https://localhost:${config.server.port}`);
+    }
 
     // Handle server errors
     server.on('error', (error: any) => {

@@ -36,8 +36,8 @@ export class AuthController {
 
       res.cookie('auth_token', token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        secure: true,
+        sameSite: 'none',
         domain: process.env.NODE_ENV === 'production' ? '.planvita.com.br' : undefined,
         maxAge: 1000 * 60 * 60 * 24, // 1 dia
       });
