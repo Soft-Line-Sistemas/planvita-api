@@ -127,6 +127,9 @@ model Titular {
   orcamentos      Orcamento[]
   recibos         Recibo[]
 
+  planoId        Int?
+  plano          Plano?      @relation(fields: [planoId], references: [id]) // 🔹 Relação adicionada
+
   vendedor        Consultor? @relation(fields: [vendedorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   vendedorId      Int?
 }
@@ -168,6 +171,7 @@ model Plano {
   beneficiarios       String
   beneficios          PlanoBeneficio[]
   tiposBeneficiarios  PlanoBeneficiarioTipo[]
+  titulares   Titular[]
 }
 
 // ----------------- TIPOS DE BENEFICIÁRIO -----------------

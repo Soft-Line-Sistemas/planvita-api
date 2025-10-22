@@ -13,16 +13,25 @@ export class TitularController {
 
   async getAll(req: TenantRequest, res: Response) {
     try {
-      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      if (!req.tenantId)
+        return res.status(400).json({ message: "Tenant unknown" });
 
       const service = new TitularService(req.tenantId);
-      const result = await service.getAll();
 
-      this.logger.info('getAll executed successfully', { tenant: req.tenantId });
+      const { page, limit, search, status, plano } = req.query;
+
+      const result = await service.getAll({
+        page: Number(page) || 1,
+        limit: Number(limit) || 10,
+        search: search?.toString(),
+        status: status?.toString(),
+        plano: plano?.toString(),
+      });
+
       res.json(result);
     } catch (error) {
-      this.logger.error('Failed to get all Titular', error);
-      res.status(500).json({ message: 'Internal server error' });
+      this.logger.error("Failed to get all Titular", error);
+      res.status(500).json({ message: "Internal server error" });
     }
   }
 
