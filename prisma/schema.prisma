@@ -113,6 +113,7 @@ model Titular {
   cep       String?
   uf        String?
   cidade    String?
+  cpf       String?
   bairro    String?
   logradouro String?
   complemento String?
@@ -223,13 +224,20 @@ model Beneficio {
   valor     Float?
   validade  Int?
   planos    PlanoBeneficio[]
+
+  @@map("Beneficio")
 }
 
 model PlanoBeneficio {
-  plano       Plano     @relation(fields: [planoId], references: [id])
-  planoId     Int
-  beneficio   Beneficio @relation(fields: [beneficioId], references: [id])
-  beneficioId Int
+  // Se a tabela real tiver outro nome (ex.: "Plano_Beneficio"), mapeie:
+  @@map("Plano_Beneficio")
+
+  // Mapeie as colunas reais se forem, por exemplo, "plano_id" e "beneficio_id"
+  planoId      Int        @map("plano_id")
+  beneficioId  Int        @map("beneficio_id")
+
+  plano        Plano      @relation(fields: [planoId], references: [id])
+  beneficio    Beneficio  @relation(fields: [beneficioId], references: [id])
 
   @@id([planoId, beneficioId])
 }

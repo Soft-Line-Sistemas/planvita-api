@@ -1,5 +1,6 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
 import { CadastroTitularRequest } from '../types/titular';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 
 type TitularType = Prisma.TitularGetPayload<{}>;
 
@@ -72,66 +73,100 @@ export class TitularService {
     return this.prisma.titular.create({ data });
   }
 
-  async createFull(data: CadastroTitularRequest) {
-    const titularData = data.step1;
-    const enderecoData = data.step2;
-    const respData = data.step3;
-    const dependentes = data.dependentes;
+   async createFull(data: CadastroTitularRequest) {
+    const { step1, step2, step3, dependentes } = data;
 
-    // Se o responsável financeiro for igual ao titular
-    const responsavel = respData.usarMesmosDados
-      ? { ...titularData, parentesco: "Titular" }
-      : respData;
+    // --- Validações básicas ---
+    if (!step1.email || !step1.cpf) {
+      throw Object.assign(new Error('Email e CPF são obrigatórios'), { status: 400 });
+    }
 
-      const responsavelData = respData.usarMesmosDados
-        ? {
-            nome: titularData.nomeCompleto || "Sem nome",
-            email: titularData.email || "",
-            telefone: titularData.telefone || undefined,
-            relacionamento: "Titular",
-          }
-        : {
-            nome: respData.nomeCompleto || "Sem nome",
-            email: respData.email || "",
-            telefone: respData.telefone || undefined,
-            relacionamento: respData.parentesco || "Outro",
-          };
+    // Normaliza email e CPF
+    const email = step1.email.trim().toLowerCase();
+    const cpf = step1.cpf.replace(/\D/g, '');
 
-
-    return this.prisma.titular.create({
-      data: {
-        nome: titularData.nomeCompleto,
-        email: titularData.email,
-        telefone: titularData.telefone,
-        dataNascimento: new Date(titularData.dataNascimento),
-        statusPlano: "ATIVO",
-        dataContratacao: new Date(),
-        // Endereço se tiver campos no Titular
-        cep: enderecoData.cep,
-        uf: enderecoData.uf,
-        cidade: enderecoData.cidade,
-        bairro: enderecoData.bairro,
-        logradouro: enderecoData.logradouro,
-        complemento: enderecoData.complemento,
-        numero: enderecoData.numero,
-        // Dependentes
-        dependentes: {
-          create: dependentes.map(dep => ({
-            nome: dep.nome,
-            dataNascimento: new Date(), // se quiser usar idade precisa calcular a data
-            tipoDependente: dep.parentesco,
-          }))
-        },
-        // Corresponsável financeiro, se houver tabela
-       corresponsaveis: {
-        create: [responsavelData],
+    // --- Verifica duplicidade ---
+    const existente = await this.prisma.titular.findFirst({
+      where: {
+        OR: [{ email }, { cpf }],
       },
-      },
-      include: {
-        dependentes: true,
-        corresponsaveis: true,
-      },
+      select: { id: true, email: true, cpf: true },
     });
+
+    if (existente) {
+      const err: any = new Error('Já existe um titular cadastrado com este e-mail ou CPF.');
+      err.status = 409;
+      err.code = 'TITULAR_DUPLICADO';
+      err.meta = existente;
+      throw err;
+    }
+
+    // --- Monta dados do corresponsável ---
+    const usarMesmosDados = step3.usarMesmosDados;
+    const corresponsavelData = usarMesmosDados
+      ? {
+          nome: step1.nomeCompleto,
+          email: email,
+          telefone: step1.telefone,
+          relacionamento: 'Titular',
+        }
+      : {
+          nome: step3.nomeCompleto || 'Sem nome',
+          email: (step3.email || '').trim().toLowerCase(),
+          telefone: step3.telefone,
+          relacionamento: step3.parentesco || 'Outro',
+        };
+
+    // --- Monta dependentes ---
+    const dependentesData = dependentes?.map((dep) => ({
+      nome: dep.nome,
+      tipoDependente: dep.parentesco || 'Outro',
+      dataNascimento: new Date(), // sem data exata, gera placeholder
+    }));
+
+    try {
+      // --- Criação transacional ---
+      const novoTitular = await this.prisma.$transaction(async (tx) => {
+        const titular = await tx.titular.create({
+          data: {
+            nome: step1.nomeCompleto,
+            email,
+            telefone: step1.telefone,
+            dataNascimento: new Date(step1.dataNascimento),
+            statusPlano: 'ATIVO',
+            dataContratacao: new Date(),
+            cpf,
+            cep: step2.cep,
+            uf: step2.uf,
+            cidade: step2.cidade,
+            bairro: step2.bairro,
+            logradouro: step2.logradouro,
+            complemento: step2.complemento,
+            numero: step2.numero,
+            dependentes: dependentesData?.length
+              ? { create: dependentesData }
+              : undefined,
+            corresponsaveis: { create: [corresponsavelData] },
+          },
+          include: {
+            dependentes: true,
+            corresponsaveis: true,
+          },
+        });
+
+        return titular;
+      });
+
+      return novoTitular;
+    } catch (e: any) {
+      if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
+        const err: any = new Error('Titular já existe (violação de chave única)');
+        err.status = 409;
+        err.code = 'EMAIL_OR_CPF_DUPLICADO';
+        throw err;
+      }
+      throw e;
+    }
   }
 
   async update(id: number, data: Partial<TitularType>): Promise<TitularType> {

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { TitularService } from '../services/titular.service';
 import Logger from '../utils/logger';
 import { PrismaClient } from '../../generated/prisma/client';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 
 export interface TenantRequest extends Request {
   tenantId?: string;
@@ -72,7 +73,7 @@ export class TitularController {
     }
   }
 
-  async createFull(req: TenantRequest, res: Response) {
+   async createFull(req: any, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
@@ -81,8 +82,17 @@ export class TitularController {
       const result = await service.createFull(data);
 
       res.status(201).json(result);
-    } catch (error) {
-      console.error(error);
+    } catch (error: any) {
+      if (error?.status === 409 || error?.code === 'EMAIL_IN_USE') {
+        return res.status(409).json({
+          message: 'E-mail já cadastrado para um titular.',
+          ...(error.meta ? { meta: error.meta } : {}),
+        });
+      }
+      if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
+        return res.status(409).json({ message: 'E-mail já cadastrado para um titular.' });
+      }
+      this.logger.error('Failed to createFull Titular', error, { body: req.body });
       res.status(500).json({ message: 'Internal server error' });
     }
   }
