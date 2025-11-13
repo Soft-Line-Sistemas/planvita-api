@@ -27,6 +27,7 @@ import permissionRoutes from './routes/permission.routes';
 import userRoutes from './routes/user.routes';
 import authRoutes from './routes/auth.routes';
 import regrasRoutes from './routes/regras.routes';
+import financeiroRoutes from './routes/financeiro.routes';
 
 dotenv.config({ quiet: true });
 
@@ -104,7 +105,8 @@ app.use(`/api/${API_VERSION}/titular`, titularRoutes);
 app.use(`/api/${API_VERSION}/roles`, roleRoutes);
 app.use(`/api/${API_VERSION}/permissions`, permissionRoutes);
 app.use(`/api/${API_VERSION}/users`, userRoutes);
-app.use(`/api/${API_VERSION}/regras`,regrasRoutes)
+app.use(`/api/${API_VERSION}/regras`, regrasRoutes);
+app.use(`/api/${API_VERSION}/financeiro`, financeiroRoutes);
 
 // Handler error
 app.use(notFoundHandler);

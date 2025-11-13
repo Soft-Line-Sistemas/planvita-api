@@ -345,6 +345,45 @@ model ContaReceber {
   cliente      Titular? @relation(fields: [clienteId], references: [id])
 }
 
+model BancoFinanceiro {
+  id        Int      @id @default(autoincrement())
+  nome      String
+  agencia   String?
+  conta     String?
+  saldo     Float    @default(0)
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TipoContabilFinanceiro {
+  id        Int      @id @default(autoincrement())
+  descricao String
+  natureza  String?
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model FormaPagamentoFinanceira {
+  id        Int      @id @default(autoincrement())
+  nome      String
+  prazo     String?
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CentroResultadoFinanceiro {
+  id        Int      @id @default(autoincrement())
+  nome      String
+  descricao String?
+  orcamento Float    @default(0)
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model Orcamento {
   id          Int       @id @default(autoincrement())
   cliente     Titular?  @relation(fields: [clienteId], references: [id])
@@ -568,4 +607,3 @@ model BusinessRules {
   criadoEm                   DateTime @default(now())
   atualizadoEm               DateTime @updatedAt
 }
-

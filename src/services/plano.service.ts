@@ -20,7 +20,41 @@ export class PlanoService {
 
   // -------- CRUD básico --------
   async getAll(): Promise<PlanoType[]> {
-    return this.prisma.plano.findMany();
+    const planos = await this.prisma.plano.findMany({
+      include: {
+        beneficiarios: true,
+        coberturas: true,
+      },
+    });
+
+    return planos.map((plano) => ({
+      id: plano.id,
+      nome: plano.nome,
+      valorMensal: plano.valorMensal,
+      idadeMaxima: plano.idadeMaxima,
+      coberturaMaxima: plano.coberturaMaxima,
+      carenciaDias: plano.carenciaDias,
+      vigenciaMeses: plano.vigenciaMeses,
+      ativo: plano.ativo,
+      totalClientes: plano.totalClientes,
+      receitaMensal: plano.receitaMensal,
+      assistenciaFuneral: plano.assistenciaFuneral,
+      auxilioCemiterio: plano.auxilioCemiterio,
+      taxaInclusaCemiterioPublico: plano.taxaInclusaCemiterioPublico,
+      beneficiarios: plano.beneficiarios.map((b) => b.nome),
+
+      coberturas: {
+        servicosPadrao: plano.coberturas
+          .filter((c) => c.tipo === "servicosPadrao")
+          .map((c) => c.descricao),
+        coberturaTranslado: plano.coberturas
+          .filter((c) => c.tipo === "coberturaTranslado")
+          .map((c) => c.descricao),
+        servicosEspecificos: plano.coberturas
+          .filter((c) => c.tipo === "servicosEspecificos")
+          .map((c) => c.descricao),
+      },
+    }));
   }
 
   async getPaged(params: {

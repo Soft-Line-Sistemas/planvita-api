@@ -3,6 +3,21 @@ import { CadastroTitularRequest } from '../types/titular';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 
 type TitularType = Prisma.TitularGetPayload<{}>;
+type TitularWithRelations = Prisma.TitularGetPayload<{
+  include: {
+    dependentes: true;
+    corresponsaveis: true;
+    plano: {
+      include: {
+        coberturas: true;
+        beneficios: true;
+        beneficiarios: true;
+      };
+    };
+    pagamentos: true;
+    vendedor: true;
+  };
+}>;
 
 export class TitularService {
   private prisma;
@@ -27,11 +42,12 @@ export class TitularService {
     const where: any = {};
 
     if (search) {
+      const term = search.trim();
       where.OR = [
-        { nome: { contains: search, mode: "insensitive" } },
-        { email: { contains: search, mode: "insensitive" } },
-        { cpf: { contains: search, mode: "insensitive" } },
-        { telefone: { contains: search, mode: "insensitive" } },
+        { nome: { contains: term } },
+        { email: { contains: term } },
+        { cpf: { contains: term } },
+        { telefone: { contains: term } },
       ];
     }
 
@@ -65,8 +81,23 @@ export class TitularService {
     };
   }
 
-  async getById(id: number): Promise<TitularType | null> {
-    return this.prisma.titular.findUnique({ where: { id: Number(id) } });
+  async getById(id: number): Promise<TitularWithRelations | null> {
+    return this.prisma.titular.findUnique({
+      where: { id: Number(id) },
+      include: {
+        dependentes: true,
+        corresponsaveis: true,
+        plano: {
+          include: {
+            coberturas: true,
+            beneficios: true,
+            beneficiarios: true,
+          },
+        },
+        pagamentos: true,
+        vendedor: true,
+      },
+    });
   }
 
   async create(data: TitularType): Promise<TitularType> {
