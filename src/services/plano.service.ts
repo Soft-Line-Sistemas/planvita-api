@@ -27,11 +27,17 @@ export class PlanoService {
       },
     });
 
-    return planos.map((plano) => ({
+    const normalizarIdadeMaxima = (idade: number | null) => {
+      if (idade === null || idade === undefined) return null;
+      if (idade >= 999) return null;
+      return idade;
+    };
+
+    const construirRegistro = (plano: (typeof planos)[number]) => ({
       id: plano.id,
       nome: plano.nome,
       valorMensal: plano.valorMensal,
-      idadeMaxima: plano.idadeMaxima,
+      idadeMaxima: normalizarIdadeMaxima(plano.idadeMaxima),
       coberturaMaxima: plano.coberturaMaxima,
       carenciaDias: plano.carenciaDias,
       vigenciaMeses: plano.vigenciaMeses,
@@ -45,16 +51,44 @@ export class PlanoService {
 
       coberturas: {
         servicosPadrao: plano.coberturas
-          .filter((c) => c.tipo === "servicosPadrao")
+          .filter((c) => c.tipo === 'servicosPadrao')
           .map((c) => c.descricao),
         coberturaTranslado: plano.coberturas
-          .filter((c) => c.tipo === "coberturaTranslado")
+          .filter((c) => c.tipo === 'coberturaTranslado')
           .map((c) => c.descricao),
         servicosEspecificos: plano.coberturas
-          .filter((c) => c.tipo === "servicosEspecificos")
+          .filter((c) => c.tipo === 'servicosEspecificos')
           .map((c) => c.descricao),
       },
-    }));
+    });
+
+    const deduplicados = new Map<string, ReturnType<typeof construirRegistro>>();
+    for (const plano of planos) {
+      const payload = construirRegistro(plano);
+      const key = [
+        payload.nome?.toLowerCase().trim() ?? '',
+        Number(payload.valorMensal).toFixed(2),
+        payload.idadeMaxima ?? 'sem-limite',
+      ].join('|');
+
+      if (!deduplicados.has(key)) {
+        deduplicados.set(key, payload);
+      } else {
+        const existente = deduplicados.get(key)!;
+        if (
+          existente.coberturas.servicosPadrao.length +
+            existente.coberturas.coberturaTranslado.length +
+            existente.coberturas.servicosEspecificos.length <
+          payload.coberturas.servicosPadrao.length +
+            payload.coberturas.coberturaTranslado.length +
+            payload.coberturas.servicosEspecificos.length
+        ) {
+          deduplicados.set(key, payload);
+        }
+      }
+    }
+
+    return Array.from(deduplicados.values());
   }
 
   async getPaged(params: {
