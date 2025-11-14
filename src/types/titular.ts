@@ -30,8 +30,12 @@ export interface CadastroTitularRequest {
   dependentes: {
     nome: string;
     idade: number;
+    dataNascimento?: string | null;
     parentesco: string;
     telefone: string;
     cpf: string;
   }[];
+  step5?: {
+    planoId?: number | null;
+  };
 }

@@ -105,7 +105,7 @@ export class TitularService {
   }
 
    async createFull(data: CadastroTitularRequest) {
-    const { step1, step2, step3, dependentes } = data;
+    const { step1, step2, step3, dependentes, step5 } = data;
 
     // --- Validações básicas ---
     if (!step1.email || !step1.cpf) {
@@ -152,8 +152,11 @@ export class TitularService {
     const dependentesData = dependentes?.map((dep) => ({
       nome: dep.nome,
       tipoDependente: dep.parentesco || 'Outro',
-      dataNascimento: new Date(), // sem data exata, gera placeholder
+      dataNascimento: dep.dataNascimento
+        ? new Date(dep.dataNascimento)
+        : new Date(),
     }));
+    const planoIdSelecionado = step5?.planoId ? Number(step5.planoId) : null;
 
     try {
       // --- Criação transacional ---
@@ -174,6 +177,13 @@ export class TitularService {
             logradouro: step2.logradouro,
             complemento: step2.complemento,
             numero: step2.numero,
+            plano: planoIdSelecionado
+              ? {
+                  connect: {
+                    id: planoIdSelecionado,
+                  },
+                }
+              : undefined,
             dependentes: dependentesData?.length
               ? { create: dependentesData }
               : undefined,
