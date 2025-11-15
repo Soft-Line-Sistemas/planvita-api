@@ -1,6 +1,7 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
 import { CadastroTitularRequest } from '../types/titular';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { Buffer } from 'buffer';
 
 type TitularType = Prisma.TitularGetPayload<{}>;
 type TitularWithRelations = Prisma.TitularGetPayload<{
@@ -16,8 +17,18 @@ type TitularWithRelations = Prisma.TitularGetPayload<{
     };
     pagamentos: true;
     vendedor: true;
+    assinaturas: true;
   };
 }>;
+const FILES_API_BASE_URL = process.env.FILES_API_URL;
+const ASSINATURA_TIPOS = [
+  'TITULAR_ASSINATURA_1',
+  'TITULAR_ASSINATURA_2',
+  'CORRESPONSAVEL_ASSINATURA_1',
+  'CORRESPONSAVEL_ASSINATURA_2',
+] as const;
+type AssinaturaDigitalType = Prisma.AssinaturaDigitalGetPayload<{}>;
+type AssinaturaTipo = (typeof ASSINATURA_TIPOS)[number];
 
 export class TitularService {
   private prisma;
@@ -67,6 +78,7 @@ export class TitularService {
         include: {
           plano: true,
           dependentes: true,
+          assinaturas: true,
         },
         orderBy: { nome: "asc" },
       }),
@@ -96,6 +108,7 @@ export class TitularService {
         },
         pagamentos: true,
         vendedor: true,
+        assinaturas: true,
       },
     });
   }
@@ -216,5 +229,174 @@ export class TitularService {
 
   async delete(id: number): Promise<TitularType> {
     return this.prisma.titular.delete({ where: { id: Number(id) } });
+  }
+
+  async listarAssinaturas(titularId: number): Promise<AssinaturaDigitalType[]> {
+    return this.prisma.assinaturaDigital.findMany({
+      where: { titularId },
+      orderBy: { tipo: 'asc' },
+    });
+  }
+
+  async salvarAssinaturaDigital(
+    titularId: number,
+    tipo: AssinaturaTipo,
+    assinaturaBase64: string,
+  ): Promise<AssinaturaDigitalType> {
+    const titular = await this.prisma.titular.findUnique({
+      where: { id: titularId },
+      select: { id: true },
+    });
+    if (!titular) {
+      throw new Error('Titular não encontrado.');
+    }
+
+    if (!ASSINATURA_TIPOS.includes(tipo)) {
+      throw new Error('Tipo de assinatura inválido.');
+    }
+
+    const { buffer, mimetype } = this.parseBase64Image(assinaturaBase64);
+    const filename = `assinatura-${tipo.toLowerCase()}-${Date.now()}.png`;
+    const uploadInfo = await this.uploadAssinaturaArquivo(buffer, mimetype, filename);
+
+    return this.prisma.assinaturaDigital.upsert({
+      where: {
+        titularId_tipo: {
+          titularId,
+          tipo,
+        },
+      },
+      update: {
+        arquivoId: uploadInfo.arquivoId,
+        arquivoUrl: uploadInfo.arquivoUrl,
+        filename: uploadInfo.filename,
+        mimetype: uploadInfo.mimetype,
+        size: uploadInfo.size,
+      },
+      create: {
+        titularId,
+        tipo,
+        arquivoId: uploadInfo.arquivoId,
+        arquivoUrl: uploadInfo.arquivoUrl,
+        filename: uploadInfo.filename,
+        mimetype: uploadInfo.mimetype,
+        size: uploadInfo.size,
+      },
+    });
+  }
+
+  async baixarAssinaturaDigital(
+    titularId: number,
+    assinaturaId: number,
+  ): Promise<{ buffer: Buffer; mimetype: string; filename: string }> {
+    const assinatura = await this.prisma.assinaturaDigital.findUnique({
+      where: { id: assinaturaId },
+    });
+
+    if (!assinatura || assinatura.titularId !== titularId) {
+      const err: any = new Error('Assinatura não encontrada para este titular.');
+      err.status = 404;
+      throw err;
+    }
+
+    const token = this.getFilesApiToken();
+    if (!token) {
+      throw new Error('Token da Files API não configurado para este tenant.');
+    }
+
+    const baseUrl = FILES_API_BASE_URL?.replace(/\/$/, '');
+    const requestUrl = assinatura.arquivoId && baseUrl
+      ? `${baseUrl}/file/${assinatura.arquivoId}/download`
+      : assinatura.arquivoUrl;
+
+    if (!requestUrl) {
+      throw new Error('URL do arquivo da assinatura não está configurada.');
+    }
+
+    const response = await fetch(requestUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(
+        `Falha ao baixar assinatura do armazenamento externo: ${response.status} ${message}`,
+      );
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      mimetype:
+        assinatura.mimetype ||
+        response.headers.get('content-type') ||
+        'application/octet-stream',
+      filename:
+        assinatura.filename ||
+        `assinatura-${assinatura.tipo.toLowerCase().replace(/_/g, '-')}.png`,
+    };
+  }
+
+  private parseBase64Image(dataUrl: string) {
+    const matches = dataUrl.match(/^data:(.+);base64,(.+)$/);
+    const mimetype = matches?.[1] ?? 'image/png';
+    const payload = matches?.[2] ?? dataUrl;
+    const buffer = Buffer.from(payload, 'base64');
+    return { buffer, mimetype };
+  }
+
+  private async uploadAssinaturaArquivo(
+    buffer: Buffer,
+    mimetype: string,
+    filename: string,
+  ) {
+    const token = this.getFilesApiToken();
+    if (!token) {
+      throw new Error('Token da Files API não configurado para este tenant.');
+    }
+
+    const formData = new FormData();
+    const uint = new Uint8Array(buffer);
+    const blob = new Blob([uint], { type: mimetype });
+    formData.append('file', blob, filename);
+
+    const response = await fetch(`${FILES_API_BASE_URL}/file/upload`, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(
+        `Falha ao enviar assinatura para armazenamento externo: ${response.status} ${message}`,
+      );
+    }
+
+    const payload = await response.json();
+    const arquivoId = payload.id;
+    const arquivoUrl =
+      payload.path ||
+      `${FILES_API_BASE_URL}/file/${arquivoId}/download`;
+
+    return {
+      arquivoId: String(arquivoId),
+      arquivoUrl: arquivoUrl,
+      filename: payload.filename || filename,
+      mimetype: payload.mimetype || mimetype,
+      size: payload.size ?? buffer.length,
+    };
+  }
+
+  private getFilesApiToken(): string | null {
+    if (!this.tenantId) return process.env.FILES_API_TOKEN || null;
+    const normalized = this.tenantId.toUpperCase();
+    const envKey = `FILES_API_TOKEN_${normalized}`;
+    return process.env[envKey] || process.env.FILES_API_TOKEN || null;
   }
 }

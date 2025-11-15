@@ -127,6 +127,7 @@ model Titular {
   contasReceber   ContaReceber[]
   orcamentos      Orcamento[]
   recibos         Recibo[]
+  assinaturas     AssinaturaDigital[]
 
   planoId        Int?
   plano          Plano?      @relation(fields: [planoId], references: [id]) // 🔹 Relação adicionada
@@ -156,6 +157,22 @@ model Corresponsavel {
   relacionamento String
 
   autorizacoesLegais AutorizacaoLegal[] @relation("CorresponsavelToAutorizacaoLegal")
+}
+
+model AssinaturaDigital {
+  id        Int      @id @default(autoincrement())
+  titular   Titular  @relation(fields: [titularId], references: [id], onDelete: Cascade)
+  titularId Int
+  tipo      String
+  arquivoId String
+  arquivoUrl String
+  filename  String
+  mimetype  String?
+  size      Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([titularId, tipo])
 }
 
 // ----------------- PLANOS -----------------
