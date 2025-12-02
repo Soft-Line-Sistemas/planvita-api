@@ -5,8 +5,6 @@ generator client {
 
 datasource db {
   provider = "sqlserver"
-  url      = env("DATABASE_URL")
-  experimental = { adapter = true }
 }
 
 // ----------------- API KEYS -----------------
