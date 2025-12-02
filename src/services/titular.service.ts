@@ -4,22 +4,32 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { Buffer } from 'buffer';
 
 type TitularType = Prisma.TitularGetPayload<{}>;
+
+const TITULAR_FULL_RELATIONS = {
+  dependentes: true,
+  corresponsaveis: true,
+  plano: {
+    include: {
+      coberturas: true,
+      beneficios: true,
+      beneficiarios: true,
+    },
+  },
+  pagamentos: true,
+  vendedor: true,
+  assinaturas: true,
+} as const;
+
+const TITULAR_LIST_RELATIONS = {
+  plano: true,
+  dependentes: true,
+  assinaturas: true,
+} as const;
+
 type TitularWithRelations = Prisma.TitularGetPayload<{
-  include: {
-    dependentes: true;
-    corresponsaveis: true;
-    plano: {
-      include: {
-        coberturas: true;
-        beneficios: true;
-        beneficiarios: true;
-      };
-    };
-    pagamentos: true;
-    vendedor: true;
-    assinaturas: true;
-  };
+  include: typeof TITULAR_FULL_RELATIONS;
 }>;
+
 const FILES_API_BASE_URL = process.env.FILES_API_URL;
 const ASSINATURA_TIPOS = [
   'TITULAR_ASSINATURA_1',
@@ -27,7 +37,7 @@ const ASSINATURA_TIPOS = [
   'CORRESPONSAVEL_ASSINATURA_1',
   'CORRESPONSAVEL_ASSINATURA_2',
 ] as const;
-type AssinaturaDigitalType = Prisma.AssinaturaDigitalGetPayload<{}>;
+type AssinaturaDigitalType = Prisma.AssinaturaDigital;
 type AssinaturaTipo = (typeof ASSINATURA_TIPOS)[number];
 
 export class TitularService {
@@ -75,11 +85,7 @@ export class TitularService {
         where,
         skip: (page - 1) * limit,
         take: limit,
-        include: {
-          plano: true,
-          dependentes: true,
-          assinaturas: true,
-        },
+        include: TITULAR_LIST_RELATIONS as Prisma.TitularInclude,
         orderBy: { nome: "asc" },
       }),
       this.prisma.titular.count({ where }),
@@ -96,20 +102,7 @@ export class TitularService {
   async getById(id: number): Promise<TitularWithRelations | null> {
     return this.prisma.titular.findUnique({
       where: { id: Number(id) },
-      include: {
-        dependentes: true,
-        corresponsaveis: true,
-        plano: {
-          include: {
-            coberturas: true,
-            beneficios: true,
-            beneficiarios: true,
-          },
-        },
-        pagamentos: true,
-        vendedor: true,
-        assinaturas: true,
-      },
+      include: TITULAR_FULL_RELATIONS as Prisma.TitularInclude,
     });
   }
 
@@ -232,7 +225,7 @@ export class TitularService {
   }
 
   async listarAssinaturas(titularId: number): Promise<AssinaturaDigitalType[]> {
-    return this.prisma.assinaturaDigital.findMany({
+    return (this.prisma as any).assinaturaDigital.findMany({
       where: { titularId },
       orderBy: { tipo: 'asc' },
     });
@@ -259,7 +252,7 @@ export class TitularService {
     const filename = `assinatura-${tipo.toLowerCase()}-${Date.now()}.png`;
     const uploadInfo = await this.uploadAssinaturaArquivo(buffer, mimetype, filename);
 
-    return this.prisma.assinaturaDigital.upsert({
+    return (this.prisma as any).assinaturaDigital.upsert({
       where: {
         titularId_tipo: {
           titularId,
@@ -289,7 +282,7 @@ export class TitularService {
     titularId: number,
     assinaturaId: number,
   ): Promise<{ buffer: Buffer; mimetype: string; filename: string }> {
-    const assinatura = await this.prisma.assinaturaDigital.findUnique({
+    const assinatura = await (this.prisma as any).assinaturaDigital.findUnique({
       where: { id: assinaturaId },
     });
 
