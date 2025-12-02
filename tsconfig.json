@@ -10,5 +10,7 @@
     "paths": {
       "@generated/prisma": ["../generated/prisma"]
     }
-  }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["frontend", "node_modules", "dist"]
 }

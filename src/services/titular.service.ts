@@ -1,34 +1,37 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
+import type { AssinaturaDigital } from '../../generated/prisma/client';
 import { CadastroTitularRequest } from '../types/titular';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { Buffer } from 'buffer';
 
 type TitularType = Prisma.TitularGetPayload<{}>;
 
-const TITULAR_FULL_RELATIONS = {
-  dependentes: true,
-  corresponsaveis: true,
-  plano: {
-    include: {
-      coberturas: true,
-      beneficios: true,
-      beneficiarios: true,
+const TITULAR_FULL_ARGS = Prisma.validator<Prisma.TitularDefaultArgs>()({
+  include: {
+    dependentes: true,
+    corresponsaveis: true,
+    plano: {
+      include: {
+        coberturas: true,
+        beneficios: true,
+        beneficiarios: true,
+      },
     },
+    pagamentos: true,
+    vendedor: true,
+    assinaturas: true,
   },
-  pagamentos: true,
-  vendedor: true,
-  assinaturas: true,
-} as const;
+});
 
-const TITULAR_LIST_RELATIONS = {
-  plano: true,
-  dependentes: true,
-  assinaturas: true,
-} as const;
+const TITULAR_LIST_ARGS = Prisma.validator<Prisma.TitularDefaultArgs>()({
+  include: {
+    plano: true,
+    dependentes: true,
+    assinaturas: true,
+  },
+});
 
-type TitularWithRelations = Prisma.TitularGetPayload<{
-  include: typeof TITULAR_FULL_RELATIONS;
-}>;
+type TitularWithRelations = Prisma.TitularGetPayload<typeof TITULAR_FULL_ARGS>;
 
 const FILES_API_BASE_URL = process.env.FILES_API_URL;
 const ASSINATURA_TIPOS = [
@@ -37,7 +40,7 @@ const ASSINATURA_TIPOS = [
   'CORRESPONSAVEL_ASSINATURA_1',
   'CORRESPONSAVEL_ASSINATURA_2',
 ] as const;
-type AssinaturaDigitalType = Prisma.AssinaturaDigital;
+type AssinaturaDigitalType = AssinaturaDigital;
 type AssinaturaTipo = (typeof ASSINATURA_TIPOS)[number];
 
 export class TitularService {
@@ -85,7 +88,7 @@ export class TitularService {
         where,
         skip: (page - 1) * limit,
         take: limit,
-        include: TITULAR_LIST_RELATIONS as Prisma.TitularInclude,
+        include: TITULAR_LIST_ARGS.include,
         orderBy: { nome: "asc" },
       }),
       this.prisma.titular.count({ where }),
@@ -102,7 +105,7 @@ export class TitularService {
   async getById(id: number): Promise<TitularWithRelations | null> {
     return this.prisma.titular.findUnique({
       where: { id: Number(id) },
-      include: TITULAR_FULL_RELATIONS as Prisma.TitularInclude,
+      include: TITULAR_FULL_ARGS.include,
     });
   }
 
