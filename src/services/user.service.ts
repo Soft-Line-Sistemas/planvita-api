@@ -112,6 +112,33 @@ export class UserService {
     return this.prisma.user.delete({ where: { id: Number(id) } });
   }
 
+  async updateEmail(id: number, email: string): Promise<UserType> {
+    return this.prisma.user.update({
+      where: { id: Number(id) },
+      data: { email },
+    });
+  }
+
+  async updatePassword(id: number, newPassword: string): Promise<void> {
+    const senhaHash = await bcrypt.hash(newPassword, 10);
+
+    await this.prisma.user.update({
+      where: { id: Number(id) },
+      data: { senhaHash },
+    });
+  }
+
+  async verifyPassword(id: number, plainPassword: string): Promise<boolean | null> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: Number(id) },
+      select: { senhaHash: true },
+    });
+
+    if (!user) return null;
+
+    return bcrypt.compare(plainPassword, user.senhaHash);
+  }
+
   async updateUserRole(userId: number, roleId: number) {
     await this.prisma.userRole.deleteMany({ where: { userId } });
 
