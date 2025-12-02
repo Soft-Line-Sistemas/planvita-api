@@ -2,11 +2,14 @@ import { Request, Response } from 'express';
 import { UserService } from '../services/user.service';
 import Logger from '../utils/logger';
 import { PrismaClient } from '../../generated/prisma/client';
+import { AuthRequest } from '../types/auth';
 
 export interface TenantRequest extends Request {
   tenantId?: string;
   prisma?: PrismaClient;
 }
+
+type TenantAuthRequest = TenantRequest & AuthRequest;
 
 export class UserController {
   private logger = new Logger({ service: 'UserController' });
@@ -124,6 +127,125 @@ export class UserController {
       res.json(result);
     } catch (error) {
       this.logger.error('Erro ao atualizar role do usuário', error, {
+        params: req.params,
+        body: req.body,
+      });
+      res.status(500).json({ message: 'Erro interno no servidor' });
+    }
+  }
+
+  async changePassword(req: TenantAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      if (!req.user) return res.status(401).json({ message: 'Não autenticado' });
+
+      const targetUserId = Number(req.params.id);
+      if (Number.isNaN(targetUserId)) {
+        return res.status(400).json({ message: 'ID de usuário inválido' });
+      }
+
+      const { currentPassword, newPassword } = req.body as {
+        currentPassword?: string;
+        newPassword?: string;
+      };
+
+      if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length < 6) {
+        return res
+          .status(400)
+          .json({ message: 'A nova senha deve ter pelo menos 6 caracteres' });
+      }
+
+      const service = new UserService(req.tenantId);
+      const existingUser = await service.getById(targetUserId);
+
+      if (!existingUser) {
+        this.logger.warn(`User not found for password update: ${targetUserId}`, {
+          tenant: req.tenantId,
+        });
+        return res.status(404).json({ message: 'Usuário não encontrado' });
+      }
+
+      const isSelf = req.user.id === targetUserId;
+      const isAdmin = req.user.role?.name === 'admin_master';
+
+      if (!isSelf && !isAdmin) {
+        return res.status(403).json({ message: 'Permissão insuficiente' });
+      }
+
+      if (isSelf) {
+        if (!currentPassword) {
+          return res.status(400).json({ message: 'A senha atual é obrigatória' });
+        }
+
+        const isValidPassword = await service.verifyPassword(targetUserId, currentPassword);
+        if (isValidPassword === null) {
+          return res.status(404).json({ message: 'Usuário não encontrado' });
+        }
+
+        if (!isValidPassword) {
+          return res.status(401).json({ message: 'Senha atual incorreta' });
+        }
+      }
+
+      await service.updatePassword(targetUserId, newPassword);
+
+      this.logger.info('Senha atualizada', {
+        tenant: req.tenantId,
+        targetUserId,
+        requesterId: req.user.id,
+      });
+
+      res.json({
+        message: isSelf ? 'Senha atualizada com sucesso' : 'Senha redefinida com sucesso',
+      });
+    } catch (error) {
+      this.logger.error('Erro ao atualizar senha do usuário', error, {
+        params: req.params,
+        body: req.body,
+      });
+      res.status(500).json({ message: 'Erro interno no servidor' });
+    }
+  }
+
+  async changeEmail(req: TenantAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      if (!req.user) return res.status(401).json({ message: 'Não autenticado' });
+
+      const isAdmin = req.user.role?.name === 'admin_master';
+      if (!isAdmin) {
+        return res.status(403).json({ message: 'Permissão insuficiente' });
+      }
+
+      const targetUserId = Number(req.params.id);
+      if (Number.isNaN(targetUserId)) {
+        return res.status(400).json({ message: 'ID de usuário inválido' });
+      }
+
+      const { email } = req.body as { email?: string };
+      if (!email || typeof email !== 'string' || !email.trim()) {
+        return res.status(400).json({ message: 'E-mail é obrigatório' });
+      }
+
+      const service = new UserService(req.tenantId);
+      const updated = await service.updateEmail(targetUserId, email.trim());
+
+      this.logger.info('Email atualizado por admin', {
+        tenant: req.tenantId,
+        targetUserId,
+        requesterId: req.user.id,
+      });
+
+      res.json({
+        message: 'E-mail atualizado com sucesso',
+        user: {
+          id: updated.id,
+          nome: (updated as any).nome ?? undefined,
+          email: updated.email,
+        },
+      });
+    } catch (error) {
+      this.logger.error('Erro ao atualizar e-mail do usuário', error, {
         params: req.params,
         body: req.body,
       });

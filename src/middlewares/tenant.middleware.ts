@@ -19,6 +19,11 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
     let tenant = (req.headers['x-tenant'] as string)?.toLowerCase();
 
     if (!tenant) {
+      const tenantQuery = (req.query?.tenant as string | undefined)?.toLowerCase();
+      if (tenantQuery) tenant = tenantQuery;
+    }
+
+    if (!tenant) {
       const host = req.headers.host;
       if (!host) return res.status(400).send('Host header missing');
 
