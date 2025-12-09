@@ -47,6 +47,13 @@ export interface JwtConfig {
   expiresIn: StringValue | number;
 }
 
+export interface NotificationConfig {
+  baseUrl: string;
+  tokenLider?: string;
+  tokenPax?: string;
+  defaultMethod: 'whatsapp' | 'email';
+}
+
 export interface AppConfig {
   database?: DatabaseConfig;
   server: ServerConfig;
@@ -56,6 +63,7 @@ export interface AppConfig {
   logLevel: string;
   logFile: string;
   encryptionKey: string;
+  notification: NotificationConfig;
 }
 
 export interface HealthCheckResult {

@@ -34,6 +34,16 @@ export const config: AppConfig = {
   logFile: getEnvVar('LOG_FILE', 'logs/planvita-api.log'),
 
   encryptionKey: getEnvVar('ENCRYPTION_KEY'),
+
+  notification: {
+    baseUrl: getEnvVar('NOTIFICATION_API_URL', 'https://notification.gleeze.com/api/v1'),
+    tokenLider: getEnvVarOptional('NOTIFICATION_TOKEN_LIDER'),
+    tokenPax: getEnvVarOptional('NOTIFICATION_TOKEN_TOKEN_PAX') || getEnvVarOptional('NOTIFICATION_TOKEN_PAX'),
+    defaultMethod:
+      (process.env.NOTIFICATION_DEFAULT_METHOD ?? 'email').toLowerCase() === 'whatsapp'
+        ? 'whatsapp'
+        : 'email',
+  },
 };
 
 function getEnvVar(name: string, defaultValue?: string): string {

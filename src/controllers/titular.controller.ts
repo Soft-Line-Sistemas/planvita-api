@@ -81,8 +81,9 @@ export class TitularController {
       res.status(201).json(result);
     } catch (error) {
       this.logger.error('Falha ao salvar assinatura', error, { body: req.body, params: req.params });
+      const status = (error as any)?.status ?? 500;
       const message = error instanceof Error ? error.message : 'Internal server error';
-      res.status(500).json({ message });
+      res.status(status).json({ message });
     }
   }
 
