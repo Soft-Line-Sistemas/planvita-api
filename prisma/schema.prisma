@@ -5,6 +5,7 @@ generator client {
 
 datasource db {
   provider = "sqlserver"
+  url      = env("DATABASE_URL")
 }
 
 // ----------------- API KEYS -----------------
@@ -133,6 +134,12 @@ model Titular {
 
   vendedor        Consultor? @relation(fields: [vendedorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   vendedorId      Int?
+
+  // Flag para bloquear notificações recorrentes de cobrança
+  bloquearNotificacaoRecorrente Boolean @default(false)
+
+  // Método preferencial para notificações recorrentes (whatsapp | email)
+  metodoNotificacaoRecorrente String? @default("email")
 }
 
 // ----------------- DEPENDENTES -----------------
@@ -427,6 +434,55 @@ model NotaFiscal {
   dataEmissao DateTime  @default(now())
   status      String
   chaveAcesso String?
+}
+
+// ----------------- NOTIFICAÇÕES -----------------
+
+model NotificationSchedule {
+  id                   Int      @id @default(autoincrement())
+  tenantId             String
+  frequenciaMinutos    Int      @default(1440) // padrão: 1 vez ao dia
+  proximaExecucao      DateTime
+  ultimaExecucao       DateTime?
+  metodoPreferencial   String   @default("email")
+  ativo                Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([tenantId, proximaExecucao])
+}
+
+model NotificationLog {
+  id          Int      @id @default(autoincrement())
+  tenantId    String
+  logId       String?
+  titularId   Int?
+  destinatario String?
+  canal       String
+  status      String
+  motivo      String?
+  payload     String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, logId])
+}
+
+model NotificationTemplate {
+  id         Int      @id @default(autoincrement())
+  tenantId   String
+  nome       String
+  canal      String   // email, whatsapp, sms
+  assunto    String?
+  htmlBody   String?
+  textBody   String?
+  anexos     String?  // JSON string array de URLs
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([tenantId, canal])
+  @@index([tenantId, isDefault])
 }
 
 // ----------------- ESTOQUE E SERVIÇOS -----------------

@@ -33,6 +33,8 @@ const ASSINATURA_TIPOS = [
   'CORRESPONSAVEL_ASSINATURA_1',
   'CORRESPONSAVEL_ASSINATURA_2',
 ] as const;
+const ASSINATURA_ALLOWED_MIME = ['image/png', 'image/jpeg'];
+const ASSINATURA_MAX_BYTES = 5 * 1024 * 1024; // 5MB
 type AssinaturaDigitalType = {
   id: number;
   titularId: number;
@@ -342,8 +344,21 @@ export class TitularService {
 
   private parseBase64Image(dataUrl: string) {
     const matches = dataUrl.match(/^data:(.+);base64,(.+)$/);
+    if (!matches) {
+      throw Object.assign(new Error('Formato de assinatura inválido.'), { status: 400 });
+    }
     const mimetype = matches?.[1] ?? 'image/png';
     const payload = matches?.[2] ?? dataUrl;
+    if (!ASSINATURA_ALLOWED_MIME.includes(mimetype)) {
+      throw Object.assign(new Error('Tipo de arquivo de assinatura não permitido.'), { status: 400 });
+    }
+    const sizeBytes = Math.floor((payload.length * 3) / 4);
+    if (sizeBytes > ASSINATURA_MAX_BYTES) {
+      throw Object.assign(new Error('Arquivo de assinatura excede o limite de 5MB.'), { status: 400 });
+    }
+    if (!/^[A-Za-z0-9+/=]+$/.test(payload)) {
+      throw Object.assign(new Error('Assinatura em base64 inválida.'), { status: 400 });
+    }
     const buffer = Buffer.from(payload, 'base64');
     return { buffer, mimetype };
   }

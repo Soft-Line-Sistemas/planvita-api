@@ -28,6 +28,8 @@ import userRoutes from './routes/user.routes';
 import authRoutes from './routes/auth.routes';
 import regrasRoutes from './routes/regras.routes';
 import financeiroRoutes from './routes/financeiro.routes';
+import notificacaoRoutes from './routes/notificacao.routes';
+import notificacaoTemplateRoutes from './routes/notificacao-template.routes';
 
 dotenv.config({ quiet: true });
 
@@ -68,7 +70,7 @@ app.use(
       }
     },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Tenant'],
     exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
   }),
@@ -107,6 +109,8 @@ app.use(`/api/${API_VERSION}/permissions`, permissionRoutes);
 app.use(`/api/${API_VERSION}/users`, userRoutes);
 app.use(`/api/${API_VERSION}/regras`, regrasRoutes);
 app.use(`/api/${API_VERSION}/financeiro`, financeiroRoutes);
+app.use(`/api/${API_VERSION}/notificacoes`, notificacaoRoutes);
+app.use(`/api/${API_VERSION}/notificacoes/templates`, notificacaoTemplateRoutes);
 
 // Handler error
 app.use(notFoundHandler);
