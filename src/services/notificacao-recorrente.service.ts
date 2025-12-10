@@ -82,13 +82,6 @@ export class NotificacaoRecorrenteService {
   private logger: Logger;
   private apiClient: NotificationApiClient;
   private templateService: NotificacaoTemplateService;
-  private static memoriaLogs: Array<{
-    id: string;
-    timestamp: Date;
-    tenantId: string;
-    resumo: Pick<ResultadoDisparo, 'enviados' | 'ignorados' | 'falhas'>;
-    detalhes: ResultadoDisparo['detalhes'];
-  }> = [];
 
   constructor(private tenantId: string) {
     if (!tenantId) {
@@ -219,8 +212,8 @@ export class NotificacaoRecorrenteService {
       };
     }
 
-    if (!agendamento.ativo) {
-      this.logger.warn('Tentativa de disparo com agendamento inativo', { tenantId: this.tenantId });
+    if (!agendamento.ativo && !force) {
+      this.logger.warn('Tentativa de disparo com agendamento inativo', { tenant: this.tenantId });
       return {
         enviados: 0,
         ignorados: 0,
@@ -240,6 +233,7 @@ export class NotificacaoRecorrenteService {
     let falhas = 0;
     const detalhes: ResultadoDisparo['detalhes'] = [];
     const templateEmail = await this.templateService.obterDefault('email');
+    const templateWhatsapp = await this.templateService.obterDefault('whatsapp');
     const logsParaPersistir: Array<{
       tenantId: string;
       logId: string;
@@ -298,7 +292,12 @@ export class NotificacaoRecorrenteService {
         continue;
       }
 
-      const payload = this.montarMensagem(destinatario, contato, destinatario.metodo, templateEmail || undefined);
+      const payload = this.montarMensagem(
+        destinatario,
+        contato,
+        destinatario.metodo,
+        destinatario.metodo === 'email' ? templateEmail || undefined : templateWhatsapp || undefined,
+      );
       const resultado = await this.apiClient.send(payload);
 
       if (resultado.success) {
@@ -396,7 +395,7 @@ export class NotificacaoRecorrenteService {
   getLogs(limit = 50) {
     return this.prisma.notificationLog.findMany({
       where: { tenantId: this.tenantId },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: 'asc' },
       take: limit,
     });
   }
@@ -417,6 +416,114 @@ export class NotificacaoRecorrenteService {
     await this.prisma.notificationLog.createMany({ data: registros });
   }
 
+  private buildDefaultEmailHtml({
+    destinatario,
+    cobranca,
+    textoEditavel,
+  }: {
+    destinatario: DestinatarioNotificacao;
+    cobranca?: DestinatarioNotificacao['cobrancas'][0];
+    textoEditavel?: string | null;
+  }) {
+    const tenant = this.tenantId.toLowerCase();
+    const displayName = this.getDisplayName(tenant);
+    const logoUrl = `https://${tenant}.planvita.com.br/logo.png`;
+    const logoTag = `<img src="${logoUrl}" alt="Planvita" style="height:48px;" />`;
+
+    const descricao =
+      textoEditavel && textoEditavel.trim().length > 0
+        ? textoEditavel
+        : cobranca?.descricao ?? 'Cobrança de serviços';
+
+    const valorFormatado = cobranca
+      ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+          cobranca.valor,
+        )
+      : '—';
+
+    const vencimentoFormatado = cobranca
+      ? new Date(cobranca.vencimento).toLocaleDateString('pt-BR')
+      : '—';
+    const urlBase = `https://${tenant}.planvita.com.br`;
+    const urlCobranca = `${urlBase}/cliente`;
+
+    return `
+    <div style="font-family: Arial, sans-serif; background-color: #f4f5f7; padding: 24px;">
+      <div style="max-width: 640px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.06);">
+        <div style="background: linear-gradient(135deg, #16a34a, #0d7a35); color: #ffffff; padding: 18px 24px; display: flex; align-items: center; gap: 12px;">
+          ${logoTag}
+          <div>
+            <div style="font-size: 14px; opacity: 0.9;">${displayName}</div>
+            <div style="font-size: 12px; opacity: 0.9;">51.121.484/0001-68</div>
+          </div>
+        </div>
+        <div style="padding: 24px; color: #0f172a;">
+          <p style="font-size: 16px; margin: 0 0 12px 0;">Olá, ${destinatario.nome}.</p>
+          <p style="font-size: 14px; margin: 0 0 12px 0;">
+            Lembramos que a sua cobrança gerada por <strong>PLANO FAMILIAR CAMPO DO BOSQUE LTDA</strong>
+            no valor de <strong>${valorFormatado}</strong> vence em
+            <strong>${vencimentoFormatado}</strong>.
+          </p>
+          <p style="font-size: 14px; margin: 0 0 16px 0;">
+            Descrição da cobrança: ${descricao}
+          </p>
+          <div style="text-align: center; margin: 24px 0;">
+            <a href="${urlCobranca}" style="background: #16a34a; color: #ffffff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; display: inline-block;">
+              Visualizar cobrança
+            </a>
+          </div>
+          <p style="font-size: 13px; color: #475569;">Clique no botão acima para visualizar a cobrança. Ou acesse: ${urlBase}</p>
+        </div>
+        <div style="background: #0f172a; color: #e2e8f0; padding: 18px 24px; font-size: 12px;">
+          <strong>${displayName}</strong><br/>
+          51.121.484/0001-68<br/>
+          <a href="${urlBase}" style="color: #a7f3d0;">${urlBase}</a><br/>
+          <a href="mailto:pfcampodobosque@gmail.com" style="color: #a7f3d0;">pfcampodobosque@gmail.com</a><br/>
+          (71) 3034-7323<br/>
+          Avenida Centenário, 21, LOJA 80, Garcia<br/>
+          CEP: 40100180<br/>
+          Salvador - BA
+        </div>
+      </div>
+    </div>
+    `;
+  }
+
+  private getDisplayName(tenant: string) {
+    if (tenant === 'bosque') return 'PLANO FAMILIAR CAMPO DO BOSQUE LTDA';
+    if (tenant === 'pax') return 'PAX PLANVITA';
+    return 'LIDER PLANVITA';
+  }
+
+  private buildDefaultWhatsappText({
+    destinatario,
+    cobranca,
+  }: {
+    destinatario: DestinatarioNotificacao;
+    cobranca?: DestinatarioNotificacao['cobrancas'][0];
+  }) {
+    const tenant = this.tenantId.toLowerCase();
+    const displayName = this.getDisplayName(tenant);
+    const urlBase = `https://${tenant}.planvita.com.br`;
+    const urlCobranca = `${urlBase}/cliente`;
+    const valor = cobranca
+      ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+          cobranca.valor,
+        )
+      : '—';
+    const vencimento = cobranca
+      ? new Date(cobranca.vencimento).toLocaleDateString('pt-BR')
+      : '—';
+    const descricao = cobranca?.descricao ?? 'Cobrança de serviços';
+
+    return [
+      `Olá, ${destinatario.nome}`,
+      `Sua cobrança gerada por ${displayName} no valor de ${valor} vence em ${vencimento}.`,
+      `Descrição: ${descricao}.`,
+      `Visualize/regularize em: ${urlCobranca}`,
+    ].join('\n');
+  }
+
   private montarMensagem(
     destinatario: DestinatarioNotificacao,
     contato: string,
@@ -424,6 +531,36 @@ export class NotificacaoRecorrenteService {
     template?: { assunto?: string | null; htmlBody?: string | null; textBody?: string | null },
   ) {
     const cobrancaMaisProxima = destinatario.cobrancas[0];
+    const templateVars = this.buildTemplateVars(destinatario, cobrancaMaisProxima);
+
+    const metadata = {
+      tenantId: this.tenantId,
+      cobrancas: destinatario.cobrancas,
+      totalPendente: destinatario.totalPendente,
+      quantidadeCobrancas: destinatario.quantidadeCobrancas,
+    };
+
+    if (canal === 'whatsapp') {
+      const textoWhatsapp = this.applyTemplate(
+        template?.textBody ??
+          template?.htmlBody ??
+          this.buildDefaultWhatsappText({
+            destinatario,
+            cobranca: cobrancaMaisProxima,
+          }),
+        templateVars,
+      );
+
+      return {
+        to: contato,
+        channel: canal,
+        message: textoWhatsapp,
+        text: textoWhatsapp,
+        metadata,
+        phone: contato,
+      } as any;
+    }
+
     const mensagem = [
       `Olá, ${destinatario.nome}.`,
       `Identificamos ${destinatario.quantidadeCobrancas} cobrança(s) pendente(s) no valor total de R$ ${destinatario.totalPendente.toFixed(
@@ -443,31 +580,66 @@ export class NotificacaoRecorrenteService {
       'Para manter seus benefícios ativos, regularize o pagamento ou fale conosco. Se você já pagou, desconsidere este aviso.',
     );
 
-    const textoFinal = mensagem.join(' ');
-    const htmlFinal = `<p>${mensagem[0]}</p><p>${mensagem[1]}</p>${
-      cobrancaMaisProxima
-        ? `<p>O vencimento mais próximo é em ${new Date(cobrancaMaisProxima.vencimento).toLocaleDateString(
-            'pt-BR',
-          )}.</p>`
-        : ''
-    }<p>Para manter seus benefícios ativos, regularize o pagamento ou fale conosco. Se você já pagou, desconsidere este aviso.</p>`;
+    const textoFinal = this.applyTemplate(
+      template?.textBody ?? mensagem.join(' '),
+      templateVars,
+    );
+    const htmlFinal =
+      template?.htmlBody
+        ? this.applyTemplate(template.htmlBody, templateVars)
+        : this.buildDefaultEmailHtml({
+            destinatario,
+            cobranca: cobrancaMaisProxima,
+            textoEditavel: template?.textBody ?? '',
+          });
 
     return {
       to: contato,
       channel: canal,
       subject: template?.assunto ?? 'Cobrança pendente',
-      message: template?.textBody ?? textoFinal,
-      text: template?.textBody ?? textoFinal,
-      html: template?.htmlBody ?? htmlFinal,
-      metadata: {
-        tenantId: this.tenantId,
-        cobrancas: destinatario.cobrancas,
-        totalPendente: destinatario.totalPendente,
-      },
-      // Campos esperados pelo provider
-      phone: canal === 'whatsapp' ? contato : undefined,
-      email: canal === 'email' ? contato : undefined,
+      message: textoFinal,
+      text: textoFinal,
+      html: htmlFinal,
+      metadata,
     } as any;
+  }
+
+  private applyTemplate(template: string, vars: Record<string, string>) {
+    if (!template) return '';
+    let output = template;
+    Object.entries(vars).forEach(([key, value]) => {
+      output = output.replace(new RegExp(`{{\\s*${key}\\s*}}`, 'g'), value);
+    });
+    return output;
+  }
+
+  private buildTemplateVars(
+    destinatario: DestinatarioNotificacao,
+    cobranca?: DestinatarioNotificacao['cobrancas'][0],
+  ) {
+    const tenant = this.tenantId.toLowerCase();
+    const displayName = this.getDisplayName(tenant);
+    const urlBase = `https://${tenant}.planvita.com.br`;
+    const urlCobranca = `${urlBase}/cliente`;
+    const valor = cobranca
+      ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+          cobranca.valor,
+        )
+      : '—';
+    const vencimento = cobranca
+      ? new Date(cobranca.vencimento).toLocaleDateString('pt-BR')
+      : '—';
+    const descricao = cobranca?.descricao ?? 'Cobrança de serviços';
+
+    return {
+      nomeCliente: destinatario.nome,
+      nomeEmpresa: displayName,
+      valor,
+      vencimento,
+      descricao,
+      linkCobranca: urlCobranca,
+      tenant,
+    };
   }
 
   private async ensureAgendamento(): Promise<NotificationScheduleModel> {

@@ -15,7 +15,7 @@ export class NotificacaoTemplateService {
   async listar(): Promise<NotificationTemplateModel[]> {
     return this.prisma.notificationTemplate.findMany({
       where: { tenantId: this.tenantId },
-      orderBy: [{ canal: 'asc' }, { isDefault: 'desc' }, { createdAt: 'desc' }],
+      orderBy: [{ canal: 'asc' }, { createdAt: 'desc' }],
     });
   }
 
