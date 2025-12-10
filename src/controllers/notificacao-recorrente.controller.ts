@@ -34,8 +34,9 @@ export class NotificacaoRecorrenteController {
   async disparar(req: TenantRequest, res: Response) {
     try {
       const service = this.resolveService(req);
-      const force =
-        String(req.query.force ?? req.body?.force ?? 'false').toLowerCase() === 'true';
+      const force = req.query.force
+        ? String(req.query.force).toLowerCase() === 'true'
+        : true; // padrão: disparo manual força execução imediata
       const resultado = await service.dispararLote(force);
       res.json(resultado);
     } catch (error) {
