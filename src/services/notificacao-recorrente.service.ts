@@ -198,7 +198,7 @@ export class NotificacaoRecorrenteService {
     return destinatario;
   }
 
-  async dispararLote(force = false): Promise<ResultadoDisparo> {
+  async dispararLote(force = true): Promise<ResultadoDisparo> {
     const agendamento = await this.ensureAgendamento();
     const agora = new Date();
 
