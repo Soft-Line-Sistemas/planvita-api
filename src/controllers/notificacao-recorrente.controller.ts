@@ -137,7 +137,9 @@ export class NotificacaoRecorrenteController {
     try {
       const limit = Number(req.query.limit ?? 50);
       const service = this.resolveService(req);
-      const logs = service.getLogs(Number.isNaN(limit) ? 50 : Math.max(1, Math.min(limit, 200)));
+      const logs = await service.getLogs(
+        Number.isNaN(limit) ? 50 : Math.max(1, Math.min(limit, 200)),
+      );
       res.json(logs);
     } catch (error) {
       this.logger.error('Falha ao obter logs de notificações', error, { tenant: req.tenantId });
