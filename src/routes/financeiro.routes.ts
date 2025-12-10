@@ -9,6 +9,7 @@ router.post('/contas/pagar', controller.createContaPagar.bind(controller));
 router.post('/contas/receber', controller.createContaReceber.bind(controller));
 router.post('/contas/:tipo/:id/baixa', controller.baixarConta.bind(controller));
 router.post('/contas/:tipo/:id/estorno', controller.estornarConta.bind(controller));
+router.post('/contas/receber/:id/reconsulta', controller.reconsultarContaReceber.bind(controller));
 router.get('/cadastros', controller.getCadastros.bind(controller));
 router.post('/cadastros/bancos', controller.createBanco.bind(controller));
 router.delete('/cadastros/bancos/:id', controller.deleteBanco.bind(controller));

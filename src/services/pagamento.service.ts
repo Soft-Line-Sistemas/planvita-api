@@ -48,6 +48,19 @@ export class PagamentoService {
   }
 
   async create(data: PagamentoType): Promise<PagamentoType> {
+    if ((data as any).asaasPaymentId) {
+      const existing = await this.prisma.pagamento.findUnique({
+        where: { asaasPaymentId: (data as any).asaasPaymentId },
+      });
+
+      if (existing) {
+        return this.prisma.pagamento.update({
+          where: { id: existing.id },
+          data,
+        });
+      }
+    }
+
     return this.prisma.pagamento.create({ data });
   }
 

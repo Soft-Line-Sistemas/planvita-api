@@ -1,4 +1,6 @@
 import { getPrismaForTenant, Prisma } from '../utils/prisma';
+import { AsaasIntegrationService } from './asaas-integration.service';
+import Logger from '../utils/logger';
 
 type ContaPagarType = Prisma.ContaPagarGetPayload<{}>;
 type ContaReceberType = Prisma.ContaReceberGetPayload<{
@@ -57,6 +59,8 @@ export interface ContaReceberInput {
   valor: number;
   vencimento: Date;
   clienteId?: number;
+  integrarAsaas?: boolean;
+  billingType?: 'PIX' | 'BOLETO' | 'CREDIT_CARD';
 }
 
 export interface FinanceiroCatalogosDTO {
@@ -122,6 +126,8 @@ export interface FinanceiroRelatorioDTO {
 
 export class FinanceiroService {
   private prisma;
+  private asaasIntegration: AsaasIntegrationService;
+  private logger: Logger;
 
   constructor(private tenantId: string) {
     if (!tenantId) {
@@ -129,6 +135,8 @@ export class FinanceiroService {
     }
 
     this.prisma = getPrismaForTenant(tenantId);
+    this.asaasIntegration = new AsaasIntegrationService(tenantId);
+    this.logger = new Logger({ service: 'FinanceiroService', tenantId });
   }
 
   async listarContas(): Promise<ContaFinanceiraDTO[]> {
@@ -189,10 +197,30 @@ export class FinanceiroService {
       },
       },
     });
-    return { ...conta, tipo: 'Receber' as const };
+    let contaSincronizada = conta;
+
+    if (data.integrarAsaas !== false) {
+      try {
+        const atualizado = await this.asaasIntegration.ensurePaymentForContaReceber(conta.id, {
+          billingType: data.billingType,
+        });
+        contaSincronizada = atualizado ?? conta;
+      } catch (error: any) {
+        this.logger.warn('Falha ao sincronizar conta a receber com Asaas', {
+          error: error?.message,
+          contaReceberId: conta.id,
+        });
+      }
+    }
+
+    return { ...contaSincronizada, tipo: 'Receber' as const };
   }
 
-  async baixarConta(tipo: 'Pagar' | 'Receber', id: number): Promise<ContaFinanceiraDTO> {
+  async baixarConta(
+    tipo: 'Pagar' | 'Receber',
+    id: number,
+    usuarioId?: number,
+  ): Promise<ContaFinanceiraDTO> {
     if (tipo === 'Pagar') {
       const conta = await this.prisma.contaPagar.update({
         where: { id },
@@ -202,6 +230,19 @@ export class FinanceiroService {
         },
       });
       return { ...conta, tipo: 'Pagar' as const };
+    }
+
+    const contaExistente = await this.prisma.contaReceber.findUnique({ where: { id } });
+    if (contaExistente?.asaasPaymentId) {
+      this.logger.warn(
+        'Baixa manual em cobrança integrada ao Asaas',
+        {
+          contaReceberId: id,
+          tenantId: this.tenantId,
+          asaasPaymentId: contaExistente.asaasPaymentId,
+          usuarioId,
+        },
+      );
     }
 
     const conta = await this.prisma.contaReceber.update({
@@ -219,13 +260,23 @@ export class FinanceiroService {
           telefone: true,
           cpf: true,
         },
+        },
       },
-      },
+    });
+    this.logger.info('Baixa manual aplicada', {
+      contaReceberId: id,
+      tenantId: this.tenantId,
+      usuarioId,
+      asaasPaymentId: contaExistente?.asaasPaymentId,
     });
     return { ...conta, tipo: 'Receber' as const };
   }
 
-  async estornarConta(tipo: 'Pagar' | 'Receber', id: number): Promise<ContaFinanceiraDTO> {
+  async estornarConta(
+    tipo: 'Pagar' | 'Receber',
+    id: number,
+    usuarioId?: number,
+  ): Promise<ContaFinanceiraDTO> {
     if (tipo === 'Pagar') {
       const conta = await this.prisma.contaPagar.update({
         where: { id },
@@ -235,6 +286,16 @@ export class FinanceiroService {
         },
       });
       return { ...conta, tipo: 'Pagar' as const };
+    }
+
+    const contaExistente = await this.prisma.contaReceber.findUnique({ where: { id } });
+    if (contaExistente?.asaasPaymentId) {
+      this.logger.warn('Estorno manual em cobrança integrada ao Asaas', {
+        contaReceberId: id,
+        tenantId: this.tenantId,
+        asaasPaymentId: contaExistente.asaasPaymentId,
+        usuarioId,
+      });
     }
 
     const conta = await this.prisma.contaReceber.update({
@@ -252,8 +313,14 @@ export class FinanceiroService {
           telefone: true,
           cpf: true,
         },
+        },
       },
-      },
+    });
+    this.logger.info('Estorno aplicado', {
+      contaReceberId: id,
+      tenantId: this.tenantId,
+      usuarioId,
+      asaasPaymentId: contaExistente?.asaasPaymentId,
     });
     return { ...conta, tipo: 'Receber' as const };
   }
@@ -470,5 +537,46 @@ export class FinanceiroService {
       { tipo: 'Pagamentos pendentes', total: contasPagar },
       { tipo: 'Recebimentos pendentes', total: contasReceber },
     ];
+  }
+
+  async reconsultarContaReceber(id: number, usuarioId?: number): Promise<ContaFinanceiraDTO> {
+    const conta = await this.prisma.contaReceber.findUnique({
+      where: { id },
+      include: {
+        cliente: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+            telefone: true,
+            cpf: true,
+          },
+        },
+      },
+    });
+
+    if (!conta) {
+      throw new Error('Conta a receber não encontrada');
+    }
+
+    if (!conta.asaasPaymentId && !conta.asaasSubscriptionId) {
+      throw new Error('Conta não está vinculada ao Asaas');
+    }
+
+    if (!this.asaasIntegration.isEnabled()) {
+      throw new Error('Integração com Asaas desabilitada para este tenant');
+    }
+
+    const sincronizada = await this.asaasIntegration.refreshPaymentStatus(id);
+
+    this.logger.info('Reconsulta de status solicitada pelo usuário', {
+      tenantId: this.tenantId,
+      contaReceberId: id,
+      asaasPaymentId: sincronizada.asaasPaymentId ?? conta.asaasPaymentId,
+      asaasSubscriptionId: sincronizada.asaasSubscriptionId ?? conta.asaasSubscriptionId,
+      usuarioId,
+    });
+
+    return { ...sincronizada, tipo: 'Receber' as const };
   }
 }
