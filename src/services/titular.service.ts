@@ -2,6 +2,8 @@ import { Prisma, getPrismaForTenant } from '../utils/prisma';
 import { CadastroTitularRequest } from '../types/titular';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { Buffer } from 'buffer';
+import { AsaasIntegrationService } from './asaas-integration.service';
+import Logger from '../utils/logger';
 
 type TitularType = Prisma.TitularGetPayload<{}>;
 
@@ -51,6 +53,8 @@ type AssinaturaTipo = (typeof ASSINATURA_TIPOS)[number];
 
 export class TitularService {
   private prisma;
+  private asaasIntegration: AsaasIntegrationService;
+  private logger: Logger;
 
   constructor(private tenantId: string) {
     if (!tenantId) {
@@ -58,6 +62,8 @@ export class TitularService {
     }
 
     this.prisma = getPrismaForTenant(tenantId);
+    this.asaasIntegration = new AsaasIntegrationService(tenantId);
+    this.logger = new Logger({ service: 'TitularService', tenantId });
   }
 
   async getAll(params?: {
@@ -116,7 +122,9 @@ export class TitularService {
   }
 
   async create(data: TitularType): Promise<TitularType> {
-    return this.prisma.titular.create({ data });
+    const titular = await this.prisma.titular.create({ data });
+    void this.syncCustomerAsaasSafe(titular.id);
+    return titular;
   }
 
    async createFull(data: CadastroTitularRequest) {
@@ -213,6 +221,7 @@ export class TitularService {
         return titular;
       });
 
+      void this.syncCustomerAsaasSafe(novoTitular.id);
       return novoTitular;
     } catch (e: any) {
       if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
@@ -226,7 +235,9 @@ export class TitularService {
   }
 
   async update(id: number, data: Partial<TitularType>): Promise<TitularType> {
-    return this.prisma.titular.update({ where: { id: Number(id) }, data });
+    const titular = await this.prisma.titular.update({ where: { id: Number(id) }, data });
+    void this.syncCustomerAsaasSafe(titular.id);
+    return titular;
   }
 
   async delete(id: number): Promise<TitularType> {
@@ -413,5 +424,16 @@ export class TitularService {
     const normalized = this.tenantId.toUpperCase();
     const envKey = `FILES_API_TOKEN_${normalized}`;
     return process.env[envKey] || process.env.FILES_API_TOKEN || null;
+  }
+
+  private async syncCustomerAsaasSafe(titularId: number) {
+    try {
+      await this.asaasIntegration.ensureCustomerForTitular(titularId);
+    } catch (error: any) {
+      this.logger.warn('Falha ao sincronizar titular com Asaas', {
+        error: error?.message,
+        titularId,
+      });
+    }
   }
 }

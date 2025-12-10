@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
-import { tenantMiddleware, TenantRequest } from './middlewares/tenant.middleware';
+import { tenantMiddleware } from './middlewares/tenant.middleware';
 import rateLimitMiddleware from './middlewares/rateLimit.middleware';
 import { notFoundHandler, errorHandler } from './middlewares/error.middleware';
 import { addRequestId, logRequest } from './middlewares/api.middleware';
@@ -30,13 +30,21 @@ import regrasRoutes from './routes/regras.routes';
 import financeiroRoutes from './routes/financeiro.routes';
 import notificacaoRoutes from './routes/notificacao.routes';
 import notificacaoTemplateRoutes from './routes/notificacao-template.routes';
+import asaasRoutes from './routes/asaas.routes';
 
 dotenv.config({ quiet: true });
 
 const app = express();
 app.set('trust proxy', 1);
 
-app.use(express.json({ limit: '10mb' }));
+app.use(
+  express.json({
+    limit: '10mb',
+    verify: (req, _res, buf) => {
+      (req as any).rawBody = buf;
+    },
+  }),
+);
 app.use(cookieParser());
 app.use(express.urlencoded({ extended: true }));
 
@@ -71,7 +79,14 @@ app.use(
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Tenant'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'X-Tenant',
+      'X-Signature',
+      'X-Asaas-Signature',
+    ],
     exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
   }),
 );
@@ -89,6 +104,7 @@ app.use('/health', rateLimitMiddleware.healthCheck);
 
 // Unauthenticated
 app.use('/health', healthRoutes);
+app.use(`/api/${API_VERSION}/pagamento/asaas`, asaasRoutes);
 
 // Authenticated
 app.use(tenantMiddleware);

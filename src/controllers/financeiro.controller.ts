@@ -80,6 +80,7 @@ export class FinanceiroController {
   async baixarConta(req: TenantRequest, res: Response) {
     try {
       const { tipo, id } = req.params;
+      const usuarioId = (req as any)?.user?.id as number | undefined;
 
       if (!tipo || !isValidTipo(tipo)) {
         return res.status(400).json({ message: 'Tipo de conta inválido' });
@@ -91,8 +92,13 @@ export class FinanceiroController {
       }
 
       const service = this.resolveService(req);
-      const result = await service.baixarConta(tipo === 'pagar' ? 'Pagar' : 'Receber', contaId);
-      this.logger.info('Conta baixada com sucesso', { tenant: req.tenantId, tipo, contaId });
+      const result = await service.baixarConta(tipo === 'pagar' ? 'Pagar' : 'Receber', contaId, usuarioId);
+      this.logger.info('Conta baixada com sucesso', {
+        tenant: req.tenantId,
+        tipo,
+        contaId,
+        usuarioId,
+      });
       res.json(result);
     } catch (error) {
       this.logger.error('Falha ao baixar conta', error, { params: req.params });
@@ -108,6 +114,7 @@ export class FinanceiroController {
   async estornarConta(req: TenantRequest, res: Response) {
     try {
       const { tipo, id } = req.params;
+      const usuarioId = (req as any)?.user?.id as number | undefined;
 
       if (!tipo || !isValidTipo(tipo)) {
         return res.status(400).json({ message: 'Tipo de conta inválido' });
@@ -119,8 +126,13 @@ export class FinanceiroController {
       }
 
       const service = this.resolveService(req);
-      const result = await service.estornarConta(tipo === 'pagar' ? 'Pagar' : 'Receber', contaId);
-      this.logger.info('Conta estornada com sucesso', { tenant: req.tenantId, tipo, contaId });
+      const result = await service.estornarConta(tipo === 'pagar' ? 'Pagar' : 'Receber', contaId, usuarioId);
+      this.logger.info('Conta estornada com sucesso', {
+        tenant: req.tenantId,
+        tipo,
+        contaId,
+        usuarioId,
+      });
       res.json(result);
     } catch (error) {
       this.logger.error('Falha ao estornar conta', error, { params: req.params });
@@ -144,6 +156,32 @@ export class FinanceiroController {
       res.status(this.shouldReturnTenantError(error) ? 400 : 500).json({
         message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : 'Internal server error',
       });
+    }
+  }
+
+  async reconsultarContaReceber(req: TenantRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const contaId = Number(id);
+      const usuarioId = (req as any)?.user?.id as number | undefined;
+
+      if (Number.isNaN(contaId)) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
+      const service = this.resolveService(req);
+      const result = await service.reconsultarContaReceber(contaId, usuarioId);
+      this.logger.info('Reconsulta de status Asaas concluída', {
+        tenant: req.tenantId,
+        contaId,
+        usuarioId,
+      });
+      res.json(result);
+    } catch (error: any) {
+      const message =
+        error instanceof Error && error.message ? error.message : 'Internal server error';
+      this.logger.error('Falha ao reconsultar status Asaas', error, { params: req.params });
+      res.status(/Asaas|vinculad[ao]|encontrada/.test(message) ? 400 : 500).json({ message });
     }
   }
 
@@ -322,6 +360,12 @@ export class FinanceiroController {
     }
     if (payload.valor) {
       payload.valor = Number(payload.valor);
+    }
+    if (payload.integrarAsaas !== undefined) {
+      payload.integrarAsaas = payload.integrarAsaas !== false && payload.integrarAsaas !== 'false';
+    }
+    if (payload.billingType) {
+      payload.billingType = String(payload.billingType).toUpperCase();
     }
     return payload;
   }

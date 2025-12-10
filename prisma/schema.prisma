@@ -109,7 +109,8 @@ model Titular {
   dataNascimento  DateTime
   statusPlano     String
   dataContratacao DateTime
-  
+  asaasCustomerId String?          @unique
+
   cep       String?
   uf        String?
   cidade    String?
@@ -274,6 +275,12 @@ model Pagamento {
   dataPagamento   DateTime
   status          String
   metodoPagamento String
+  asaasPaymentId      String?  @unique
+  asaasSubscriptionId String?
+  paymentUrl          String?
+  pixQrCode           String?
+  pixExpiration       DateTime?
+  dataVencimento      DateTime?
 }
 
 // ----------------- COMISSÕES -----------------
@@ -366,6 +373,13 @@ model ContaReceber {
   status       String
   clienteId    Int?
   cliente      Titular? @relation(fields: [clienteId], references: [id])
+  asaasPaymentId      String?   @unique
+  asaasSubscriptionId String?
+  paymentUrl          String?
+  pixQrCode           String?
+  pixExpiration       DateTime?
+  metodoPagamento     String?
+  dataVencimento      DateTime?
 }
 
 model BancoFinanceiro {
