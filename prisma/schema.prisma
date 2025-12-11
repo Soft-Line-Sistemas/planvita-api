@@ -487,6 +487,7 @@ model NotificationTemplate {
   tenantId   String
   nome       String
   canal      String   // email, whatsapp, sms
+  flow       String?  // pendencia-periodica, aviso-vencimento, aviso-pendencia, suspensao-preventiva
   assunto    String?
   htmlBody   String?
   textBody   String?
@@ -496,6 +497,7 @@ model NotificationTemplate {
   updatedAt  DateTime @updatedAt
 
   @@index([tenantId, canal])
+  @@index([tenantId, flow])
   @@index([tenantId, isDefault])
 }
 

@@ -36,7 +36,8 @@ export class NotificacaoTemplateController {
   async listar(req: TenantRequest, res: Response) {
     try {
       const service = this.resolveService(req);
-      const templates = await service.listar();
+      const flow = req.query?.flow ? String(req.query.flow).toLowerCase() : undefined;
+      const templates = await service.listar(flow);
       res.json(templates);
     } catch (error) {
       this.logger.error('Erro ao listar templates', error, { tenant: req.tenantId });
