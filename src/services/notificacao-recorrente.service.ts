@@ -4,6 +4,19 @@ import { NotificationApiClient, NotificationChannel } from '../utils/notificatio
 import { getPrismaForTenant, Prisma } from '../utils/prisma';
 import { NotificacaoTemplateService } from './notificacao-template.service';
 
+type BusinessRulesModel = Prisma.BusinessRulesGetPayload<{}>;
+
+export type NotificationFlowType =
+  | 'pendencia-periodica'
+  | 'aviso-vencimento'
+  | 'aviso-pendencia'
+  | 'suspensao-preventiva';
+
+const DEFAULT_DIAS_AVISO_VENCIMENTO = 2;
+const DEFAULT_DIAS_AVISO_PENDENCIA = 1;
+const DEFAULT_REPETICAO_PENDENCIA_DIAS = 1;
+const DEFAULT_DIAS_SUSPENSAO_PREVENTIVA = 85;
+
 type ContaReceberComCliente = Prisma.ContaReceberGetPayload<{
   include: {
     cliente: {
@@ -82,6 +95,7 @@ export class NotificacaoRecorrenteService {
   private logger: Logger;
   private apiClient: NotificationApiClient;
   private templateService: NotificacaoTemplateService;
+  private regrasNegocio: BusinessRulesModel | null = null;
 
   constructor(private tenantId: string) {
     if (!tenantId) {
@@ -94,9 +108,9 @@ export class NotificacaoRecorrenteService {
     this.templateService = new NotificacaoTemplateService(tenantId);
   }
 
-  async getPainel(): Promise<PainelNotificacao> {
+  async getPainel(tipo: NotificationFlowType = 'pendencia-periodica'): Promise<PainelNotificacao> {
     const agendamento = await this.ensureAgendamento();
-    const contas = await this.buscarPendencias();
+    const contas = await this.buscarPendencias(tipo);
     const destinatarios = this.mapearDestinatarios(contas, agendamento.metodoPreferencial);
 
     const agora = new Date();
@@ -155,14 +169,18 @@ export class NotificacaoRecorrenteService {
     return atualizado;
   }
 
-  async atualizarBloqueio(titularId: number, bloqueado: boolean): Promise<DestinatarioNotificacao> {
+  async atualizarBloqueio(
+    titularId: number,
+    bloqueado: boolean,
+    tipo: NotificationFlowType = 'pendencia-periodica',
+  ): Promise<DestinatarioNotificacao> {
     await this.prisma.titular.update({
       where: { id: titularId },
       data: { bloquearNotificacaoRecorrente: bloqueado },
     });
 
     const agendamento = await this.ensureAgendamento();
-    const contas = await this.buscarPendencias();
+    const contas = await this.buscarPendencias(tipo);
     const destinatarios = this.mapearDestinatarios(contas, agendamento.metodoPreferencial);
 
     const destinatario = destinatarios.find((d) => d.titularId === titularId);
@@ -173,14 +191,18 @@ export class NotificacaoRecorrenteService {
     return destinatario;
   }
 
-  async atualizarMetodo(titularId: number, metodo: NotificationChannel): Promise<DestinatarioNotificacao> {
+  async atualizarMetodo(
+    titularId: number,
+    metodo: NotificationChannel,
+    tipo: NotificationFlowType = 'pendencia-periodica',
+  ): Promise<DestinatarioNotificacao> {
     await this.prisma.titular.update({
       where: { id: titularId },
       data: { metodoNotificacaoRecorrente: this.normalizarCanal(metodo) },
     });
 
     const agendamento = await this.ensureAgendamento();
-    const contas = await this.buscarPendencias();
+    const contas = await this.buscarPendencias(tipo);
     const destinatarios = this.mapearDestinatarios(contas, agendamento.metodoPreferencial);
 
     const destinatario = destinatarios.find((d) => d.titularId === titularId);
@@ -191,7 +213,10 @@ export class NotificacaoRecorrenteService {
     return destinatario;
   }
 
-  async dispararLote(force = true): Promise<ResultadoDisparo> {
+  async dispararLote(
+    force = true,
+    tipo: NotificationFlowType = 'pendencia-periodica',
+  ): Promise<ResultadoDisparo> {
     const agendamento = await this.ensureAgendamento();
     const agora = new Date();
 
@@ -225,15 +250,15 @@ export class NotificacaoRecorrenteService {
       };
     }
 
-    const contas = await this.buscarPendencias();
+    const contas = await this.buscarPendencias(tipo);
     const destinatarios = this.mapearDestinatarios(contas, agendamento.metodoPreferencial);
 
     let enviados = 0;
     let ignorados = 0;
     let falhas = 0;
     const detalhes: ResultadoDisparo['detalhes'] = [];
-    const templateEmail = await this.templateService.obterDefault('email');
-    const templateWhatsapp = await this.templateService.obterDefault('whatsapp');
+    const templateEmail = await this.templateService.obterDefault('email', tipo);
+    const templateWhatsapp = await this.templateService.obterDefault('whatsapp', tipo);
     const logsParaPersistir: Array<{
       tenantId: string;
       logId: string;
@@ -249,6 +274,10 @@ export class NotificacaoRecorrenteService {
     for (const destinatario of destinatarios) {
       const contato =
         destinatario.metodo === 'email' ? destinatario.email : destinatario.telefone;
+      const referencias = destinatario.cobrancas.map((c) =>
+        this.buildReferenciaEnvio(tipo, c.contaId),
+      );
+      const payloadBase = this.buildLogPayload(tipo, referencias, destinatario);
 
       if (destinatario.bloqueado) {
         ignorados += 1;
@@ -267,6 +296,7 @@ export class NotificacaoRecorrenteService {
           canal: destinatario.metodo,
           status: 'ignorado',
           motivo: 'cliente bloqueado para notificações',
+          payload: payloadBase,
         });
         continue;
       }
@@ -288,14 +318,16 @@ export class NotificacaoRecorrenteService {
           canal: destinatario.metodo,
           status: 'ignorado',
           motivo: 'cliente sem contato válido',
+          payload: payloadBase,
         });
         continue;
       }
 
-      const payload = this.montarMensagem(
+    const payload = this.montarMensagem(
         destinatario,
         contato,
         destinatario.metodo,
+        tipo,
         destinatario.metodo === 'email' ? templateEmail || undefined : templateWhatsapp || undefined,
       );
       const resultado = await this.apiClient.send(payload);
@@ -315,6 +347,7 @@ export class NotificacaoRecorrenteService {
           destinatario: contato,
           canal: destinatario.metodo,
           status: 'enviado',
+          payload: payloadBase,
         });
       } else if (resultado.skipped) {
         ignorados += 1;
@@ -333,7 +366,9 @@ export class NotificacaoRecorrenteService {
           canal: destinatario.metodo,
           status: 'ignorado',
           motivo: resultado.error ?? 'disparo ignorado',
-          payload: JSON.stringify(resultado),
+          payload: this.buildLogPayload(tipo, referencias, destinatario, {
+            providerResponse: resultado,
+          }),
         });
       } else {
         falhas += 1;
@@ -352,7 +387,9 @@ export class NotificacaoRecorrenteService {
           canal: destinatario.metodo,
           status: 'falha',
           motivo: resultado.error ?? 'erro ao enviar',
-          payload: JSON.stringify(resultado),
+          payload: this.buildLogPayload(tipo, referencias, destinatario, {
+            providerResponse: resultado,
+          }),
         });
       }
     }
@@ -392,9 +429,21 @@ export class NotificacaoRecorrenteService {
     return proxima;
   }
 
-  getLogs(limit = 50) {
+  getLogs(limit = 50, tipo?: NotificationFlowType) {
     return this.prisma.notificationLog.findMany({
-      where: { tenantId: this.tenantId },
+      where: {
+        tenantId: this.tenantId,
+        ...(tipo
+          ? tipo === 'pendencia-periodica'
+            ? {
+                OR: [
+                  { payload: { contains: `"tipo":"${tipo}"` } },
+                  { payload: null },
+                ],
+              }
+            : { payload: { contains: `"tipo":"${tipo}"` } }
+          : {}),
+      },
       orderBy: { createdAt: 'asc' },
       take: limit,
     });
@@ -420,10 +469,12 @@ export class NotificacaoRecorrenteService {
     destinatario,
     cobranca,
     textoEditavel,
+    tipo,
   }: {
     destinatario: DestinatarioNotificacao;
     cobranca?: DestinatarioNotificacao['cobrancas'][0];
     textoEditavel?: string | null;
+    tipo: NotificationFlowType;
   }) {
     const tenant = this.tenantId.toLowerCase();
     const displayName = this.getDisplayName(tenant);
@@ -447,6 +498,15 @@ export class NotificacaoRecorrenteService {
     const urlBase = `https://${tenant}.planvita.com.br`;
     const urlCobranca = `${urlBase}/cliente`;
 
+    const highlight =
+      tipo === 'aviso-vencimento'
+        ? 'Lembrete de vencimento'
+        : tipo === 'aviso-pendencia'
+          ? 'Aviso de pendência'
+          : tipo === 'suspensao-preventiva'
+            ? 'Aviso de suspensão preventiva'
+            : 'Cobrança pendente';
+
     return `
     <div style="font-family: Arial, sans-serif; background-color: #f4f5f7; padding: 24px;">
       <div style="max-width: 640px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.06);">
@@ -456,6 +516,7 @@ export class NotificacaoRecorrenteService {
             <div style="font-size: 14px; opacity: 0.9;">${displayName}</div>
             <div style="font-size: 12px; opacity: 0.9;">51.121.484/0001-68</div>
           </div>
+          <div style="margin-left:auto;font-weight:700;">${highlight}</div>
         </div>
         <div style="padding: 24px; color: #0f172a;">
           <p style="font-size: 16px; margin: 0 0 12px 0;">Olá, ${destinatario.nome}.</p>
@@ -498,9 +559,11 @@ export class NotificacaoRecorrenteService {
   private buildDefaultWhatsappText({
     destinatario,
     cobranca,
+    tipo,
   }: {
     destinatario: DestinatarioNotificacao;
     cobranca?: DestinatarioNotificacao['cobrancas'][0];
+    tipo: NotificationFlowType;
   }) {
     const tenant = this.tenantId.toLowerCase();
     const displayName = this.getDisplayName(tenant);
@@ -516,18 +579,41 @@ export class NotificacaoRecorrenteService {
       : '—';
     const descricao = cobranca?.descricao ?? 'Cobrança de serviços';
 
-    return [
-      `Olá, ${destinatario.nome}`,
-      `Sua cobrança gerada por ${displayName} no valor de ${valor} vence em ${vencimento}.`,
-      `Descrição: ${descricao}.`,
-      `Visualize/regularize em: ${urlCobranca}`,
-    ].join('\n');
+    const mensagens: Record<NotificationFlowType, string[]> = {
+      'aviso-vencimento': [
+        `Olá, ${destinatario.nome}`,
+        `Lembrete: sua cobrança de ${valor} vence em ${vencimento}.`,
+        `Descrição: ${descricao}.`,
+        `Pague ou consulte em: ${urlCobranca}`,
+      ],
+      'aviso-pendencia': [
+        `Olá, ${destinatario.nome}`,
+        `Identificamos uma pendência de ${valor} vencida em ${vencimento}.`,
+        `Descrição: ${descricao}.`,
+        `Regularize em: ${urlCobranca}`,
+      ],
+      'suspensao-preventiva': [
+        `Olá, ${destinatario.nome}`,
+        `Seu plano pode ser suspenso em breve por pendência financeira.`,
+        `Cobrança de ${valor} vencida em ${vencimento} (${descricao}).`,
+        `Evite suspensão regularizando em: ${urlCobranca}`,
+      ],
+      'pendencia-periodica': [
+        `Olá, ${destinatario.nome}`,
+        `Sua cobrança gerada por ${displayName} no valor de ${valor} vence em ${vencimento}.`,
+        `Descrição: ${descricao}.`,
+        `Visualize/regularize em: ${urlCobranca}`,
+      ],
+    };
+
+    return mensagens[tipo].join('\n');
   }
 
   private montarMensagem(
     destinatario: DestinatarioNotificacao,
     contato: string,
     canal: NotificationChannel,
+    tipo: NotificationFlowType,
     template?: { assunto?: string | null; htmlBody?: string | null; textBody?: string | null },
   ) {
     const cobrancaMaisProxima = destinatario.cobrancas[0];
@@ -547,6 +633,7 @@ export class NotificacaoRecorrenteService {
           this.buildDefaultWhatsappText({
             destinatario,
             cobranca: cobrancaMaisProxima,
+            tipo,
           }),
         templateVars,
       );
@@ -561,24 +648,7 @@ export class NotificacaoRecorrenteService {
       } as any;
     }
 
-    const mensagem = [
-      `Olá, ${destinatario.nome}.`,
-      `Identificamos ${destinatario.quantidadeCobrancas} cobrança(s) pendente(s) no valor total de R$ ${destinatario.totalPendente.toFixed(
-        2,
-      )}.`,
-    ];
-
-    if (cobrancaMaisProxima) {
-      mensagem.push(
-        `O vencimento mais próximo é em ${new Date(cobrancaMaisProxima.vencimento).toLocaleDateString(
-          'pt-BR',
-        )}.`,
-      );
-    }
-
-    mensagem.push(
-      'Para manter seus benefícios ativos, regularize o pagamento ou fale conosco. Se você já pagou, desconsidere este aviso.',
-    );
+    const mensagem = this.buildEmailTextoPadrao(destinatario, tipo, cobrancaMaisProxima);
 
     const textoFinal = this.applyTemplate(
       template?.textBody ?? mensagem.join(' '),
@@ -590,18 +660,85 @@ export class NotificacaoRecorrenteService {
         : this.buildDefaultEmailHtml({
             destinatario,
             cobranca: cobrancaMaisProxima,
-            textoEditavel: template?.textBody ?? '',
+            textoEditavel: textoFinal,
+            tipo,
           });
 
     return {
       to: contato,
       channel: canal,
-      subject: template?.assunto ?? 'Cobrança pendente',
+      subject: template?.assunto ?? this.resolveAssuntoPadrao(tipo),
       message: textoFinal,
       text: textoFinal,
       html: htmlFinal,
       metadata,
     } as any;
+  }
+
+  private resolveAssuntoPadrao(tipo: NotificationFlowType) {
+    switch (tipo) {
+      case 'aviso-vencimento':
+        return 'Lembrete de vencimento';
+      case 'aviso-pendencia':
+        return 'Aviso de pendência';
+      case 'suspensao-preventiva':
+        return 'Aviso de suspensão preventiva';
+      default:
+        return 'Cobrança pendente';
+    }
+  }
+
+  private buildEmailTextoPadrao(
+    destinatario: DestinatarioNotificacao,
+    tipo: NotificationFlowType,
+    cobrancaMaisProxima?: DestinatarioNotificacao['cobrancas'][0],
+  ) {
+    const base: string[] = [`Olá, ${destinatario.nome}.`];
+    const valorTotal = new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    }).format(destinatario.totalPendente);
+
+    switch (tipo) {
+      case 'aviso-vencimento':
+        base.push(
+          `Lembrete: sua cobrança de ${valorTotal} vence em ${cobrancaMaisProxima ? new Date(cobrancaMaisProxima.vencimento).toLocaleDateString('pt-BR') : 'breve'}.`,
+        );
+        base.push('Antecipe o pagamento para manter seus benefícios ativos.');
+        break;
+      case 'aviso-pendencia':
+        base.push(
+          `Identificamos uma pendência de ${valorTotal} vencida ${
+            cobrancaMaisProxima
+              ? `em ${new Date(cobrancaMaisProxima.vencimento).toLocaleDateString('pt-BR')}`
+              : ''
+          }.`,
+        );
+        base.push('Regularize o quanto antes ou entre em contato conosco.');
+        break;
+      case 'suspensao-preventiva':
+        base.push(
+          `Seu plano pode ser suspenso em breve devido a pendências que somam ${valorTotal}.`,
+        );
+        base.push('Evite a suspensão realizando o pagamento ou falando com nosso time.');
+        break;
+      default:
+        base.push(
+          `Identificamos ${destinatario.quantidadeCobrancas} cobrança(s) pendente(s) no valor total de ${valorTotal}.`,
+        );
+        if (cobrancaMaisProxima) {
+          base.push(
+            `O vencimento mais próximo é em ${new Date(
+              cobrancaMaisProxima.vencimento,
+            ).toLocaleDateString('pt-BR')}.`,
+          );
+        }
+        base.push(
+          'Para manter seus benefícios ativos, regularize o pagamento ou fale conosco. Se você já pagou, desconsidere este aviso.',
+        );
+    }
+
+    return base;
   }
 
   private applyTemplate(template: string, vars: Record<string, string>) {
@@ -649,11 +786,10 @@ export class NotificacaoRecorrenteService {
 
     if (existente) return existente;
 
-    const regras = await this.prisma.businessRules.findFirst({
-      where: { tenantId: this.tenantId },
-    });
+    const regras = await this.obterRegrasNegocio();
 
-    const frequenciaMinutos = (regras?.repeticaoPendenciaDias ?? 1) * 24 * 60;
+    const frequenciaMinutos =
+      (regras?.repeticaoPendenciaDias ?? DEFAULT_REPETICAO_PENDENCIA_DIAS) * 24 * 60;
     const proximaExecucao = this.calcularProximaExecucao(frequenciaMinutos);
 
     const criado = await this.prisma.notificationSchedule.create({
@@ -675,8 +811,9 @@ export class NotificacaoRecorrenteService {
     return criado;
   }
 
-  private async buscarPendencias(): Promise<ContaReceberComCliente[]> {
-    return this.prisma.contaReceber.findMany({
+  private async buscarPendencias(tipo: NotificationFlowType): Promise<ContaReceberComCliente[]> {
+    const regras = await this.obterRegrasNegocio();
+    const contas = await this.prisma.contaReceber.findMany({
       where: {
         status: {
           in: ['PENDENTE', 'ATRASADO', 'PENDENCIA', 'VENCIDO'],
@@ -697,6 +834,35 @@ export class NotificacaoRecorrenteService {
       },
       orderBy: { vencimento: 'asc' },
     });
+
+    const diasAvisoVencimento = regras?.diasAvisoVencimento ?? DEFAULT_DIAS_AVISO_VENCIMENTO;
+    const diasAvisoPendencia = regras?.diasAvisoPendencia ?? DEFAULT_DIAS_AVISO_PENDENCIA;
+    const diasSuspensaoPreventiva =
+      regras?.diasSuspensaoPreventiva ?? DEFAULT_DIAS_SUSPENSAO_PREVENTIVA;
+
+    const contasFiltradas = contas.filter((conta) => {
+      const diasParaVencer = this.calcularDiasParaVencer(conta.vencimento);
+      const diasAtraso = this.calcularDiasAtraso(conta.vencimento);
+
+      switch (tipo) {
+        case 'aviso-vencimento':
+          return diasParaVencer >= 0 && diasParaVencer <= diasAvisoVencimento;
+        case 'aviso-pendencia':
+          return diasAtraso >= diasAvisoPendencia;
+        case 'suspensao-preventiva':
+          return diasAtraso >= diasSuspensaoPreventiva;
+        case 'pendencia-periodica':
+        default:
+          return diasAtraso >= Math.max(0, diasAvisoPendencia);
+      }
+    });
+
+    if (tipo === 'pendencia-periodica') return contasFiltradas;
+
+    const referenciasEnviadas = await this.carregarReferenciasEnviadas(tipo);
+    return contasFiltradas.filter(
+      (conta) => !referenciasEnviadas.has(this.buildReferenciaEnvio(tipo, conta.id)),
+    );
   }
 
   private mapearDestinatarios(
@@ -750,6 +916,80 @@ export class NotificacaoRecorrenteService {
         (a, b) => new Date(a.vencimento).getTime() - new Date(b.vencimento).getTime(),
       ),
     }));
+  }
+
+  private async obterRegrasNegocio(): Promise<BusinessRulesModel | null> {
+    if (this.regrasNegocio) return this.regrasNegocio;
+
+    this.regrasNegocio = await this.prisma.businessRules.findFirst({
+      where: { tenantId: this.tenantId },
+    });
+
+    return this.regrasNegocio;
+  }
+
+  private buildReferenciaEnvio(tipo: NotificationFlowType, contaId: number) {
+    return `${tipo}:${contaId}`;
+  }
+
+  private async carregarReferenciasEnviadas(tipo: NotificationFlowType): Promise<Set<string>> {
+    const logs = await this.prisma.notificationLog.findMany({
+      where: {
+        tenantId: this.tenantId,
+        status: 'enviado',
+        payload: { contains: `"tipo":"${tipo}"` },
+      },
+      select: { payload: true },
+    });
+
+    const referencias = new Set<string>();
+
+    logs.forEach((log) => {
+      if (!log.payload) return;
+      try {
+        const parsed = JSON.parse(log.payload);
+        const lista: string[] = Array.isArray(parsed.referencias)
+          ? parsed.referencias
+          : parsed.referencia
+            ? [parsed.referencia]
+            : [];
+        lista.forEach((ref) => referencias.add(String(ref)));
+      } catch (error) {
+        this.logger.warn('Falha ao interpretar payload de log de notificação', {
+          tipo,
+          tenantId: this.tenantId,
+        });
+      }
+    });
+
+    return referencias;
+  }
+
+  private buildLogPayload(
+    tipo: NotificationFlowType,
+    referencias: string[],
+    destinatario: DestinatarioNotificacao,
+    extra?: Record<string, unknown>,
+  ) {
+    return JSON.stringify({
+      tipo,
+      referencias,
+      titularId: destinatario.titularId,
+      cobrancas: destinatario.cobrancas.map((c) => ({
+        contaId: c.contaId,
+        vencimento: c.vencimento,
+        valor: c.valor,
+        status: c.status,
+      })),
+      metodo: destinatario.metodo,
+      ...(extra ?? {}),
+    });
+  }
+
+  private calcularDiasParaVencer(vencimento: Date): number {
+    const hoje = new Date();
+    const diff = new Date(vencimento).getTime() - hoje.getTime();
+    return Math.ceil(diff / (1000 * 60 * 60 * 24));
   }
 
   private resolverMaisProximo(atual: string | null, novo: string): string {

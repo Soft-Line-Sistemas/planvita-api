@@ -1,5 +1,8 @@
 import { Response } from 'express';
-import { NotificacaoRecorrenteService } from '../services/notificacao-recorrente.service';
+import {
+  NotificacaoRecorrenteService,
+  NotificationFlowType,
+} from '../services/notificacao-recorrente.service';
 import { TenantRequest } from '../middlewares/tenant.middleware';
 import Logger from '../utils/logger';
 
@@ -13,10 +16,27 @@ export class NotificacaoRecorrenteController {
     return new NotificacaoRecorrenteService(req.tenantId);
   }
 
+  private resolveTipo(tipo?: any): NotificationFlowType | undefined {
+    if (tipo === undefined || tipo === null) return undefined;
+    const valor = Array.isArray(tipo) ? tipo[0] : tipo;
+    const normalizado = valor ? String(valor).toLowerCase() : '';
+    const permitidos: NotificationFlowType[] = [
+      'pendencia-periodica',
+      'aviso-vencimento',
+      'aviso-pendencia',
+      'suspensao-preventiva',
+    ];
+
+    return permitidos.includes(normalizado as NotificationFlowType)
+      ? (normalizado as NotificationFlowType)
+      : undefined;
+  }
+
   async getPainel(req: TenantRequest, res: Response) {
     try {
       const service = this.resolveService(req);
-      const result = await service.getPainel();
+      const tipo = this.resolveTipo(req.query?.tipo) ?? 'pendencia-periodica';
+      const result = await service.getPainel(tipo);
       res.json(result);
     } catch (error) {
       this.logger.error('Falha ao buscar painel de notificações', error, {
@@ -37,7 +57,8 @@ export class NotificacaoRecorrenteController {
       const force = req.query.force
         ? String(req.query.force).toLowerCase() === 'true'
         : true; // padrão: disparo manual força execução imediata
-      const resultado = await service.dispararLote(force);
+      const tipo = this.resolveTipo(req.query?.tipo) ?? 'pendencia-periodica';
+      const resultado = await service.dispararLote(force, tipo);
       res.json(resultado);
     } catch (error) {
       this.logger.error('Falha ao disparar notificações recorrentes', error, {
@@ -88,7 +109,12 @@ export class NotificacaoRecorrenteController {
     try {
       const { bloqueado } = req.body ?? {};
       const service = this.resolveService(req);
-      const destinatario = await service.atualizarBloqueio(titularId, Boolean(bloqueado));
+      const tipo = this.resolveTipo(req.query?.tipo) ?? 'pendencia-periodica';
+      const destinatario = await service.atualizarBloqueio(
+        titularId,
+        Boolean(bloqueado),
+        tipo,
+      );
       res.json(destinatario);
     } catch (error) {
       this.logger.error('Falha ao atualizar bloqueio de notificações', error, {
@@ -117,7 +143,12 @@ export class NotificacaoRecorrenteController {
 
     try {
       const service = this.resolveService(req);
-      const destinatario = await service.atualizarMetodo(titularId, metodo.toLowerCase() as any);
+      const tipo = this.resolveTipo(req.query?.tipo) ?? 'pendencia-periodica';
+      const destinatario = await service.atualizarMetodo(
+        titularId,
+        metodo.toLowerCase() as any,
+        tipo,
+      );
       res.json(destinatario);
     } catch (error) {
       this.logger.error('Falha ao atualizar método de notificações', error, {
@@ -139,6 +170,7 @@ export class NotificacaoRecorrenteController {
       const service = this.resolveService(req);
       const logs = await service.getLogs(
         Number.isNaN(limit) ? 50 : Math.max(1, Math.min(limit, 200)),
+        this.resolveTipo(req.query?.tipo),
       );
       res.json(logs);
     } catch (error) {
