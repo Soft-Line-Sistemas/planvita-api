@@ -2,6 +2,25 @@ import { getPrismaForTenant, Prisma } from '../utils/prisma';
 import { AsaasIntegrationService } from './asaas-integration.service';
 import Logger from '../utils/logger';
 
+const RELATORIO_CACHE = new Map<
+  string,
+  { data: FinanceiroRelatorioDTO; expiresAt: number }
+>();
+const RECORRENCIA_CACHE = new Map<
+  string,
+  {
+    data: {
+      mrr: number;
+      revenueOneTime: number;
+      churnRate: number;
+      activeSubscriptions: number;
+      cancelledSubscriptions: number;
+    };
+    expiresAt: number;
+  }
+>();
+const DEFAULT_CACHE_TTL_MS = Number(process.env.FINANCEIRO_CACHE_TTL_MS || 60000);
+
 type ContaPagarType = Prisma.ContaPagarGetPayload<{}>;
 type ContaReceberType = Prisma.ContaReceberGetPayload<{
   include: {
@@ -139,6 +158,28 @@ export class FinanceiroService {
     this.logger = new Logger({ service: 'FinanceiroService', tenantId });
   }
 
+  private async logAudit(
+    entityType: 'ContaPagar' | 'ContaReceber',
+    entityId: number,
+    action: 'CREATE' | 'UPDATE' | 'DELETE',
+    changes?: Record<string, any>,
+    performedBy?: number
+  ) {
+    try {
+      await this.prisma.financialAudit.create({
+        data: {
+          entityType,
+          entityId,
+          action,
+          changes: changes ? JSON.stringify(changes) : null,
+          performedBy,
+        },
+      });
+    } catch (error) {
+      this.logger.error('Failed to create audit log', error);
+    }
+  }
+
   async listarContas(): Promise<ContaFinanceiraDTO[]> {
     const [contasPagar, contasReceber] = await Promise.all([
       this.prisma.contaPagar.findMany(),
@@ -163,7 +204,14 @@ export class FinanceiroService {
     ];
   }
 
-  async criarContaPagar(data: ContaPagarInput): Promise<ContaFinanceiraDTO> {
+  async criarContaPagar(data: ContaPagarInput, userId?: number): Promise<ContaFinanceiraDTO> {
+    if (data.valor <= 0) {
+      throw new Error("O valor deve ser positivo.");
+    }
+    if (!data.descricao || data.descricao.trim() === "") {
+      throw new Error("A descrição é obrigatória.");
+    }
+
     const conta = await this.prisma.contaPagar.create({
       data: {
         descricao: data.descricao,
@@ -173,10 +221,41 @@ export class FinanceiroService {
         status: 'PENDENTE',
       },
     });
+    
+    await this.logAudit('ContaPagar', conta.id, 'CREATE', data, userId);
+    
     return { ...conta, tipo: 'Pagar' as const };
   }
 
-  async criarContaReceber(data: ContaReceberInput): Promise<ContaFinanceiraDTO> {
+  async atualizarContaPagar(id: number, data: Partial<ContaPagarInput>, userId?: number): Promise<ContaFinanceiraDTO> {
+    const atual = await this.prisma.contaPagar.findUnique({ where: { id } });
+    if (!atual) throw new Error("Conta não encontrada");
+    
+    if (data.valor !== undefined && data.valor <= 0) throw new Error("O valor deve ser positivo.");
+    if (data.descricao !== undefined && !data.descricao.trim()) throw new Error("A descrição é obrigatória.");
+
+    const conta = await this.prisma.contaPagar.update({
+      where: { id },
+      data: {
+        descricao: data.descricao,
+        valor: data.valor,
+        vencimento: data.vencimento,
+        fornecedor: data.fornecedor,
+      },
+    });
+    
+    await this.logAudit('ContaPagar', id, 'UPDATE', data, userId);
+    return { ...conta, tipo: 'Pagar' as const };
+  }
+
+  async criarContaReceber(data: ContaReceberInput, userId?: number): Promise<ContaFinanceiraDTO> {
+    if (data.valor <= 0) {
+      throw new Error("O valor deve ser positivo.");
+    }
+    if (!data.descricao || data.descricao.trim() === "") {
+      throw new Error("A descrição é obrigatória.");
+    }
+
     const conta = await this.prisma.contaReceber.create({
       data: {
         descricao: data.descricao,
@@ -190,13 +269,16 @@ export class FinanceiroService {
           select: {
             id: true,
             nome: true,
-          email: true,
-          telefone: true,
-          cpf: true,
+            email: true,
+            telefone: true,
+            cpf: true,
+          },
         },
       },
-      },
     });
+
+    await this.logAudit('ContaReceber', conta.id, 'CREATE', data, userId);
+
     let contaSincronizada = conta;
 
     if (data.integrarAsaas !== false) {
@@ -216,6 +298,66 @@ export class FinanceiroService {
     return { ...contaSincronizada, tipo: 'Receber' as const };
   }
 
+  async atualizarContaReceber(id: number, data: Partial<ContaReceberInput>, userId?: number): Promise<ContaFinanceiraDTO> {
+    const atual = await this.prisma.contaReceber.findUnique({ where: { id } });
+    if (!atual) throw new Error("Conta não encontrada");
+    
+    if (data.valor !== undefined && data.valor <= 0) throw new Error("O valor deve ser positivo.");
+    if (data.descricao !== undefined && !data.descricao.trim()) throw new Error("A descrição é obrigatória.");
+
+    if (atual.asaasPaymentId && (data.valor || data.vencimento || data.descricao)) {
+       await this.asaasIntegration.updatePaymentForContaReceber(id, {
+         value: data.valor,
+         dueDate: data.vencimento ? new Date(data.vencimento).toISOString().slice(0, 10) : undefined,
+         description: data.descricao,
+       });
+    }
+
+    const conta = await this.prisma.contaReceber.update({
+      where: { id },
+      data: {
+        descricao: data.descricao,
+        valor: data.valor,
+        vencimento: data.vencimento,
+        clienteId: data.clienteId,
+      },
+      include: {
+        cliente: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+            telefone: true,
+            cpf: true,
+          },
+        },
+      },
+    });
+    
+    await this.logAudit('ContaReceber', id, 'UPDATE', data, userId);
+    return { ...conta, tipo: 'Receber' as const };
+  }
+
+  async deletarContaPagar(id: number, userId?: number): Promise<void> {
+    const conta = await this.prisma.contaPagar.findUnique({ where: { id } });
+    if (!conta) throw new Error("Conta não encontrada");
+
+    await this.prisma.contaPagar.delete({ where: { id } });
+    await this.logAudit('ContaPagar', id, 'DELETE', conta, userId);
+  }
+
+  async deletarContaReceber(id: number, userId?: number): Promise<void> {
+    const conta = await this.prisma.contaReceber.findUnique({ where: { id } });
+    if (!conta) throw new Error("Conta não encontrada");
+
+    if (conta.asaasPaymentId) {
+      await this.asaasIntegration.deletePaymentForContaReceber(id);
+    }
+
+    await this.prisma.contaReceber.delete({ where: { id } });
+    await this.logAudit('ContaReceber', id, 'DELETE', conta, userId);
+  }
+
   async baixarConta(
     tipo: 'Pagar' | 'Receber',
     id: number,
@@ -229,6 +371,7 @@ export class FinanceiroService {
           dataPagamento: new Date(),
         },
       });
+      await this.logAudit('ContaPagar', id, 'UPDATE', { status: 'PAGO' }, usuarioId);
       return { ...conta, tipo: 'Pagar' as const };
     }
 
@@ -269,6 +412,9 @@ export class FinanceiroService {
       usuarioId,
       asaasPaymentId: contaExistente?.asaasPaymentId,
     });
+    
+    await this.logAudit('ContaReceber', id, 'UPDATE', { status: 'RECEBIDO' }, usuarioId);
+    
     return { ...conta, tipo: 'Receber' as const };
   }
 
@@ -285,6 +431,7 @@ export class FinanceiroService {
           dataPagamento: null,
         },
       });
+      await this.logAudit('ContaPagar', id, 'UPDATE', { status: 'CANCELADO' }, usuarioId);
       return { ...conta, tipo: 'Pagar' as const };
     }
 
@@ -322,8 +469,12 @@ export class FinanceiroService {
       usuarioId,
       asaasPaymentId: contaExistente?.asaasPaymentId,
     });
+    
+    await this.logAudit('ContaReceber', id, 'UPDATE', { status: 'PENDENTE' }, usuarioId);
+    
     return { ...conta, tipo: 'Receber' as const };
   }
+
 
   async listarCadastros(): Promise<FinanceiroCatalogosDTO> {
     const [bancos, tipos, formas, centros] = await Promise.all([
@@ -401,6 +552,10 @@ export class FinanceiroService {
   }
 
   async getRelatorioFinanceiro(): Promise<FinanceiroRelatorioDTO> {
+    const cached = RELATORIO_CACHE.get(this.tenantId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
     const [contasPagar, contasReceber, comissoes, recibos] = await Promise.all([
       this.prisma.contaPagar.findMany(),
       this.prisma.contaReceber.findMany({
@@ -434,7 +589,7 @@ export class FinanceiroService {
     const lucro = entradas - saidas;
     const margem = entradas > 0 ? (lucro / entradas) * 100 : 0;
 
-    return {
+    const result: FinanceiroRelatorioDTO = {
       totais: {
         entradas,
         saidas,
@@ -446,6 +601,76 @@ export class FinanceiroService {
       comissoes: this.buildComissoesResumo(comissoes),
       recibos: this.buildRecibosResumo(recibos, contasPagar.length, contasReceber.length),
     };
+    RELATORIO_CACHE.set(this.tenantId, {
+      data: result,
+      expiresAt: Date.now() + DEFAULT_CACHE_TTL_MS,
+    });
+    return result;
+  }
+
+  async getMetricasRecorrencia() {
+    const cached = RECORRENCIA_CACHE.get(this.tenantId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
+    const hoje = new Date();
+    const inicioMes = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth(), 1));
+    const inicioMesAnterior = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth() - 1, 1));
+    const fimMesAnterior = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth(), 0));
+
+    const [contasRecorrentes, contasUnicas, assinaturasCanceladas] = await Promise.all([
+      // Receitas recorrentes (com asaasSubscriptionId) deste mês
+      this.prisma.contaReceber.findMany({
+        where: {
+          asaasSubscriptionId: { not: null },
+          vencimento: { gte: inicioMes },
+          status: { not: 'CANCELADO' }
+        }
+      }),
+      // Receitas únicas (sem asaasSubscriptionId) deste mês
+      this.prisma.contaReceber.findMany({
+        where: {
+          asaasSubscriptionId: null,
+          vencimento: { gte: inicioMes },
+          status: { not: 'CANCELADO' }
+        }
+      }),
+      // Assinaturas canceladas no mês anterior (para churn)
+      // NOTE: Usando vencimento como proxy pois updatedAt não existe no schema atual e migrações estão pausadas
+      this.prisma.contaReceber.findMany({
+        where: {
+          asaasSubscriptionId: { not: null },
+          status: 'CANCELADO',
+          vencimento: {
+            gte: inicioMesAnterior,
+            lte: fimMesAnterior
+          }
+        }
+      })
+    ]);
+
+    const mrr = contasRecorrentes.reduce((acc, c) => acc + (c.valor || 0), 0);
+    const revenueOneTime = contasUnicas.reduce((acc, c) => acc + (c.valor || 0), 0);
+    
+    // Simplistic Churn calculation: Cancelled / (Active + Cancelled)
+    // In a real scenario, we'd need the total active subscriptions at start of month
+    const activeSubscriptionsCount = contasRecorrentes.length; // Approximate
+    const cancelledCount = assinaturasCanceladas.length;
+    const totalBase = activeSubscriptionsCount + cancelledCount;
+    const churnRate = totalBase > 0 ? (cancelledCount / totalBase) * 100 : 0;
+
+    const result = {
+      mrr,
+      revenueOneTime,
+      churnRate,
+      activeSubscriptions: activeSubscriptionsCount,
+      cancelledSubscriptions: cancelledCount
+    };
+    RECORRENCIA_CACHE.set(this.tenantId, {
+      data: result,
+      expiresAt: Date.now() + DEFAULT_CACHE_TTL_MS,
+    });
+    return result;
   }
 
   private buildSeriesMensal(contasPagar: ContaPagarType[], contasReceber: ContaReceberType[]) {

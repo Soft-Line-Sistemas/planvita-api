@@ -85,6 +85,7 @@ model User {
   consultor   Consultor? @relation("UserConsultor")
   
   autorizacoesTecnico AutorizacaoLegal[] @relation("UserToAutorizacaoLegal") 
+  financialAudits     FinancialAudit[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 }
@@ -479,7 +480,7 @@ model NotificationLog {
   createdAt   DateTime @default(now())
 
   @@index([tenantId, createdAt])
-  @@index([tenantId, logId])
+  // @@index([tenantId, logId])
 }
 
 model NotificationTemplate {
@@ -496,9 +497,23 @@ model NotificationTemplate {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  @@index([tenantId, canal])
-  @@index([tenantId, flow])
-  @@index([tenantId, isDefault])
+  // @@index([tenantId, canal])
+  // @@index([tenantId, flow])
+}
+
+// ----------------- AUDITORIA FINANCEIRA -----------------
+model FinancialAudit {
+  id          Int      @id @default(autoincrement())
+  entityType  String   // "ContaPagar", "ContaReceber"
+  entityId    Int
+  action      String   // "CREATE", "UPDATE", "DELETE"
+  changes     String?  // JSON string of changes
+  performedBy Int?     // User ID
+  performedAt DateTime @default(now())
+  
+  user        User?    @relation(fields: [performedBy], references: [id])
+
+  @@index([entityType, entityId])
 }
 
 // ----------------- ESTOQUE E SERVIÇOS -----------------

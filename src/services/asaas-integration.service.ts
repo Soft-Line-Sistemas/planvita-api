@@ -192,6 +192,59 @@ export class AsaasIntegrationService {
     return updated as ContaReceberWithCliente;
   }
 
+  async updatePaymentForContaReceber(
+    contaReceberId: number,
+    data: Partial<AsaasPaymentPayload>
+  ): Promise<void> {
+    if (!this.isEnabled()) return;
+
+    const conta = await this.prisma.contaReceber.findUnique({
+      where: { id: contaReceberId },
+    });
+
+    if (!conta?.asaasPaymentId) return;
+
+    try {
+      await this.client!.updatePayment(conta.asaasPaymentId, data);
+      this.logger.info('Pagamento atualizado no Asaas', {
+        contaReceberId,
+        asaasPaymentId: conta.asaasPaymentId,
+        updates: data,
+      });
+    } catch (error: any) {
+      this.logger.warn('Falha ao atualizar pagamento no Asaas', {
+        contaReceberId,
+        asaasPaymentId: conta.asaasPaymentId,
+        error: error?.message,
+      });
+      // Non-blocking error for local update, but logged
+    }
+  }
+
+  async deletePaymentForContaReceber(contaReceberId: number): Promise<void> {
+    if (!this.isEnabled()) return;
+
+    const conta = await this.prisma.contaReceber.findUnique({
+      where: { id: contaReceberId },
+    });
+
+    if (!conta?.asaasPaymentId) return;
+
+    try {
+      await this.client!.deletePayment(conta.asaasPaymentId);
+      this.logger.info('Pagamento removido do Asaas', {
+        contaReceberId,
+        asaasPaymentId: conta.asaasPaymentId,
+      });
+    } catch (error: any) {
+      this.logger.warn('Falha ao remover pagamento do Asaas', {
+        contaReceberId,
+        asaasPaymentId: conta.asaasPaymentId,
+        error: error?.message,
+      });
+    }
+  }
+
   async refreshPaymentStatus(contaReceberId: number): Promise<ContaReceberWithCliente> {
     if (!this.isEnabled()) {
       throw new Error('Integração Asaas desabilitada para o tenant');

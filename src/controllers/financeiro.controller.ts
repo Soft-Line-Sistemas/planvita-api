@@ -46,11 +46,13 @@ export class FinanceiroController {
   async createContaPagar(req: TenantRequest, res: Response) {
     try {
       const payload = this.normalizeContaPayload<ContaPagarInput>(req.body);
+      const usuarioId = (req as any)?.user?.id as number | undefined;
+
       if (!payload.descricao || !payload.valor || !payload.vencimento) {
         return res.status(400).json({ message: 'Descrição, valor e vencimento são obrigatórios' });
       }
       const service = this.resolveService(req);
-      const result = await service.criarContaPagar(payload);
+      const result = await service.criarContaPagar(payload, usuarioId);
       res.status(201).json(result);
     } catch (error) {
       this.logger.error('Falha ao criar conta a pagar', error, { body: req.body });
@@ -63,16 +65,94 @@ export class FinanceiroController {
   async createContaReceber(req: TenantRequest, res: Response) {
     try {
       const payload = this.normalizeContaPayload<ContaReceberInput>(req.body);
+      const usuarioId = (req as any)?.user?.id as number | undefined;
+
       if (!payload.descricao || !payload.valor || !payload.vencimento) {
         return res.status(400).json({ message: 'Descrição, valor e vencimento são obrigatórios' });
       }
       const service = this.resolveService(req);
-      const result = await service.criarContaReceber(payload);
+      const result = await service.criarContaReceber(payload, usuarioId);
       res.status(201).json(result);
     } catch (error) {
       this.logger.error('Falha ao criar conta a receber', error, { body: req.body });
       res.status(this.shouldReturnTenantError(error) ? 400 : 500).json({
         message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : 'Internal server error',
+      });
+    }
+  }
+
+  async updateConta(req: TenantRequest, res: Response) {
+    try {
+      const { tipo, id } = req.params;
+      const usuarioId = (req as any)?.user?.id as number | undefined;
+      
+      if (!tipo || !isValidTipo(tipo)) {
+        return res.status(400).json({ message: 'Tipo de conta inválido' });
+      }
+
+      const contaId = Number(id);
+      if (Number.isNaN(contaId)) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
+      const payload = this.normalizeContaPayload<any>(req.body);
+      const service = this.resolveService(req);
+      
+      let result;
+      if (tipo === 'pagar') {
+        result = await service.atualizarContaPagar(contaId, payload, usuarioId);
+      } else {
+        result = await service.atualizarContaReceber(contaId, payload, usuarioId);
+      }
+      
+      this.logger.info('Conta atualizada com sucesso', {
+        tenant: req.tenantId,
+        tipo,
+        contaId,
+        usuarioId,
+      });
+      res.json(result);
+    } catch (error) {
+      this.logger.error('Falha ao atualizar conta', error, { params: req.params, body: req.body });
+      res.status(this.shouldReturnTenantError(error) ? 400 : 500).json({
+        message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : (error as Error).message,
+      });
+    }
+  }
+
+  async deleteConta(req: TenantRequest, res: Response) {
+    try {
+      const { tipo, id } = req.params;
+      const usuarioId = (req as any)?.user?.id as number | undefined;
+      
+      if (!tipo || !isValidTipo(tipo)) {
+        return res.status(400).json({ message: 'Tipo de conta inválido' });
+      }
+
+      const contaId = Number(id);
+      if (Number.isNaN(contaId)) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
+      const service = this.resolveService(req);
+      
+      if (tipo === 'pagar') {
+        await service.deletarContaPagar(contaId, usuarioId);
+      } else {
+        await service.deletarContaReceber(contaId, usuarioId);
+      }
+      
+      this.logger.info('Conta removida com sucesso', {
+        tenant: req.tenantId,
+        tipo,
+        contaId,
+        usuarioId,
+      });
+      res.status(204).send();
+    } catch (error) {
+      this.logger.error('Falha ao remover conta', error, { params: req.params });
+      res.status(this.shouldReturnTenantError(error) ? 400 : 500).json({
+        message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : (error as Error).message,
       });
     }
   }
@@ -345,6 +425,20 @@ export class FinanceiroController {
       res.json(result);
     } catch (error) {
       this.logger.error('Falha ao gerar relatório financeiro', error);
+      res.status(this.shouldReturnTenantError(error) ? 400 : 500).json({
+        message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : 'Internal server error',
+      });
+    }
+  }
+
+  async getMetricasRecorrencia(req: TenantRequest, res: Response) {
+    try {
+      const service = this.resolveService(req);
+      const result = await service.getMetricasRecorrencia();
+      this.logger.info('Métricas de recorrência geradas', { tenant: req.tenantId });
+      res.json(result);
+    } catch (error) {
+      this.logger.error('Falha ao gerar métricas de recorrência', error);
       res.status(this.shouldReturnTenantError(error) ? 400 : 500).json({
         message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : 'Internal server error',
       });

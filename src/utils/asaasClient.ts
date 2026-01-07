@@ -162,6 +162,18 @@ export class AsaasClient {
     });
   }
 
+  async updatePayment(id: string, payload: Partial<AsaasPaymentPayload>) {
+    return this.request<any>('POST', `/payments/${id}`, payload, {
+      context: { paymentId: id },
+    });
+  }
+
+  async deletePayment(id: string) {
+    return this.request<any>('DELETE', `/payments/${id}`, undefined, {
+      context: { paymentId: id },
+    });
+  }
+
   async getPayments(params: Record<string, string | number | boolean | undefined> = {}) {
     return this.request<AsaasPagedResponse<any>>('GET', '/payments', undefined, { params });
   }
@@ -242,6 +254,29 @@ export class AsaasClient {
         }
 
         if (!response.ok) {
+          // Handle Rate Limiting (429)
+          if (response.status === 429) {
+            const retryAfter = response.headers.get('Retry-After');
+            const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 5000;
+            
+            this.logger.warn(`Asaas API Rate Limit reached. Waiting ${waitMs}ms`, {
+              tenantId: this.tenantId,
+              requestId: this.requestId,
+            });
+            
+            await new Promise(resolve => setTimeout(resolve, waitMs));
+            throw new Error('Rate limit exceeded (retrying)'); // Will trigger retry in generic handler or we could recurse
+          }
+
+          // Handle client errors (4xx) - do not retry unless 429
+          if (response.status >= 400 && response.status < 500) {
+            const error = new Error(`Asaas client error: ${response.status}`);
+            (error as any).status = response.status;
+            (error as any).body = parsed ?? responseText;
+            (error as any).isFatal = true; // Mark as fatal to stop retries
+            throw error;
+          }
+
           const error = new Error(`Asaas responded with status ${response.status}`);
           (error as any).status = response.status;
           (error as any).body = parsed ?? responseText;
@@ -263,7 +298,14 @@ export class AsaasClient {
     };
 
     try {
-      return await retry(execRequest, maxAttempts, 500);
+      return await retry(async () => {
+        try {
+          return await execRequest();
+        } catch (error: any) {
+          if (error.isFatal) throw error; // Re-throw fatal errors immediately
+          throw error; // Let retry handler deal with transient errors
+        }
+      }, maxAttempts, 500);
     } catch (error: any) {
       this.logger.error('Asaas API call failed', error, {
         url,
