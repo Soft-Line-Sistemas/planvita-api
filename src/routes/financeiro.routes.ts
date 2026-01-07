@@ -7,6 +7,8 @@ const controller = new FinanceiroController();
 router.get('/contas', controller.getContas.bind(controller));
 router.post('/contas/pagar', controller.createContaPagar.bind(controller));
 router.post('/contas/receber', controller.createContaReceber.bind(controller));
+router.put('/contas/:tipo/:id', controller.updateConta.bind(controller));
+router.delete('/contas/:tipo/:id', controller.deleteConta.bind(controller));
 router.post('/contas/:tipo/:id/baixa', controller.baixarConta.bind(controller));
 router.post('/contas/:tipo/:id/estorno', controller.estornarConta.bind(controller));
 router.post('/contas/receber/:id/reconsulta', controller.reconsultarContaReceber.bind(controller));
@@ -20,5 +22,6 @@ router.delete('/cadastros/formas/:id', controller.deleteFormaPagamento.bind(cont
 router.post('/cadastros/centros', controller.createCentroResultado.bind(controller));
 router.delete('/cadastros/centros/:id', controller.deleteCentroResultado.bind(controller));
 router.get('/relatorios', controller.getRelatorioFinanceiro.bind(controller));
+router.get('/metricas/recorrencia', controller.getMetricasRecorrencia.bind(controller));
 
 export default router;
