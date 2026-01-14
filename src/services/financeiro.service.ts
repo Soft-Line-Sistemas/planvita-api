@@ -15,6 +15,19 @@ const RECORRENCIA_CACHE = new Map<
       churnRate: number;
       activeSubscriptions: number;
       cancelledSubscriptions: number;
+      liquidezCaixaDias: number | null;
+      caixaAtual: number;
+      inadimplenciaGlobalPercentual: number;
+      inadimplenciaGlobalValorCarteira: number;
+      inadimplenciaGlobalValorAtrasado5d: number;
+      totalTitularesAtivos: number;
+      totalDependentesAtivos: number;
+      totalPessoasBase: number;
+      churnClientesPercentual: number;
+      conversaoLinksWhatsappPercentual: number;
+      conversaoLinksWhatsappEnviados: number;
+      conversaoLinksWhatsappTentativas: number;
+      ebitdaOperacional: number;
     };
     expiresAt: number;
   }
@@ -618,7 +631,8 @@ export class FinanceiroService {
     const inicioMesAnterior = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth() - 1, 1));
     const fimMesAnterior = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth(), 0));
 
-    const [contasRecorrentes, contasUnicas, assinaturasCanceladas] = await Promise.all([
+    const [contasRecorrentes, contasUnicas, assinaturasCanceladas, titularesAtivos, totalTitulares, totalTitularesInativos, totalDependentesAtivos, bancosAtivos, contasCarteira, logsWhatsapp] =
+      await Promise.all([
       // Receitas recorrentes (com asaasSubscriptionId) deste mês
       this.prisma.contaReceber.findMany({
         where: {
@@ -632,7 +646,7 @@ export class FinanceiroService {
         where: {
           asaasSubscriptionId: null,
           vencimento: { gte: inicioMes },
-          status: { not: 'CANCELADO' }
+          status: { not: 'CANCELADO' },
         }
       }),
       // Assinaturas canceladas no mês anterior (para churn)
@@ -644,9 +658,55 @@ export class FinanceiroService {
           vencimento: {
             gte: inicioMesAnterior,
             lte: fimMesAnterior
-          }
-        }
-      })
+          },
+        },
+      }),
+      this.prisma.titular.findMany({
+        where: {
+          statusPlano: 'ATIVO',
+        },
+        select: {
+          id: true,
+        },
+      }),
+      this.prisma.titular.count(),
+      this.prisma.titular.count({
+        where: {
+          statusPlano: {
+            not: 'ATIVO',
+          },
+        },
+      }),
+      this.prisma.dependente.count({
+        where: {
+          titular: {
+            statusPlano: 'ATIVO',
+          },
+        },
+      }),
+      this.prisma.bancoFinanceiro.findMany({
+        where: {
+          ativo: true,
+        },
+      }),
+      this.prisma.contaReceber.findMany({
+        where: {
+          status: {
+            notIn: ['CANCELADO', 'RECEBIDO'],
+          },
+          valor: {
+            gt: 0,
+          },
+        },
+      }),
+      this.prisma.notificationLog.findMany({
+        where: {
+          canal: 'whatsapp',
+          createdAt: {
+            gte: inicioMesAnterior,
+          },
+        },
+      }),
     ]);
 
     const mrr = contasRecorrentes.reduce((acc, c) => acc + (c.valor || 0), 0);
@@ -654,17 +714,97 @@ export class FinanceiroService {
     
     // Simplistic Churn calculation: Cancelled / (Active + Cancelled)
     // In a real scenario, we'd need the total active subscriptions at start of month
-    const activeSubscriptionsCount = contasRecorrentes.length; // Approximate
+    const activeSubscriptionsCount = contasRecorrentes.length;
     const cancelledCount = assinaturasCanceladas.length;
     const totalBase = activeSubscriptionsCount + cancelledCount;
     const churnRate = totalBase > 0 ? (cancelledCount / totalBase) * 100 : 0;
+
+    const caixaAtual = bancosAtivos.reduce((acc, banco) => acc + (banco.saldo || 0), 0);
+
+    const diasJanelaDespesas = 90;
+    const inicioJanelaDespesas = new Date(
+      Date.UTC(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()),
+    );
+    inicioJanelaDespesas.setDate(inicioJanelaDespesas.getDate() - diasJanelaDespesas);
+
+    const contasPagarJanela = await this.prisma.contaPagar.findMany({
+      where: {
+        status: {
+          not: 'CANCELADO',
+        },
+        vencimento: {
+          gte: inicioJanelaDespesas,
+          lte: hoje,
+        },
+      },
+    });
+
+    const totalSaidasJanela = contasPagarJanela.reduce(
+      (acc, conta) => acc + (conta.valor || 0),
+      0,
+    );
+
+    const despesaMediaDiaria =
+      diasJanelaDespesas > 0 ? totalSaidasJanela / diasJanelaDespesas : 0;
+
+    const liquidezCaixaDias =
+      despesaMediaDiaria > 0 ? caixaAtual / despesaMediaDiaria : null;
+
+    const totalTitularesAtivos = titularesAtivos.length;
+    const totalPessoasBase = totalTitularesAtivos + totalDependentesAtivos;
+
+    const churnClientesPercentual =
+      totalTitulares > 0 ? (totalTitularesInativos / totalTitulares) * 100 : 0;
+
+    const totalCarteira = contasCarteira.reduce(
+      (acc, conta) => acc + (conta.valor || 0),
+      0,
+    );
+    const valorAtrasadoMais5 = contasCarteira.reduce((acc, conta) => {
+      const vencimento = new Date(conta.vencimento);
+      const diffMs = hoje.getTime() - vencimento.getTime();
+      const diasAtraso = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      if (diasAtraso > 5) {
+        return acc + (conta.valor || 0);
+      }
+      return acc;
+    }, 0);
+
+    const inadimplenciaGlobalPercentual =
+      totalCarteira > 0 ? (valorAtrasadoMais5 / totalCarteira) * 100 : 0;
+
+    const totalTentativasWhatsapp = logsWhatsapp.length;
+    const totalEnviadosWhatsapp = logsWhatsapp.filter(
+      (log) => log.status === 'enviado',
+    ).length;
+
+    const conversaoLinksWhatsappPercentual =
+      totalTentativasWhatsapp > 0
+        ? (totalEnviadosWhatsapp / totalTentativasWhatsapp) * 100
+        : 0;
+
+    const relatorioFinanceiro = await this.getRelatorioFinanceiro();
+    const ebitdaOperacional = relatorioFinanceiro.totais.lucro;
 
     const result = {
       mrr,
       revenueOneTime,
       churnRate,
       activeSubscriptions: activeSubscriptionsCount,
-      cancelledSubscriptions: cancelledCount
+      cancelledSubscriptions: cancelledCount,
+      liquidezCaixaDias,
+      caixaAtual,
+      inadimplenciaGlobalPercentual,
+      inadimplenciaGlobalValorCarteira: totalCarteira,
+      inadimplenciaGlobalValorAtrasado5d: valorAtrasadoMais5,
+      totalTitularesAtivos,
+      totalDependentesAtivos,
+      totalPessoasBase,
+      churnClientesPercentual,
+      conversaoLinksWhatsappPercentual,
+      conversaoLinksWhatsappEnviados: totalEnviadosWhatsapp,
+      conversaoLinksWhatsappTentativas: totalTentativasWhatsapp,
+      ebitdaOperacional,
     };
     RECORRENCIA_CACHE.set(this.tenantId, {
       data: result,
