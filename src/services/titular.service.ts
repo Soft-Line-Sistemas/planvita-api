@@ -19,13 +19,13 @@ const TITULAR_FULL_INCLUDE = {
   },
   pagamentos: true,
   vendedor: true,
-  assinaturas: true,
+  // assinaturas: true,
 } as const;
 
 const TITULAR_LIST_INCLUDE = {
   plano: true,
   dependentes: true,
-  assinaturas: true,
+  // assinaturas: true,
 } as const;
 
 const FILES_API_BASE_URL = process.env.FILES_API_URL;
