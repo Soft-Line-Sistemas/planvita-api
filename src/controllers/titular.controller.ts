@@ -12,6 +12,52 @@ export interface TenantRequest extends Request {
 export class TitularController {
   private logger = new Logger({ service: 'TitularController' });
 
+  async publicSearch(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId)
+        return res.status(400).json({ message: "Tenant unknown" });
+
+      const { cpf } = req.query;
+
+      if (!cpf || typeof cpf !== 'string') {
+        return res.status(400).json({ message: "CPF is required" });
+      }
+
+      const service = new TitularService(req.tenantId);
+
+      // Busca exata pelo CPF
+      const result = await service.getAll({
+        page: 1,
+        limit: 1,
+        search: cpf.replace(/\D/g, ''), // Normaliza CPF
+      });
+
+      if (result.data.length === 0) {
+        return res.status(404).json({ message: "Titular not found" });
+      }
+
+      // Verifica se o CPF bate exatamente (para evitar match parcial se o search for like)
+      const titular = result.data[0];
+      const cpfNormalizado = cpf.replace(/\D/g, '');
+      const titularCpfNormalizado = titular.cpf?.replace(/\D/g, '');
+
+      if (titularCpfNormalizado !== cpfNormalizado) {
+        return res.status(404).json({ message: "Titular not found" });
+      }
+      
+      // Retorna detalhes completos do titular encontrado
+      const detalhe = await service.getById(titular.id);
+      if (!detalhe) {
+         return res.status(404).json({ message: "Titular details not found" });
+      }
+
+      res.json(detalhe);
+    } catch (error) {
+      this.logger.error("Failed to public search Titular", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  }
+
   async getAll(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId)

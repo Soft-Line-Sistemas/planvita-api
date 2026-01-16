@@ -5,6 +5,9 @@ import { authenticate, authorize } from '../middlewares/auth.middleware';
 const router = Router();
 const controller = new TitularController();
 
+// Rota pública de busca por CPF (deve vir antes das rotas parametrizadas e não ter auth)
+router.get('/public/search', controller.publicSearch.bind(controller));
+
 router.get('/', authenticate, authorize(['titular.view']), controller.getAll.bind(controller));
 router.get(
   '/:id/assinaturas',
