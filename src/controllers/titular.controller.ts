@@ -52,9 +52,9 @@ export class TitularController {
       }
 
       res.json(detalhe);
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error("Failed to public search Titular", error);
-      res.status(500).json({ message: "Internal server error" });
+      res.status(500).json({ message: "Internal server error", error: error.message, stack: error.stack });
     }
   }
 
