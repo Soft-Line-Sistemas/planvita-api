@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon src/server.ts",
-    "copy-prisma": "mkdir -p dist/generated/prisma && cp -r generated/prisma/* dist/generated/prisma/",
+    "copy-prisma": "node copy-prisma.js",
     "build": "tsc && npm run copy-prisma",
     "type": "module",
     "start": "node dist/server.js",
