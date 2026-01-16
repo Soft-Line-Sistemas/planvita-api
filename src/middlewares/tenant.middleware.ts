@@ -28,10 +28,16 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
       if (!host) return res.status(400).send('Host header missing');
 
       const hostname = host.split(':')[0].toLowerCase();
-      tenant = hostname.split('.')[0];
+      const parts = hostname.split('.');
+
+      if (parts.length >= 3 && (parts[0] === 'www' || parts[0] === 'app')) {
+        tenant = parts[1];
+      } else {
+        tenant = parts[0];
+      }
     }
 
-    if (!tenant || !/^[a-z0-9-]+$/.test(tenant) || ['www', 'api'].includes(tenant)) {
+    if (!tenant || !/^[a-z0-9-]+$/.test(tenant) || ['www', 'api', 'app'].includes(tenant)) {
       return res.status(400).send('Invalid tenant');
     }
 
