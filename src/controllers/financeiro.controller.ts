@@ -16,6 +16,19 @@ const isValidTipo = (tipo: string): tipo is 'pagar' | 'receber' => {
   return normalized === 'pagar' || normalized === 'receber';
 };
 
+const parseTipoParam = (
+  tipo: string | string[] | undefined,
+): 'pagar' | 'receber' | undefined => {
+  if (!tipo) {
+    return undefined;
+  }
+  const value = Array.isArray(tipo) ? tipo[0] : tipo;
+  if (!isValidTipo(value)) {
+    return undefined;
+  }
+  return value.toLowerCase() as 'pagar' | 'receber';
+};
+
 export class FinanceiroController {
   private logger = new Logger({ service: 'FinanceiroController' });
 
@@ -85,8 +98,9 @@ export class FinanceiroController {
     try {
       const { tipo, id } = req.params;
       const usuarioId = (req as any)?.user?.id as number | undefined;
-      
-      if (!tipo || !isValidTipo(tipo)) {
+      const tipoParam = parseTipoParam(tipo);
+
+      if (!tipoParam) {
         return res.status(400).json({ message: 'Tipo de conta inválido' });
       }
 
@@ -97,17 +111,17 @@ export class FinanceiroController {
 
       const payload = this.normalizeContaPayload<any>(req.body);
       const service = this.resolveService(req);
-      
+
       let result;
-      if (tipo === 'pagar') {
+      if (tipoParam === 'pagar') {
         result = await service.atualizarContaPagar(contaId, payload, usuarioId);
       } else {
         result = await service.atualizarContaReceber(contaId, payload, usuarioId);
       }
-      
+
       this.logger.info('Conta atualizada com sucesso', {
         tenant: req.tenantId,
-        tipo,
+        tipo: tipoParam,
         contaId,
         usuarioId,
       });
@@ -124,8 +138,9 @@ export class FinanceiroController {
     try {
       const { tipo, id } = req.params;
       const usuarioId = (req as any)?.user?.id as number | undefined;
-      
-      if (!tipo || !isValidTipo(tipo)) {
+      const tipoParam = parseTipoParam(tipo);
+
+      if (!tipoParam) {
         return res.status(400).json({ message: 'Tipo de conta inválido' });
       }
 
@@ -135,16 +150,16 @@ export class FinanceiroController {
       }
 
       const service = this.resolveService(req);
-      
-      if (tipo === 'pagar') {
+
+      if (tipoParam === 'pagar') {
         await service.deletarContaPagar(contaId, usuarioId);
       } else {
         await service.deletarContaReceber(contaId, usuarioId);
       }
-      
+
       this.logger.info('Conta removida com sucesso', {
         tenant: req.tenantId,
-        tipo,
+        tipo: tipoParam,
         contaId,
         usuarioId,
       });
@@ -161,8 +176,9 @@ export class FinanceiroController {
     try {
       const { tipo, id } = req.params;
       const usuarioId = (req as any)?.user?.id as number | undefined;
+      const tipoParam = parseTipoParam(tipo);
 
-      if (!tipo || !isValidTipo(tipo)) {
+      if (!tipoParam) {
         return res.status(400).json({ message: 'Tipo de conta inválido' });
       }
 
@@ -172,10 +188,14 @@ export class FinanceiroController {
       }
 
       const service = this.resolveService(req);
-      const result = await service.baixarConta(tipo === 'pagar' ? 'Pagar' : 'Receber', contaId, usuarioId);
+      const result = await service.baixarConta(
+        tipoParam === 'pagar' ? 'Pagar' : 'Receber',
+        contaId,
+        usuarioId,
+      );
       this.logger.info('Conta baixada com sucesso', {
         tenant: req.tenantId,
-        tipo,
+        tipo: tipoParam,
         contaId,
         usuarioId,
       });
@@ -195,8 +215,9 @@ export class FinanceiroController {
     try {
       const { tipo, id } = req.params;
       const usuarioId = (req as any)?.user?.id as number | undefined;
+      const tipoParam = parseTipoParam(tipo);
 
-      if (!tipo || !isValidTipo(tipo)) {
+      if (!tipoParam) {
         return res.status(400).json({ message: 'Tipo de conta inválido' });
       }
 
@@ -206,10 +227,14 @@ export class FinanceiroController {
       }
 
       const service = this.resolveService(req);
-      const result = await service.estornarConta(tipo === 'pagar' ? 'Pagar' : 'Receber', contaId, usuarioId);
+      const result = await service.estornarConta(
+        tipoParam === 'pagar' ? 'Pagar' : 'Receber',
+        contaId,
+        usuarioId,
+      );
       this.logger.info('Conta estornada com sucesso', {
         tenant: req.tenantId,
-        tipo,
+        tipo: tipoParam,
         contaId,
         usuarioId,
       });
