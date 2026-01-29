@@ -70,10 +70,20 @@ app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
+      
       const allowed = config.server.allowedOrigins.map((o) => o.toLowerCase().trim());
-      if (allowed.includes(origin.toLowerCase())) {
+      const isAllowed = allowed.some(pattern => {
+        if (pattern.includes('*')) {
+          const regex = new RegExp('^' + pattern.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$');
+          return regex.test(origin.toLowerCase());
+        }
+        return pattern === origin.toLowerCase();
+      });
+
+      if (isAllowed || allowed.includes(origin.toLowerCase())) {
         callback(null, true);
       } else {
+        console.warn(`CORS blocked request from origin: ${origin}`);
         callback(new Error('Not allowed by CORS'));
       }
     },

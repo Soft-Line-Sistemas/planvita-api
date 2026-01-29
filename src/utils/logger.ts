@@ -4,12 +4,6 @@ import fs from "fs";
 import { config } from "../config";
 import { LoggerContext } from "../types";
 
-// Ensure logs directory exists
-const logsDir = path.dirname(config.logFile);
-if (!fs.existsSync(logsDir)) {
-  fs.mkdirSync(logsDir, { recursive: true });
-}
-
 // Custom format for structured logging
 const customFormat = winston.format.combine(
   winston.format.timestamp({
@@ -47,31 +41,46 @@ const logger = winston.createLogger({
     service: "planvita-api",
     version: config.server.apiVersion,
   },
-  transports: [
-    // File transport for all logs
+  transports: [],
+});
+
+// Add transports
+if (!process.env.VERCEL) {
+  // Ensure logs directory exists only if not on Vercel
+  const logsDir = path.dirname(config.logFile);
+  if (!fs.existsSync(logsDir)) {
+    try {
+      fs.mkdirSync(logsDir, { recursive: true });
+    } catch (e) {
+      console.warn('Failed to create logs directory', e);
+    }
+  }
+
+  logger.add(
     new winston.transports.File({
       filename: config.logFile,
       maxsize: 10 * 1024 * 1024, // 10MB
       maxFiles: 5,
       tailable: true,
-    }),
+    })
+  );
 
-    // Separate file for errors
+  logger.add(
     new winston.transports.File({
       filename: path.join(logsDir, "error.log"),
       level: "error",
       maxsize: 10 * 1024 * 1024, // 10MB
       maxFiles: 5,
       tailable: true,
-    }),
-  ],
-});
+    })
+  );
+}
 
-// Add console transport for development
-if (config.server.nodeEnv !== "production") {
+// Add console transport for development or Vercel
+if (config.server.nodeEnv !== "production" || process.env.VERCEL) {
   logger.add(
     new winston.transports.Console({
-      format: consoleFormat,
+      format: process.env.VERCEL ? customFormat : consoleFormat,
     }),
   );
 }

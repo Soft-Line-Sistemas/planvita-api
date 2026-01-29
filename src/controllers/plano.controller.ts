@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { PlanoService, ParticipanteInput } from '../services/plano.service';
 import Logger from '../utils/logger';
-import { PrismaClient } from '../../generated/prisma/client';
+import { PrismaClient } from '@prisma/client';
 
 export interface TenantRequest extends Request {
   tenantId?: string;
@@ -180,3 +180,4 @@ export class PlanoController {
     }
   }
 }
+

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import Logger from '../utils/logger';
-import { PrismaClient } from '../../generated/prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { getPrismaForTenant } from '../utils/prisma';
 import { AuthRequest } from '../types/auth';
 
@@ -99,3 +99,4 @@ export class AuthController {
     res.json({ message: 'Logout realizado com sucesso' });
   }
 }
+

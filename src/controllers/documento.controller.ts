@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { DocumentoService } from '../services/documento.service';
 import Logger from '../utils/logger';
-import { PrismaClient } from '../../generated/prisma/client';
+import { PrismaClient } from '@prisma/client';
 
 export interface TenantRequest extends Request {
   tenantId?: string;
@@ -102,3 +102,4 @@ export class DocumentoController {
     }
   }
 }
+
