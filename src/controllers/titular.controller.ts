@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { TitularService } from '../services/titular.service';
 import Logger from '../utils/logger';
-import { PrismaClient } from '../../generated/prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 
 export interface TenantRequest extends Request {

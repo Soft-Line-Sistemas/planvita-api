@@ -49,6 +49,11 @@ export const config: AppConfig = {
 function getEnvVar(name: string, defaultValue?: string): string {
   const value = process.env[name];
   if (!value && !defaultValue) {
+    // Se estiver na Vercel, não joga erro durante o build, apenas avisa
+    if (process.env.VERCEL) {
+      console.warn(`Environment variable ${name} is missing`);
+      return '';
+    }
     throw new Error(`Environment variable ${name} is required`);
   }
   return value || defaultValue!;
@@ -61,13 +66,19 @@ function getEnvVarOptional(name: string, defaultValue?: string): string {
 function getEnvVarAsNumber(name: string, defaultValue?: number): number {
   const value = process.env[name];
   if (!value && defaultValue === undefined) {
+    if (process.env.VERCEL) {
+      console.warn(`Environment variable ${name} is missing`);
+      return 0;
+    }
     throw new Error(`Environment variable ${name} is required`);
   }
   return value ? parseInt(value, 10) : defaultValue!;
 }
 
 function getEnvVarAsArray(name: string, separator = ','): string[] {
-  return getEnvVar(name)
+  const val = process.env[name];
+  if (!val) return [];
+  return val
     .split(separator)
     .map((v) => v.trim())
     .filter(Boolean);

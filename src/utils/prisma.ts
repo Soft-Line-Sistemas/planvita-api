@@ -1,4 +1,4 @@
-import { PrismaClient, Prisma as PrismaNamespace } from '../../generated/prisma/client';
+import { PrismaClient, Prisma as PrismaNamespace } from '@prisma/client';
 import { Logger } from '../utils/logger';
 import { DatabaseError } from '../utils/errors';
 

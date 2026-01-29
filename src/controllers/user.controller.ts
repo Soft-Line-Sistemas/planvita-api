@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { UserService } from '../services/user.service';
 import Logger from '../utils/logger';
-import { PrismaClient } from '../../generated/prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { AuthRequest } from '../types/auth';
 
 export interface TenantRequest extends Request {
@@ -253,3 +253,4 @@ export class UserController {
     }
   }
 }
+
