@@ -14,6 +14,15 @@ const prismaMock = {
     update: jest.fn(),
     findUnique: jest.fn(),
   },
+  pagamento: {
+    create: jest.fn(),
+    update: jest.fn(),
+    findFirst: jest.fn(),
+    upsert: jest.fn(),
+  },
+  comissao: {
+    updateMany: jest.fn(),
+  },
   financialAudit: {
     create: jest.fn(),
   },
@@ -141,15 +150,38 @@ describe('FinanceiroService', () => {
 
   it('should settle (baixar) a conta receber', async () => {
     const contaId = 2;
+    const gerarComissaoSpy = jest
+      .spyOn(service as any, 'gerarComissaoPrimeiroPagamento')
+      .mockResolvedValue(undefined);
     const expectedResult = {
       id: contaId,
       descricao: 'Receber 1',
+      valor: 150,
+      vencimento: new Date('2026-01-30T00:00:00.000Z'),
+      dataVencimento: new Date('2026-01-30T00:00:00.000Z'),
+      metodoPagamento: 'Boleto',
       status: 'RECEBIDO',
       dataRecebimento: new Date(),
+      cliente: {
+        id: 10,
+        nome: 'Cliente Teste',
+        email: 'teste@planvita.com',
+        telefone: '11999999999',
+        cpf: '12345678901',
+      },
     };
 
-    (prismaMock.contaReceber.findUnique as jest.Mock).mockResolvedValue({ id: contaId });
+    (prismaMock.contaReceber.findUnique as jest.Mock).mockResolvedValue({
+      id: contaId,
+      status: 'PENDENTE',
+    });
     (prismaMock.contaReceber.update as jest.Mock).mockResolvedValue(expectedResult);
+    (prismaMock.pagamento.findFirst as jest.Mock).mockResolvedValue(null);
+    (prismaMock.pagamento.create as jest.Mock).mockResolvedValue({
+      id: 100,
+      titularId: 10,
+      status: 'RECEBIDO',
+    });
 
     const result = await service.baixarConta('Receber', contaId, 1);
 
@@ -162,6 +194,14 @@ describe('FinanceiroService', () => {
       include: expect.any(Object),
     });
     expect(result.status).toBe('RECEBIDO');
+    expect(prismaMock.pagamento.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        titularId: 10,
+        status: 'RECEBIDO',
+        valor: 150,
+      }),
+    });
+    expect(gerarComissaoSpy).toHaveBeenCalledWith(10);
     expect(prismaMock.financialAudit.create).toHaveBeenCalled();
   });
 
@@ -184,6 +224,59 @@ describe('FinanceiroService', () => {
         status: 'CANCELADO',
         dataPagamento: null,
       },
+    });
+    expect(result.status).toBe('CANCELADO');
+    expect(prismaMock.financialAudit.create).toHaveBeenCalled();
+  });
+
+  it('should chargeback (estornar) a conta receber and sync payment history', async () => {
+    const contaId = 3;
+    const expectedResult = {
+      id: contaId,
+      descricao: 'Receber 2',
+      valor: 220,
+      vencimento: new Date('2026-02-10T00:00:00.000Z'),
+      dataVencimento: new Date('2026-02-10T00:00:00.000Z'),
+      metodoPagamento: 'Boleto',
+      status: 'CANCELADO',
+      dataRecebimento: null,
+      cliente: {
+        id: 11,
+        nome: 'Cliente Estorno',
+        email: 'estorno@planvita.com',
+        telefone: '11988888888',
+        cpf: '10987654321',
+      },
+    };
+
+    (prismaMock.contaReceber.findUnique as jest.Mock).mockResolvedValue({
+      id: contaId,
+      status: 'RECEBIDO',
+    });
+    (prismaMock.contaReceber.update as jest.Mock).mockResolvedValue(expectedResult);
+    (prismaMock.pagamento.findFirst as jest.Mock).mockResolvedValue({
+      id: 200,
+    });
+    (prismaMock.pagamento.update as jest.Mock).mockResolvedValue({
+      id: 200,
+      status: 'CANCELADO',
+    });
+
+    const result = await service.estornarConta('Receber', contaId, 1);
+
+    expect(prismaMock.contaReceber.update).toHaveBeenCalledWith({
+      where: { id: contaId },
+      data: {
+        status: 'CANCELADO',
+        dataRecebimento: null,
+      },
+      include: expect.any(Object),
+    });
+    expect(prismaMock.pagamento.update).toHaveBeenCalledWith({
+      where: { id: 200 },
+      data: expect.objectContaining({
+        status: 'CANCELADO',
+      }),
     });
     expect(result.status).toBe('CANCELADO');
     expect(prismaMock.financialAudit.create).toHaveBeenCalled();

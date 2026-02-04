@@ -123,4 +123,23 @@ export class ConsultorController {
       return res.status(500).json({ message: 'Internal server error' });
     }
   }
+
+  async getComissoesMe(req: TenantAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      if (!req.user?.id) return res.status(401).json({ message: 'Não autenticado' });
+
+      const service = new ConsultorService(req.tenantId);
+      const resultado = await service.listarComissoesByUserId(req.user.id);
+
+      if (!resultado) {
+        return res.status(404).json({ message: 'Consultor não encontrado para este usuário.' });
+      }
+
+      return res.json(resultado);
+    } catch (error) {
+      this.logger.error('Failed to get consultor comissoes', error);
+      return res.status(500).json({ message: 'Internal server error' });
+    }
+  }
 }

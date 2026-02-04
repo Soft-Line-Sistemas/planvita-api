@@ -77,4 +77,51 @@ export class ConsultorService {
       comissaoPaga: pago._sum.valor ?? 0,
     };
   }
+
+  async listarComissoesByUserId(userId: number) {
+    const consultor = await this.prisma.consultor.findUnique({
+      where: { userId: Number(userId) },
+      select: { id: true, nome: true },
+    });
+
+    if (!consultor) return null;
+
+    const comissoes = await this.prisma.comissao.findMany({
+      where: { vendedorId: consultor.id },
+      orderBy: { dataGeracao: 'desc' },
+      include: {
+        titular: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+            telefone: true,
+          },
+        },
+        contaPagar: {
+          select: {
+            id: true,
+            descricao: true,
+            valor: true,
+            status: true,
+            vencimento: true,
+            dataPagamento: true,
+          },
+        },
+      },
+    });
+
+    return {
+      consultor,
+      comissoes,
+      totais: {
+        pendente: comissoes
+          .filter((c) => c.statusPagamento === 'PENDENTE')
+          .reduce((acc, c) => acc + (c.valor ?? 0), 0),
+        pago: comissoes
+          .filter((c) => c.statusPagamento === 'PAGO')
+          .reduce((acc, c) => acc + (c.valor ?? 0), 0),
+      },
+    };
+  }
 }

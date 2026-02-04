@@ -5,7 +5,8 @@ import { authenticate, authorize } from '../middlewares/auth.middleware';
 const router = Router();
 const controller = new ConsultorController();
 
-router.get('/me/resumo', authenticate, authorize(['consultor.view']), controller.getResumoMe.bind(controller));
+router.get('/me/resumo', authenticate, authorize(['titular.view']), controller.getResumoMe.bind(controller));
+router.get('/me/comissoes', authenticate, authorize(['titular.view']), controller.getComissoesMe.bind(controller));
 router.get('/', authenticate, authorize(['consultor.view']), controller.getAll.bind(controller));
 router.get('/:id', authenticate, authorize(['consultor.view']), controller.getById.bind(controller));
 router.post('/', authenticate, authorize(['consultor.create']), controller.create.bind(controller));

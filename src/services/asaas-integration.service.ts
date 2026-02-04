@@ -441,12 +441,15 @@ export class AsaasIntegrationService {
       if (conta) {
         const alreadySameStatus = conta.status === status;
         const dataRecebimento = status === 'RECEBIDO' ? new Date() : null;
+        const limparDataRecebimento = status === 'CANCELADO';
 
         const updatedConta = await tx.contaReceber.update({
           where: { id: conta.id },
           data: {
             status,
-            dataRecebimento: dataRecebimento ?? conta.dataRecebimento,
+            dataRecebimento: limparDataRecebimento
+              ? null
+              : (dataRecebimento ?? conta.dataRecebimento),
             paymentUrl:
               (event.payment as any)?.invoiceUrl ||
               (event.payment as any)?.bankSlipUrl ||
@@ -495,6 +498,34 @@ export class AsaasIntegrationService {
             },
           });
           await this.gerarComissaoPrimeiroPagamentoTx(tx, updatedConta.clienteId);
+        } else if (status === 'CANCELADO' && paymentId && updatedConta.clienteId) {
+          await tx.pagamento.upsert({
+            where: { asaasPaymentId: paymentId },
+            update: {
+              status,
+              valor: updatedConta.valor,
+              metodoPagamento: updatedConta.metodoPagamento ?? 'ASAAS',
+              asaasPaymentId: paymentId,
+              asaasSubscriptionId: subscriptionId ?? undefined,
+              paymentUrl: updatedConta.paymentUrl,
+              pixQrCode: updatedConta.pixQrCode,
+              pixExpiration: updatedConta.pixExpiration,
+              dataVencimento: updatedConta.dataVencimento ?? updatedConta.vencimento,
+            },
+            create: {
+              titularId: updatedConta.clienteId,
+              status,
+              dataPagamento: new Date(),
+              valor: updatedConta.valor,
+              metodoPagamento: updatedConta.metodoPagamento ?? 'ASAAS',
+              asaasPaymentId: paymentId,
+              asaasSubscriptionId: subscriptionId ?? undefined,
+              paymentUrl: updatedConta.paymentUrl,
+              pixQrCode: updatedConta.pixQrCode,
+              pixExpiration: updatedConta.pixExpiration,
+              dataVencimento: updatedConta.dataVencimento ?? updatedConta.vencimento,
+            },
+          });
         } else if (status === 'RECEBIDO' && !updatedConta.clienteId) {
           this.logger.warn('Pagamento recebido sem titular vinculado', {
             tenantId: this.tenantId,
@@ -530,11 +561,19 @@ export class AsaasIntegrationService {
     const normalized = (status || '').toUpperCase();
     switch (normalized) {
       case 'RECEIVED':
-      case 'CONFIRMED':
         return 'PAYMENT_RECEIVED';
+      case 'CONFIRMED':
+        return 'PAYMENT_CONFIRMED';
       case 'OVERDUE':
         return 'PAYMENT_OVERDUE';
+      case 'CHARGEBACK_REQUESTED':
+      case 'CHARGEBACK_DISPUTE':
+      case 'AWAITING_CHARGEBACK_REVERSAL':
+        return 'PAYMENT_CHARGEBACK_REQUESTED';
+      case 'PARTIALLY_REFUNDED':
+      case 'REFUND_IN_PROGRESS':
       case 'REFUNDED':
+        return 'PAYMENT_REFUNDED';
       case 'CANCELLED':
       case 'CANCELED':
       case 'DELETED':
@@ -548,16 +587,31 @@ export class AsaasIntegrationService {
   private mapStatus(event: string): string {
     switch (event) {
       case 'PAYMENT_RECEIVED':
-      case 'PAYMENT_CONFIRMED':
         return 'RECEBIDO';
+      case 'PAYMENT_CONFIRMED':
+        return 'CONFIRMADO';
       case 'PAYMENT_OVERDUE':
         return 'VENCIDO';
+      case 'PAYMENT_REFUNDED':
+      case 'PAYMENT_PARTIALLY_REFUNDED':
+      case 'PAYMENT_REFUND_IN_PROGRESS':
+      case 'PAYMENT_CHARGEBACK_REQUESTED':
+      case 'PAYMENT_CHARGEBACK_DISPUTE':
+      case 'PAYMENT_AWAITING_CHARGEBACK_REVERSAL':
       case 'PAYMENT_DELETED':
       case 'SUBSCRIPTION_DELETED':
       case 'SUBSCRIPTION_CANCELLED':
       case 'SUBSCRIPTION_CANCELED':
         return 'CANCELADO';
+      case 'PAYMENT_DUNNING_RECEIVED':
+        return 'RECEBIDO';
+      case 'PAYMENT_RESTORED':
+        return 'PENDENTE';
       case 'PAYMENT_CREATED':
+      case 'PAYMENT_BANK_SLIP_VIEWED':
+      case 'PAYMENT_CHECKOUT_VIEWED':
+      case 'PAYMENT_DUNNING_REQUESTED':
+      case 'PAYMENT_AWAITING_RISK_ANALYSIS':
       default:
         return 'PENDENTE';
     }
@@ -567,10 +621,17 @@ export class AsaasIntegrationService {
     const normalized = (status || '').toUpperCase();
     switch (normalized) {
       case 'RECEIVED':
-      case 'CONFIRMED':
+      case 'RECEIVED_IN_CASH':
         return 'RECEBIDO';
+      case 'CONFIRMED':
+        return 'CONFIRMADO';
       case 'OVERDUE':
         return 'VENCIDO';
+      case 'CHARGEBACK_REQUESTED':
+      case 'CHARGEBACK_DISPUTE':
+      case 'AWAITING_CHARGEBACK_REVERSAL':
+      case 'PARTIALLY_REFUNDED':
+      case 'REFUND_IN_PROGRESS':
       case 'REFUNDED':
       case 'CANCELLED':
       case 'CANCELED':

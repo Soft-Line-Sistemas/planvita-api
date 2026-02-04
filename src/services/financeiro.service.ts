@@ -254,6 +254,161 @@ export class FinanceiroService {
     });
   }
 
+  private async registrarPagamentoHistoricoContaReceber(
+    conta: ContaReceberType,
+  ): Promise<void> {
+    const titularId = conta.cliente?.id;
+    if (!titularId) return;
+
+    const dataPagamento = conta.dataRecebimento ?? new Date();
+    const dataVencimento = conta.dataVencimento ?? conta.vencimento;
+    const metodoPagamento =
+      conta.metodoPagamento ??
+      (conta.asaasPaymentId ? 'ASAAS' : 'Boleto');
+
+    if (conta.asaasPaymentId) {
+      await this.prisma.pagamento.upsert({
+        where: { asaasPaymentId: conta.asaasPaymentId },
+        update: {
+          status: 'RECEBIDO',
+          dataPagamento,
+          valor: conta.valor,
+          metodoPagamento,
+          asaasSubscriptionId: conta.asaasSubscriptionId ?? undefined,
+          paymentUrl: conta.paymentUrl,
+          pixQrCode: conta.pixQrCode,
+          pixExpiration: conta.pixExpiration,
+          dataVencimento,
+        },
+        create: {
+          titularId,
+          status: 'RECEBIDO',
+          dataPagamento,
+          valor: conta.valor,
+          metodoPagamento,
+          asaasPaymentId: conta.asaasPaymentId,
+          asaasSubscriptionId: conta.asaasSubscriptionId ?? undefined,
+          paymentUrl: conta.paymentUrl,
+          pixQrCode: conta.pixQrCode,
+          pixExpiration: conta.pixExpiration,
+          dataVencimento,
+        },
+      });
+      return;
+    }
+
+    const existente = await this.prisma.pagamento.findFirst({
+      where: {
+        titularId,
+        asaasPaymentId: null,
+        valor: conta.valor,
+        dataVencimento,
+      },
+      orderBy: {
+        dataPagamento: 'desc',
+      },
+    });
+
+    if (existente) {
+      await this.prisma.pagamento.update({
+        where: { id: existente.id },
+        data: {
+          status: 'RECEBIDO',
+          dataPagamento,
+          metodoPagamento,
+        },
+      });
+      return;
+    }
+
+    await this.prisma.pagamento.create({
+      data: {
+        titularId,
+        status: 'RECEBIDO',
+        dataPagamento,
+        valor: conta.valor,
+        metodoPagamento,
+        dataVencimento,
+      },
+    });
+  }
+
+  private async registrarEstornoHistoricoContaReceber(
+    conta: ContaReceberType,
+  ): Promise<void> {
+    const titularId = conta.cliente?.id;
+    if (!titularId) return;
+
+    const dataVencimento = conta.dataVencimento ?? conta.vencimento;
+    const metodoPagamento =
+      conta.metodoPagamento ??
+      (conta.asaasPaymentId ? 'ASAAS' : 'Boleto');
+
+    if (conta.asaasPaymentId) {
+      await this.prisma.pagamento.upsert({
+        where: { asaasPaymentId: conta.asaasPaymentId },
+        update: {
+          status: 'CANCELADO',
+          valor: conta.valor,
+          metodoPagamento,
+          asaasSubscriptionId: conta.asaasSubscriptionId ?? undefined,
+          paymentUrl: conta.paymentUrl,
+          pixQrCode: conta.pixQrCode,
+          pixExpiration: conta.pixExpiration,
+          dataVencimento,
+        },
+        create: {
+          titularId,
+          status: 'CANCELADO',
+          dataPagamento: new Date(),
+          valor: conta.valor,
+          metodoPagamento,
+          asaasPaymentId: conta.asaasPaymentId,
+          asaasSubscriptionId: conta.asaasSubscriptionId ?? undefined,
+          paymentUrl: conta.paymentUrl,
+          pixQrCode: conta.pixQrCode,
+          pixExpiration: conta.pixExpiration,
+          dataVencimento,
+        },
+      });
+      return;
+    }
+
+    const existente = await this.prisma.pagamento.findFirst({
+      where: {
+        titularId,
+        asaasPaymentId: null,
+        valor: conta.valor,
+        dataVencimento,
+      },
+      orderBy: {
+        dataPagamento: 'desc',
+      },
+    });
+
+    if (existente) {
+      await this.prisma.pagamento.update({
+        where: { id: existente.id },
+        data: {
+          status: 'CANCELADO',
+          metodoPagamento,
+        },
+      });
+      return;
+    }
+
+    await this.prisma.pagamento.create({
+      data: {
+        titularId,
+        status: 'CANCELADO',
+        dataPagamento: new Date(),
+        valor: conta.valor,
+        metodoPagamento,
+        dataVencimento,
+      },
+    });
+  }
+
   async listarContas(): Promise<ContaFinanceiraDTO[]> {
     const [contasPagar, contasReceber] = await Promise.all([
       this.prisma.contaPagar.findMany(),
@@ -450,7 +605,11 @@ export class FinanceiroService {
       return { ...conta, tipo: 'Pagar' as const };
     }
 
-    const contaExistente = await this.prisma.contaReceber.findUnique({ where: { id } });
+    const contaExistente = await this.prisma.contaReceber.findUnique({
+      where: { id },
+    });
+    if (!contaExistente) throw new Error("Conta não encontrada");
+
     if (contaExistente?.asaasPaymentId) {
       this.logger.warn(
         'Baixa manual em cobrança integrada ao Asaas',
@@ -463,24 +622,39 @@ export class FinanceiroService {
       );
     }
 
-    const conta = await this.prisma.contaReceber.update({
-      where: { id },
-      data: {
-        status: 'RECEBIDO',
-        dataRecebimento: new Date(),
-      },
-      include: {
-        cliente: {
-          select: {
-            id: true,
-            nome: true,
+    const includeCliente = {
+      cliente: {
+        select: {
+          id: true,
+          nome: true,
           email: true,
           telefone: true,
           cpf: true,
         },
-        },
       },
-    });
+    } as const;
+
+    const conta =
+      contaExistente.status === 'RECEBIDO'
+        ? await this.prisma.contaReceber.findUnique({
+            where: { id },
+            include: includeCliente,
+          })
+        : await this.prisma.contaReceber.update({
+            where: { id },
+            data: {
+              status: 'RECEBIDO',
+              dataRecebimento: new Date(),
+            },
+            include: includeCliente,
+          });
+
+    if (!conta) throw new Error("Conta não encontrada");
+
+    if (contaExistente.status !== 'RECEBIDO') {
+      await this.registrarPagamentoHistoricoContaReceber(conta);
+    }
+
     if (conta.cliente?.id) {
       await this.gerarComissaoPrimeiroPagamento(conta.cliente.id);
     }
@@ -514,7 +688,11 @@ export class FinanceiroService {
       return { ...conta, tipo: 'Pagar' as const };
     }
 
-    const contaExistente = await this.prisma.contaReceber.findUnique({ where: { id } });
+    const contaExistente = await this.prisma.contaReceber.findUnique({
+      where: { id },
+    });
+    if (!contaExistente) throw new Error("Conta não encontrada");
+
     if (contaExistente?.asaasPaymentId) {
       this.logger.warn('Estorno manual em cobrança integrada ao Asaas', {
         contaReceberId: id,
@@ -542,6 +720,9 @@ export class FinanceiroService {
         },
       },
     });
+
+    await this.registrarEstornoHistoricoContaReceber(conta);
+
     this.logger.info('Estorno aplicado', {
       contaReceberId: id,
       tenantId: this.tenantId,
@@ -549,7 +730,7 @@ export class FinanceiroService {
       asaasPaymentId: contaExistente?.asaasPaymentId,
     });
     
-    await this.logAudit('ContaReceber', id, 'UPDATE', { status: 'PENDENTE' }, usuarioId);
+    await this.logAudit('ContaReceber', id, 'UPDATE', { status: 'CANCELADO' }, usuarioId);
     
     return { ...conta, tipo: 'Receber' as const };
   }
