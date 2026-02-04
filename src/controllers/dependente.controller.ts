@@ -57,9 +57,13 @@ export class DependenteController {
 
       this.logger.info('create executed successfully', { tenant: req.tenantId, data });
       res.status(201).json(result);
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error('Failed to create Dependente', error, { body: req.body });
-      res.status(500).json({ message: 'Internal server error' });
+      const status = error?.status ?? 500;
+      const message = error?.message ?? 'Internal server error';
+      const payload: any = { message };
+      if (error?.meta) payload.meta = error.meta;
+      res.status(status).json(payload);
     }
   }
 
@@ -77,12 +81,16 @@ export class DependenteController {
         data,
       });
       res.json(result);
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Failed to update Dependente`, error, {
         params: req.params,
         body: req.body,
       });
-      res.status(500).json({ message: 'Internal server error' });
+      const status = error?.status ?? 500;
+      const message = error?.message ?? 'Internal server error';
+      const payload: any = { message };
+      if (error?.meta) payload.meta = error.meta;
+      res.status(status).json(payload);
     }
   }
 
@@ -102,4 +110,3 @@ export class DependenteController {
     }
   }
 }
-

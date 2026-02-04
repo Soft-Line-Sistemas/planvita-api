@@ -10,12 +10,16 @@ export type NotificationFlowType =
   | 'pendencia-periodica'
   | 'aviso-vencimento'
   | 'aviso-pendencia'
-  | 'suspensao-preventiva';
+  | 'suspensao-preventiva'
+  | 'suspensao'
+  | 'pos-suspensao';
 
 const DEFAULT_DIAS_AVISO_VENCIMENTO = 2;
 const DEFAULT_DIAS_AVISO_PENDENCIA = 1;
 const DEFAULT_REPETICAO_PENDENCIA_DIAS = 1;
 const DEFAULT_DIAS_SUSPENSAO_PREVENTIVA = 85;
+const DEFAULT_DIAS_SUSPENSAO = 90;
+const DEFAULT_DIAS_POS_SUSPENSAO = 92;
 
 type ContaReceberComCliente = Prisma.ContaReceberGetPayload<{
   include: {
@@ -505,6 +509,10 @@ export class NotificacaoRecorrenteService {
           ? 'Aviso de pendência'
           : tipo === 'suspensao-preventiva'
             ? 'Aviso de suspensão preventiva'
+            : tipo === 'suspensao'
+              ? 'Aviso de suspensão'
+              : tipo === 'pos-suspensao'
+                ? 'Lembrete pós-suspensão'
             : 'Cobrança pendente';
 
     return `
@@ -598,6 +606,18 @@ export class NotificacaoRecorrenteService {
         `Cobrança de ${valor} vencida em ${vencimento} (${descricao}).`,
         `Evite suspensão regularizando em: ${urlCobranca}`,
       ],
+      suspensao: [
+        `Olá, ${destinatario.nome}`,
+        `Seu plano foi suspenso por pendência financeira.`,
+        `Cobrança de ${valor} vencida em ${vencimento} (${descricao}).`,
+        `Regularize em: ${urlCobranca}`,
+      ],
+      'pos-suspensao': [
+        `Olá, ${destinatario.nome}`,
+        `Seu plano permanece suspenso por pendência financeira.`,
+        `Cobrança de ${valor} vencida em ${vencimento} (${descricao}).`,
+        `Regularize o pagamento para reativar o plano: ${urlCobranca}`,
+      ],
       'pendencia-periodica': [
         `Olá, ${destinatario.nome}`,
         `Sua cobrança gerada por ${displayName} no valor de ${valor} vence em ${vencimento}.`,
@@ -683,6 +703,10 @@ export class NotificacaoRecorrenteService {
         return 'Aviso de pendência';
       case 'suspensao-preventiva':
         return 'Aviso de suspensão preventiva';
+      case 'suspensao':
+        return 'Aviso de suspensão';
+      case 'pos-suspensao':
+        return 'Plano suspenso: regularize para reativação';
       default:
         return 'Cobrança pendente';
     }
@@ -721,6 +745,20 @@ export class NotificacaoRecorrenteService {
           `Seu plano pode ser suspenso em breve devido a pendências que somam ${valorTotal}.`,
         );
         base.push('Evite a suspensão realizando o pagamento ou falando com nosso time.');
+        break;
+      case 'suspensao':
+        base.push(
+          `Seu plano foi suspenso devido a pendências que somam ${valorTotal}.`,
+        );
+        base.push('Regularize o pagamento para restabelecer seus benefícios.');
+        break;
+      case 'pos-suspensao':
+        base.push(
+          `Seu plano permanece suspenso e há pendências no valor total de ${valorTotal}.`,
+        );
+        base.push(
+          'Assim que o pagamento for regularizado, seu plano poderá ser reativado.',
+        );
         break;
       default:
         base.push(
@@ -839,6 +877,8 @@ export class NotificacaoRecorrenteService {
     const diasAvisoPendencia = regras?.diasAvisoPendencia ?? DEFAULT_DIAS_AVISO_PENDENCIA;
     const diasSuspensaoPreventiva =
       regras?.diasSuspensaoPreventiva ?? DEFAULT_DIAS_SUSPENSAO_PREVENTIVA;
+    const diasSuspensao = regras?.diasSuspensao ?? DEFAULT_DIAS_SUSPENSAO;
+    const diasPosSuspensao = regras?.diasPosSuspensao ?? DEFAULT_DIAS_POS_SUSPENSAO;
 
     const contasFiltradas = contas.filter((conta) => {
       const diasParaVencer = this.calcularDiasParaVencer(conta.vencimento);
@@ -851,6 +891,10 @@ export class NotificacaoRecorrenteService {
           return diasAtraso >= diasAvisoPendencia;
         case 'suspensao-preventiva':
           return diasAtraso >= diasSuspensaoPreventiva;
+        case 'suspensao':
+          return diasAtraso >= diasSuspensao;
+        case 'pos-suspensao':
+          return diasAtraso >= diasPosSuspensao;
         case 'pendencia-periodica':
         default:
           return diasAtraso >= Math.max(0, diasAvisoPendencia);

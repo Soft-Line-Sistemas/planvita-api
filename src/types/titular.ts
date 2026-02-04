@@ -1,4 +1,5 @@
 export interface CadastroTitularRequest {
+  consultorId?: number | null;
   step1: {
     nomeCompleto: string;
     cpf: string;

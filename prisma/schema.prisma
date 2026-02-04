@@ -92,6 +92,7 @@ model User {
 model Consultor {
   id     Int    @id @default(autoincrement())
   nome   String
+  valorComissaoIndicacao Float @default(0)
 
   user   User?  @relation("UserConsultor", fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   userId Int?   @unique
@@ -293,6 +294,8 @@ model Comissao {
   valor           Float
   dataGeracao     DateTime
   statusPagamento String
+  contaPagar      ContaPagar? @relation("ComissaoContaPagar", fields: [contaPagarId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  contaPagarId    Int? @unique
 }
 
 // ----------------- DOCUMENTOS -----------------
@@ -362,6 +365,7 @@ model ContaPagar {
   dataPagamento DateTime?
   status       String   // "Pendente", "Pago", "Atrasado"
   fornecedor   String?
+  comissao     Comissao? @relation("ComissaoContaPagar")
 }
 
 model ContaReceber {

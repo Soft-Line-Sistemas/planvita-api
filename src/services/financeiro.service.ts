@@ -193,6 +193,67 @@ export class FinanceiroService {
     }
   }
 
+  private async sincronizarStatusComissaoPorContaPagar(
+    contaPagarId: number,
+    statusConta: 'PAGO' | 'CANCELADO',
+  ) {
+    const statusComissao = statusConta === 'PAGO' ? 'PAGO' : 'PENDENTE';
+    await this.prisma.comissao.updateMany({
+      where: { contaPagarId },
+      data: { statusPagamento: statusComissao },
+    });
+  }
+
+  private async gerarComissaoPrimeiroPagamento(titularId: number) {
+    await this.prisma.$transaction(async (tx) => {
+      const titular = await tx.titular.findUnique({
+        where: { id: titularId },
+        select: {
+          id: true,
+          nome: true,
+          vendedorId: true,
+          vendedor: {
+            select: {
+              id: true,
+              nome: true,
+              valorComissaoIndicacao: true,
+            },
+          },
+        },
+      });
+
+      if (!titular?.vendedorId || !titular.vendedor) return;
+      if ((titular.vendedor.valorComissaoIndicacao ?? 0) <= 0) return;
+
+      const jaTemComissao = await tx.comissao.findFirst({
+        where: { titularId: titular.id },
+        select: { id: true },
+      });
+      if (jaTemComissao) return;
+
+      const contaPagar = await tx.contaPagar.create({
+        data: {
+          descricao: `Comissão de indicação do titular #${titular.id} - ${titular.nome}`,
+          valor: titular.vendedor.valorComissaoIndicacao,
+          vencimento: new Date(),
+          fornecedor: titular.vendedor.nome,
+          status: 'PENDENTE',
+        },
+      });
+
+      await tx.comissao.create({
+        data: {
+          vendedorId: titular.vendedor.id,
+          titularId: titular.id,
+          valor: titular.vendedor.valorComissaoIndicacao,
+          dataGeracao: new Date(),
+          statusPagamento: 'PENDENTE',
+          contaPagarId: contaPagar.id,
+        },
+      });
+    });
+  }
+
   async listarContas(): Promise<ContaFinanceiraDTO[]> {
     const [contasPagar, contasReceber] = await Promise.all([
       this.prisma.contaPagar.findMany(),
@@ -384,6 +445,7 @@ export class FinanceiroService {
           dataPagamento: new Date(),
         },
       });
+      await this.sincronizarStatusComissaoPorContaPagar(id, 'PAGO');
       await this.logAudit('ContaPagar', id, 'UPDATE', { status: 'PAGO' }, usuarioId);
       return { ...conta, tipo: 'Pagar' as const };
     }
@@ -419,6 +481,9 @@ export class FinanceiroService {
         },
       },
     });
+    if (conta.cliente?.id) {
+      await this.gerarComissaoPrimeiroPagamento(conta.cliente.id);
+    }
     this.logger.info('Baixa manual aplicada', {
       contaReceberId: id,
       tenantId: this.tenantId,
@@ -444,6 +509,7 @@ export class FinanceiroService {
           dataPagamento: null,
         },
       });
+      await this.sincronizarStatusComissaoPorContaPagar(id, 'CANCELADO');
       await this.logAudit('ContaPagar', id, 'UPDATE', { status: 'CANCELADO' }, usuarioId);
       return { ...conta, tipo: 'Pagar' as const };
     }

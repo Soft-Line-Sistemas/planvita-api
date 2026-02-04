@@ -7,6 +7,7 @@ type UserTypeCreate = {
   nome: string;
   email: string;
   roleId?: number;
+  valorComissaoIndicacao?: number;
   password?: string; // senha em texto puro
 };
 
@@ -15,6 +16,8 @@ type User = {
   name: string;
   email: string;
   roleId?: number | null;
+  consultorId?: number | null;
+  valorComissaoIndicacao?: number | null;
 };
 
 type UserRoleType = Prisma.UserGetPayload<{
@@ -27,6 +30,12 @@ type UserRoleType = Prisma.UserGetPayload<{
             name: true;
           };
         };
+      };
+    };
+    consultor: {
+      select: {
+        id: true;
+        valorComissaoIndicacao: true;
       };
     };
   };
@@ -43,8 +52,60 @@ export class UserService {
     this.prisma = getPrismaForTenant(tenantId);
   }
 
+  private normalizarValorComissao(valor?: number): number {
+    if (valor == null || Number.isNaN(Number(valor))) return 0;
+    return Math.max(0, Number(valor));
+  }
+
+  private isConsultorRole(roleName?: string | null): boolean {
+    return String(roleName || '')
+      .trim()
+      .toLowerCase() === 'consultor';
+  }
+
+  private async garantirConsultorParaUsuario(
+    userId: number,
+    nome: string,
+    valorComissaoIndicacao?: number,
+  ) {
+    const valor = this.normalizarValorComissao(valorComissaoIndicacao);
+    return this.prisma.consultor.upsert({
+      where: { userId },
+      create: {
+        nome,
+        userId,
+        valorComissaoIndicacao: valor,
+      },
+      update: {
+        nome,
+        valorComissaoIndicacao: valor,
+      },
+      select: {
+        id: true,
+        valorComissaoIndicacao: true,
+      },
+    });
+  }
+
+  private async carregarMapaComissaoPendente(vendedorIds: number[]): Promise<Map<number, number>> {
+    if (!vendedorIds.length) return new Map();
+
+    const resumo = await this.prisma.comissao.groupBy({
+      by: ['vendedorId'],
+      where: {
+        vendedorId: { in: vendedorIds },
+        statusPagamento: 'PENDENTE',
+      },
+      _sum: {
+        valor: true,
+      },
+    });
+
+    return new Map(resumo.map((item) => [item.vendedorId, item._sum.valor ?? 0]));
+  }
+
   async getAll(): Promise<UserRoleType[]> {
-    return this.prisma.user.findMany({
+    const usuarios = await this.prisma.user.findMany({
       include: {
         roles: {
           select: {
@@ -56,8 +117,29 @@ export class UserService {
             },
           },
         },
+        consultor: {
+          select: {
+            id: true,
+            valorComissaoIndicacao: true,
+          },
+        },
       },
     });
+
+    const vendedorIds = usuarios
+      .map((u) => u.consultor?.id)
+      .filter((id): id is number => Number.isFinite(id));
+    const pendentePorVendedor = await this.carregarMapaComissaoPendente(vendedorIds);
+
+    return usuarios.map((usuario) => ({
+      ...usuario,
+      consultor: usuario.consultor
+        ? {
+            ...usuario.consultor,
+            comissaoPendente: pendentePorVendedor.get(usuario.consultor.id) ?? 0,
+          }
+        : null,
+    })) as UserRoleType[];
   }
 
   async getById(id: number): Promise<UserRoleType | null> {
@@ -69,6 +151,12 @@ export class UserService {
             role: {
               select: { id: true, name: true },
             },
+          },
+        },
+        consultor: {
+          select: {
+            id: true,
+            valorComissaoIndicacao: true,
           },
         },
       },
@@ -88,12 +176,36 @@ export class UserService {
     });
 
     if (data.roleId) {
-      await this.prisma.userRole.create({
+      const roleAssignment = await this.prisma.userRole.create({
         data: {
           userId: user.id,
           roleId: data.roleId,
         },
+        include: {
+          role: {
+            select: {
+              name: true,
+            },
+          },
+        },
       });
+
+      if (this.isConsultorRole(roleAssignment.role?.name)) {
+        const consultor = await this.garantirConsultorParaUsuario(
+          user.id,
+          data.nome,
+          data.valorComissaoIndicacao,
+        );
+
+        return {
+          id: user.id,
+          name: user.nome,
+          email: user.email,
+          roleId: data.roleId,
+          consultorId: consultor.id,
+          valorComissaoIndicacao: consultor.valorComissaoIndicacao,
+        };
+      }
     }
 
     return {
@@ -139,7 +251,7 @@ export class UserService {
     return bcrypt.compare(plainPassword, user.senhaHash);
   }
 
-  async updateUserRole(userId: number, roleId: number) {
+  async updateUserRole(userId: number, roleId: number, valorComissaoIndicacao?: number) {
     await this.prisma.userRole.deleteMany({ where: { userId } });
 
     const newRole = await this.prisma.userRole.create({
@@ -151,6 +263,17 @@ export class UserService {
         role: true,
       },
     });
+
+    if (this.isConsultorRole(newRole.role?.name)) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { nome: true },
+      });
+
+      if (user) {
+        await this.garantirConsultorParaUsuario(userId, user.nome, valorComissaoIndicacao);
+      }
+    }
 
     return newRole;
   }

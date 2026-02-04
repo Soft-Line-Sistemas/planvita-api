@@ -9,6 +9,12 @@ const controller = new TitularController();
 router.get('/public/search', controller.publicSearch.bind(controller));
 
 router.get('/', authenticate, authorize(['titular.view']), controller.getAll.bind(controller));
+router.post(
+  '/sync-status-plano',
+  authenticate,
+  authorize(['titular.update']),
+  controller.sincronizarStatusPlano.bind(controller),
+);
 router.get(
   '/:id/assinaturas',
   authenticate,

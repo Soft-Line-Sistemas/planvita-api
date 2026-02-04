@@ -2,11 +2,14 @@ import { Request, Response } from 'express';
 import { ConsultorService } from '../services/consultor.service';
 import Logger from '../utils/logger';
 import { PrismaClient } from '@prisma/client';
+import { AuthRequest } from '../types/auth';
 
 export interface TenantRequest extends Request {
   tenantId?: string;
   prisma?: PrismaClient;
 }
+
+type TenantAuthRequest = TenantRequest & AuthRequest;
 
 export class ConsultorController {
   private logger = new Logger({ service: 'ConsultorController' });
@@ -101,5 +104,23 @@ export class ConsultorController {
       res.status(500).json({ message: 'Internal server error' });
     }
   }
-}
 
+  async getResumoMe(req: TenantAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      if (!req.user?.id) return res.status(401).json({ message: 'Não autenticado' });
+
+      const service = new ConsultorService(req.tenantId);
+      const resumo = await service.getResumoByUserId(req.user.id);
+
+      if (!resumo) {
+        return res.status(404).json({ message: 'Consultor não encontrado para este usuário.' });
+      }
+
+      return res.json(resumo);
+    } catch (error) {
+      this.logger.error('Failed to get consultor resumo', error);
+      return res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+}

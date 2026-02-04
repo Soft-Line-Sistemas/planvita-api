@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { TitularService } from '../services/titular.service';
 import Logger from '../utils/logger';
-import { Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 
 export interface TenantRequest extends Request {
@@ -203,6 +203,27 @@ export class TitularController {
     }
   }
 
+  async sincronizarStatusPlano(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const batchSizeRaw =
+        req.body?.batchSize ?? req.query?.batchSize ?? req.query?.batch;
+      const batchSize = batchSizeRaw ? Number(batchSizeRaw) : 500;
+
+      const service = new TitularService(req.tenantId);
+      const resultado = await service.sincronizarStatusPlanoLote(batchSize);
+      res.json(resultado);
+    } catch (error) {
+      this.logger.error('Failed to sync statusPlano', error, {
+        tenant: req.tenantId,
+        body: req.body,
+        query: req.query,
+      });
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
    async createFull(req: any, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
@@ -221,6 +242,12 @@ export class TitularController {
       }
       if (error instanceof PrismaClientKnownRequestError && error.code === 'P2002') {
         return res.status(409).json({ message: 'E-mail já cadastrado para um titular.' });
+      }
+      if (error?.status) {
+        return res.status(error.status).json({
+          message: error.message ?? 'Erro ao criar titular.',
+          ...(error.meta ? { meta: error.meta } : {}),
+        });
       }
       this.logger.error('Failed to createFull Titular', error, { body: req.body });
       res.status(500).json({ message: 'Internal server error' });

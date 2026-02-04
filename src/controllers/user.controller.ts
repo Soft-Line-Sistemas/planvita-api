@@ -25,6 +25,9 @@ export class UserController {
         name: u.nome,
         email: u.email,
         roleId: u.roles?.[0]?.role?.id ?? null,
+        consultorId: (u as any).consultor?.id ?? null,
+        valorComissaoIndicacao: (u as any).consultor?.valorComissaoIndicacao ?? null,
+        comissaoPendente: (u as any).consultor?.comissaoPendente ?? 0,
       }));
 
       this.logger.info('getAll executed successfully', { tenant: req.tenantId });
@@ -114,13 +117,17 @@ export class UserController {
 
       const service = new UserService(req.tenantId);
       const { userId } = req.params;
-      const { roleId } = req.body;
+      const { roleId, valorComissaoIndicacao } = req.body;
 
       if (!roleId) {
         return res.status(400).json({ message: 'roleId é obrigatório' });
       }
 
-      const result = await service.updateUserRole(Number(userId), Number(roleId));
+      const result = await service.updateUserRole(
+        Number(userId),
+        Number(roleId),
+        valorComissaoIndicacao,
+      );
       this.logger.info(`updateUserRole executed for user ${userId} with role ${roleId}`, {
         tenant: req.tenantId,
       });
@@ -253,4 +260,3 @@ export class UserController {
     }
   }
 }
-
