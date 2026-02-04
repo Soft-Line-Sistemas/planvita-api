@@ -79,6 +79,49 @@ export class AuthController {
       const permissions = user.roles.flatMap((r) =>
         r.role.RolePermission.map((rp) => rp.permission.name),
       );
+      const consultor = await prisma.consultor.findUnique({
+        where: { userId: user.id },
+        select: {
+          id: true,
+          nome: true,
+          valorComissaoIndicacao: true,
+        },
+      });
+
+      let consultorResumo: {
+        id: number;
+        nome: string;
+        valorComissaoIndicacao: number;
+        comissaoPendente: number;
+        comissaoPaga: number;
+      } | null = null;
+
+      if (consultor) {
+        const [pendente, pago] = await Promise.all([
+          prisma.comissao.aggregate({
+            where: {
+              vendedorId: consultor.id,
+              statusPagamento: 'PENDENTE',
+            },
+            _sum: { valor: true },
+          }),
+          prisma.comissao.aggregate({
+            where: {
+              vendedorId: consultor.id,
+              statusPagamento: 'PAGO',
+            },
+            _sum: { valor: true },
+          }),
+        ]);
+
+        consultorResumo = {
+          id: consultor.id,
+          nome: consultor.nome,
+          valorComissaoIndicacao: consultor.valorComissaoIndicacao ?? 0,
+          comissaoPendente: pendente._sum.valor ?? 0,
+          comissaoPaga: pago._sum.valor ?? 0,
+        };
+      }
 
       res.json({
         id: user.id,
@@ -87,6 +130,7 @@ export class AuthController {
         role: role ? { id: role.id, name: role.name } : null,
         permissions,
         tenant: req.user.tenant,
+        consultor: consultorResumo,
       });
     } catch (err) {
       console.error(err);
@@ -99,4 +143,3 @@ export class AuthController {
     res.json({ message: 'Logout realizado com sucesso' });
   }
 }
-

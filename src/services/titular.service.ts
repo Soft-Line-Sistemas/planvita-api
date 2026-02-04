@@ -37,6 +37,7 @@ const ASSINATURA_TIPOS = [
 ] as const;
 const ASSINATURA_ALLOWED_MIME = ['image/png', 'image/jpeg'];
 const ASSINATURA_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+const DEFAULT_DIAS_SUSPENSAO = 90;
 type AssinaturaDigitalType = {
   id: number;
   titularId: number;
@@ -64,6 +65,173 @@ export class TitularService {
     this.prisma = getPrismaForTenant(tenantId);
     this.asaasIntegration = new AsaasIntegrationService(tenantId);
     this.logger = new Logger({ service: 'TitularService', tenantId });
+  }
+
+  private async obterLimiteBeneficiarios(): Promise<number | null> {
+    const regras = await this.prisma.businessRules.findFirst({
+      where: { tenantId: this.tenantId },
+      select: { limiteBeneficiarios: true },
+    });
+
+    const limite = regras?.limiteBeneficiarios ?? null;
+    if (!limite || limite <= 0) return null;
+    return limite;
+  }
+
+  private async validarLimiteBeneficiariosCadastro(quantidadeDependentes: number) {
+    const limite = await this.obterLimiteBeneficiarios();
+    if (!limite) return;
+
+    if (quantidadeDependentes > limite) {
+      const err: any = new Error(
+        `Quantidade de dependentes (${quantidadeDependentes}) excede o limite configurado (${limite}).`,
+      );
+      err.status = 400;
+      err.code = 'LIMITE_BENEFICIARIOS_EXCEDIDO';
+      err.meta = {
+        limiteBeneficiarios: limite,
+        totalDependentes: quantidadeDependentes,
+      };
+      throw err;
+    }
+  }
+
+  private calcularDiasAtraso(vencimento: Date): number {
+    const hoje = new Date();
+    const diff = hoje.getTime() - new Date(vencimento).getTime();
+    const dias = Math.floor(diff / (1000 * 60 * 60 * 24));
+    return dias > 0 ? dias : 0;
+  }
+
+  private async sincronizarStatusPlanoPorSuspensao(
+    titularIds: number[],
+  ): Promise<{ atualizadosAtivo: number; atualizadosSuspenso: number }> {
+    if (!titularIds.length) {
+      return { atualizadosAtivo: 0, atualizadosSuspenso: 0 };
+    }
+
+    const regras = await this.prisma.businessRules.findFirst({
+      where: { tenantId: this.tenantId },
+      select: { diasSuspensao: true },
+    });
+    const diasSuspensao =
+      regras?.diasSuspensao && regras.diasSuspensao > 0
+        ? regras.diasSuspensao
+        : DEFAULT_DIAS_SUSPENSAO;
+
+    const [titulares, contas] = await Promise.all([
+      this.prisma.titular.findMany({
+        where: { id: { in: titularIds } },
+        select: { id: true, statusPlano: true },
+      }),
+      this.prisma.contaReceber.findMany({
+        where: {
+          clienteId: { in: titularIds },
+          status: { in: ['PENDENTE', 'ATRASADO', 'PENDENCIA', 'VENCIDO'] },
+        },
+        select: { clienteId: true, vencimento: true },
+      }),
+    ]);
+
+    const maiorAtrasoPorTitular = new Map<number, number>();
+    contas.forEach((conta) => {
+      if (!conta.clienteId) return;
+      const atraso = this.calcularDiasAtraso(conta.vencimento);
+      const atual = maiorAtrasoPorTitular.get(conta.clienteId) ?? 0;
+      if (atraso > atual) {
+        maiorAtrasoPorTitular.set(conta.clienteId, atraso);
+      }
+    });
+
+    const idsParaAtivo: number[] = [];
+    const idsParaSuspenso: number[] = [];
+
+    titulares.forEach((titular) => {
+      const statusAtual = String(titular.statusPlano ?? '').toUpperCase();
+      if (!statusAtual || statusAtual === 'CANCELADO') return;
+
+      const maiorAtraso = maiorAtrasoPorTitular.get(titular.id) ?? 0;
+      const proximoStatus = maiorAtraso >= diasSuspensao ? 'SUSPENSO' : 'ATIVO';
+      if (statusAtual === proximoStatus) return;
+
+      if (proximoStatus === 'SUSPENSO') {
+        idsParaSuspenso.push(titular.id);
+      } else {
+        idsParaAtivo.push(titular.id);
+      }
+    });
+
+    if (!idsParaSuspenso.length && !idsParaAtivo.length) {
+      return { atualizadosAtivo: 0, atualizadosSuspenso: 0 };
+    }
+
+    const operacoes = [
+      ...(idsParaSuspenso.length
+        ? [
+            this.prisma.titular.updateMany({
+              where: { id: { in: idsParaSuspenso } },
+              data: { statusPlano: 'SUSPENSO' },
+            }),
+          ]
+        : []),
+      ...(idsParaAtivo.length
+        ? [
+            this.prisma.titular.updateMany({
+              where: { id: { in: idsParaAtivo } },
+              data: { statusPlano: 'ATIVO' },
+            }),
+          ]
+        : []),
+    ];
+
+    const resultados = await this.prisma.$transaction(operacoes);
+    let indice = 0;
+    const atualizadosSuspenso = idsParaSuspenso.length
+      ? (resultados[indice++] as any).count ?? 0
+      : 0;
+    const atualizadosAtivo = idsParaAtivo.length
+      ? (resultados[indice++] as any).count ?? 0
+      : 0;
+
+    return { atualizadosAtivo, atualizadosSuspenso };
+  }
+
+  async sincronizarStatusPlanoLote(batchSize = 500): Promise<{
+    totalProcessados: number;
+    atualizadosAtivo: number;
+    atualizadosSuspenso: number;
+    batchSize: number;
+  }> {
+    const take = Math.max(50, Math.min(Math.floor(batchSize) || 500, 5000));
+    let cursorId = 0;
+    let totalProcessados = 0;
+    let atualizadosAtivo = 0;
+    let atualizadosSuspenso = 0;
+
+    while (true) {
+      const lote = await this.prisma.titular.findMany({
+        where: { id: { gt: cursorId } },
+        select: { id: true },
+        orderBy: { id: 'asc' },
+        take,
+      });
+
+      if (!lote.length) break;
+
+      const ids = lote.map((item) => item.id);
+      const resultado = await this.sincronizarStatusPlanoPorSuspensao(ids);
+      totalProcessados += ids.length;
+      atualizadosAtivo += resultado.atualizadosAtivo;
+      atualizadosSuspenso += resultado.atualizadosSuspenso;
+      cursorId = ids[ids.length - 1];
+    }
+
+    return {
+      totalProcessados,
+      atualizadosAtivo,
+      atualizadosSuspenso,
+      batchSize: take,
+    };
   }
 
   async getAll(params?: {
@@ -95,7 +263,7 @@ export class TitularService {
       where.plano = { nome: plano };
     }
 
-    const [data, total] = await Promise.all([
+    const [dataInicial, total] = await Promise.all([
       this.prisma.titular.findMany({
         where,
         skip: (page - 1) * limit,
@@ -106,6 +274,19 @@ export class TitularService {
       this.prisma.titular.count({ where }),
     ]);
 
+    const ids = dataInicial.map((t: any) => t.id).filter((id: unknown) => Number.isFinite(id as number)) as number[];
+    if (ids.length) {
+      await this.sincronizarStatusPlanoPorSuspensao(ids);
+    }
+
+    const data = await this.prisma.titular.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      include: TITULAR_LIST_INCLUDE as any,
+      orderBy: { nome: "asc" },
+    });
+
     return {
       data,
       total,
@@ -115,6 +296,7 @@ export class TitularService {
   }
 
   async getById(id: number) {
+    await this.sincronizarStatusPlanoPorSuspensao([Number(id)]);
     return this.prisma.titular.findUnique({
       where: { id: Number(id) },
       include: TITULAR_FULL_INCLUDE as any,
@@ -127,7 +309,7 @@ export class TitularService {
     return titular;
   }
 
-   async createFull(data: CadastroTitularRequest) {
+  async createFull(data: CadastroTitularRequest) {
     const { step1, step2, step3, dependentes, step5 } = data;
 
     // --- Validações básicas ---
@@ -179,11 +361,34 @@ export class TitularService {
         ? new Date(dep.dataNascimento)
         : new Date(),
     }));
+    await this.validarLimiteBeneficiariosCadastro(dependentesData?.length ?? 0);
     const planoIdSelecionado = step5?.planoId ? Number(step5.planoId) : null;
+    const consultorIdInformado = data.consultorId ? Number(data.consultorId) : null;
 
     try {
       // --- Criação transacional ---
       const novoTitular = await this.prisma.$transaction(async (tx) => {
+        const consultor =
+          consultorIdInformado && Number.isFinite(consultorIdInformado)
+            ? await tx.consultor.findFirst({
+                where: {
+                  OR: [{ id: consultorIdInformado }, { userId: consultorIdInformado }],
+                },
+                select: {
+                  id: true,
+                  nome: true,
+                  valorComissaoIndicacao: true,
+                },
+              })
+            : null;
+
+        if (consultorIdInformado && !consultor) {
+          const err: any = new Error('Consultor informado não encontrado.');
+          err.status = 400;
+          err.code = 'CONSULTOR_INVALIDO';
+          throw err;
+        }
+
         const titular = await tx.titular.create({
           data: {
             nome: step1.nomeCompleto,
@@ -204,6 +409,13 @@ export class TitularService {
               ? {
                   connect: {
                     id: planoIdSelecionado,
+                  },
+                }
+              : undefined,
+            vendedor: consultor
+              ? {
+                  connect: {
+                    id: consultor.id,
                   },
                 }
               : undefined,

@@ -45,6 +45,54 @@ export class AsaasIntegrationService {
     return this.enabled && !!this.client;
   }
 
+  private async gerarComissaoPrimeiroPagamentoTx(tx: any, titularId: number) {
+    const titular = await tx.titular.findUnique({
+      where: { id: titularId },
+      select: {
+        id: true,
+        nome: true,
+        vendedorId: true,
+        vendedor: {
+          select: {
+            id: true,
+            nome: true,
+            valorComissaoIndicacao: true,
+          },
+        },
+      },
+    });
+
+    if (!titular?.vendedorId || !titular.vendedor) return;
+    if ((titular.vendedor.valorComissaoIndicacao ?? 0) <= 0) return;
+
+    const jaTemComissao = await tx.comissao.findFirst({
+      where: { titularId: titular.id },
+      select: { id: true },
+    });
+    if (jaTemComissao) return;
+
+    const contaPagar = await tx.contaPagar.create({
+      data: {
+        descricao: `Comissão de indicação do titular #${titular.id} - ${titular.nome}`,
+        valor: titular.vendedor.valorComissaoIndicacao,
+        vencimento: new Date(),
+        fornecedor: titular.vendedor.nome,
+        status: 'PENDENTE',
+      },
+    });
+
+    await tx.comissao.create({
+      data: {
+        vendedorId: titular.vendedor.id,
+        titularId: titular.id,
+        valor: titular.vendedor.valorComissaoIndicacao,
+        dataGeracao: new Date(),
+        statusPagamento: 'PENDENTE',
+        contaPagarId: contaPagar.id,
+      },
+    });
+  }
+
   async ensureCustomerForTitular(titularId: number): Promise<string | null> {
     if (!this.isEnabled()) return null;
 
@@ -446,6 +494,7 @@ export class AsaasIntegrationService {
               dataVencimento: updatedConta.dataVencimento ?? updatedConta.vencimento,
             },
           });
+          await this.gerarComissaoPrimeiroPagamentoTx(tx, updatedConta.clienteId);
         } else if (status === 'RECEBIDO' && !updatedConta.clienteId) {
           this.logger.warn('Pagamento recebido sem titular vinculado', {
             tenantId: this.tenantId,

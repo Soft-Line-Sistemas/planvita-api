@@ -1,6 +1,17 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
 
 type ConsultorType = Prisma.ConsultorGetPayload<{}>;
+type ConsultorResumoType = Prisma.ConsultorGetPayload<{
+  include: {
+    user: {
+      select: {
+        id: true;
+        nome: true;
+        email: true;
+      };
+    };
+  };
+}>;
 
 export class ConsultorService {
   private prisma;
@@ -31,5 +42,39 @@ export class ConsultorService {
 
   async delete(id: number): Promise<ConsultorType> {
     return this.prisma.consultor.delete({ where: { id: Number(id) } });
+  }
+
+  async getResumoByUserId(userId: number) {
+    const consultor = (await this.prisma.consultor.findUnique({
+      where: { userId: Number(userId) },
+      include: {
+        user: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+          },
+        },
+      },
+    })) as ConsultorResumoType | null;
+
+    if (!consultor) return null;
+
+    const [pendente, pago] = await Promise.all([
+      this.prisma.comissao.aggregate({
+        where: { vendedorId: consultor.id, statusPagamento: 'PENDENTE' },
+        _sum: { valor: true },
+      }),
+      this.prisma.comissao.aggregate({
+        where: { vendedorId: consultor.id, statusPagamento: 'PAGO' },
+        _sum: { valor: true },
+      }),
+    ]);
+
+    return {
+      ...consultor,
+      comissaoPendente: pendente._sum.valor ?? 0,
+      comissaoPaga: pago._sum.valor ?? 0,
+    };
   }
 }

@@ -25,6 +25,8 @@ export class NotificacaoRecorrenteController {
       'aviso-vencimento',
       'aviso-pendencia',
       'suspensao-preventiva',
+      'suspensao',
+      'pos-suspensao',
     ];
 
     return permitidos.includes(normalizado as NotificationFlowType)

@@ -11,6 +11,7 @@
     "start": "node dist/server.js",
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate",
+    "sync:status-plano": "ts-node src/scripts/sync-status-plano.ts",
     "test": "jest",
     "lint": "eslint 'src/**/*.{ts,js}'",
     "format": "prettier --write 'src/**/*.{ts,js,json,md}'"
