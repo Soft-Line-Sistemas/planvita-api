@@ -93,6 +93,7 @@ model Consultor {
   id     Int    @id @default(autoincrement())
   nome   String
   valorComissaoIndicacao Float @default(0)
+  percentualComissaoIndicacao Float @default(0)
 
   user   User?  @relation("UserConsultor", fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   userId Int?   @unique
