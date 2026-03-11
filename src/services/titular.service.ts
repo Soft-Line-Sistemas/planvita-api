@@ -28,6 +28,13 @@ const TITULAR_LIST_INCLUDE = {
   // assinaturas: true,
 } as const;
 
+const TITULAR_EXPORT_INCLUDE = {
+  plano: true,
+  dependentes: true,
+  corresponsaveis: true,
+  vendedor: true,
+} as const;
+
 const FILES_API_BASE_URL = process.env.FILES_API_URL;
 const ASSINATURA_TIPOS = [
   'TITULAR_ASSINATURA_1',
@@ -293,6 +300,39 @@ export class TitularService {
       page,
       totalPages: Math.ceil(total / limit),
     };
+  }
+
+  async getAllForExport(params?: {
+    search?: string;
+    status?: string;
+    plano?: string;
+  }) {
+    const { search, status, plano } = params || {};
+    const where: any = {};
+
+    if (search) {
+      const term = search.trim();
+      where.OR = [
+        { nome: { contains: term } },
+        { email: { contains: term } },
+        { cpf: { contains: term } },
+        { telefone: { contains: term } },
+      ];
+    }
+
+    if (status && status !== 'todos') {
+      where.statusPlano = status;
+    }
+
+    if (plano && plano !== 'todos') {
+      where.plano = { nome: plano };
+    }
+
+    return this.prisma.titular.findMany({
+      where,
+      include: TITULAR_EXPORT_INCLUDE as any,
+      orderBy: { nome: 'asc' },
+    });
   }
 
   async getById(id: number) {
