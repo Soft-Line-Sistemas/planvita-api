@@ -8,6 +8,7 @@ type UserTypeCreate = {
   email: string;
   roleId?: number;
   valorComissaoIndicacao?: number;
+  percentualComissaoIndicacao?: number;
   password?: string; // senha em texto puro
 };
 
@@ -18,6 +19,7 @@ type User = {
   roleId?: number | null;
   consultorId?: number | null;
   valorComissaoIndicacao?: number | null;
+  percentualComissaoIndicacao?: number | null;
 };
 
 type UserRoleType = Prisma.UserGetPayload<{
@@ -36,6 +38,7 @@ type UserRoleType = Prisma.UserGetPayload<{
       select: {
         id: true;
         valorComissaoIndicacao: true;
+        percentualComissaoIndicacao: true;
       };
     };
   };
@@ -57,6 +60,11 @@ export class UserService {
     return Math.max(0, Number(valor));
   }
 
+  private normalizarPercentualComissao(percentual?: number): number {
+    if (percentual == null || Number.isNaN(Number(percentual))) return 0;
+    return Math.max(0, Number(percentual));
+  }
+
   private isConsultorRole(roleName?: string | null): boolean {
     return String(roleName || '')
       .trim()
@@ -67,22 +75,27 @@ export class UserService {
     userId: number,
     nome: string,
     valorComissaoIndicacao?: number,
+    percentualComissaoIndicacao?: number,
   ) {
     const valor = this.normalizarValorComissao(valorComissaoIndicacao);
+    const percentual = this.normalizarPercentualComissao(percentualComissaoIndicacao);
     return this.prisma.consultor.upsert({
       where: { userId },
       create: {
         nome,
         userId,
         valorComissaoIndicacao: valor,
+        percentualComissaoIndicacao: percentual,
       },
       update: {
         nome,
         valorComissaoIndicacao: valor,
+        percentualComissaoIndicacao: percentual,
       },
       select: {
         id: true,
         valorComissaoIndicacao: true,
+        percentualComissaoIndicacao: true,
       },
     });
   }
@@ -121,6 +134,7 @@ export class UserService {
           select: {
             id: true,
             valorComissaoIndicacao: true,
+            percentualComissaoIndicacao: true,
           },
         },
       },
@@ -157,6 +171,7 @@ export class UserService {
           select: {
             id: true,
             valorComissaoIndicacao: true,
+            percentualComissaoIndicacao: true,
           },
         },
       },
@@ -195,6 +210,7 @@ export class UserService {
           user.id,
           data.nome,
           data.valorComissaoIndicacao,
+          data.percentualComissaoIndicacao,
         );
 
         return {
@@ -204,6 +220,7 @@ export class UserService {
           roleId: data.roleId,
           consultorId: consultor.id,
           valorComissaoIndicacao: consultor.valorComissaoIndicacao,
+          percentualComissaoIndicacao: consultor.percentualComissaoIndicacao,
         };
       }
     }
@@ -251,7 +268,12 @@ export class UserService {
     return bcrypt.compare(plainPassword, user.senhaHash);
   }
 
-  async updateUserRole(userId: number, roleId: number, valorComissaoIndicacao?: number) {
+  async updateUserRole(
+    userId: number,
+    roleId: number,
+    valorComissaoIndicacao?: number,
+    percentualComissaoIndicacao?: number,
+  ) {
     await this.prisma.userRole.deleteMany({ where: { userId } });
 
     const newRole = await this.prisma.userRole.create({
@@ -271,7 +293,12 @@ export class UserService {
       });
 
       if (user) {
-        await this.garantirConsultorParaUsuario(userId, user.nome, valorComissaoIndicacao);
+        await this.garantirConsultorParaUsuario(
+          userId,
+          user.nome,
+          valorComissaoIndicacao,
+          percentualComissaoIndicacao,
+        );
       }
     }
 

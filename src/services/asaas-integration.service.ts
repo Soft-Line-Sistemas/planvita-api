@@ -12,6 +12,11 @@ type ContaReceberWithCliente = Prisma.ContaReceberGetPayload<{
     cliente: true;
   };
 }>;
+const COMISSAO_ADESAO_DELAY_MS =
+  process.env.NODE_ENV === 'development'
+    ? 60 * 60 * 1000
+    : 35 * 24 * 60 * 60 * 1000;
+const STATUS_RECEBIMENTO_COMISSAO = ['RECEBIDO', 'CONFIRMADO'] as const;
 
 export class AsaasIntegrationService {
   private prisma;
@@ -45,6 +50,71 @@ export class AsaasIntegrationService {
     return this.enabled && !!this.client;
   }
 
+  private arredondarMoeda(valor: number): number {
+    return Math.round((valor + Number.EPSILON) * 100) / 100;
+  }
+
+  private adicionarAtrasoComissao(base: Date): Date {
+    const resultado = new Date(base);
+    resultado.setTime(resultado.getTime() + COMISSAO_ADESAO_DELAY_MS);
+    return resultado;
+  }
+
+  private calcularValorComissao(
+    vendedor: {
+      valorComissaoIndicacao?: number | null;
+      percentualComissaoIndicacao?: number | null;
+    },
+    valorBaseMensalidade: number,
+  ): number {
+    const percentual = Number(vendedor.percentualComissaoIndicacao ?? 0);
+    if (percentual > 0) {
+      return this.arredondarMoeda((valorBaseMensalidade * percentual) / 100);
+    }
+
+    const valorFixo = Number(vendedor.valorComissaoIndicacao ?? 0);
+    return this.arredondarMoeda(Math.max(0, valorFixo));
+  }
+
+  private async obterPrimeiraMensalidadeElegivel(
+    tx: any,
+    titularId: number,
+  ): Promise<{ dataReferencia: Date; valor: number } | null> {
+    const recebimentos = await tx.contaReceber.findMany({
+      where: {
+        clienteId: titularId,
+        status: { in: [...STATUS_RECEBIMENTO_COMISSAO] },
+      },
+      select: {
+        id: true,
+        valor: true,
+        dataRecebimento: true,
+        dataVencimento: true,
+        vencimento: true,
+      },
+      orderBy: [
+        { dataRecebimento: 'asc' },
+        { dataVencimento: 'asc' },
+        { vencimento: 'asc' },
+        { id: 'asc' },
+      ],
+    });
+
+    // Regra de negócio: 1º recebimento = adesão; 2º recebimento = 1ª mensalidade.
+    if (recebimentos.length < 2) return null;
+
+    const primeiraMensalidade = recebimentos[1];
+    const dataReferencia =
+      primeiraMensalidade.dataRecebimento ??
+      primeiraMensalidade.dataVencimento ??
+      primeiraMensalidade.vencimento;
+
+    return {
+      dataReferencia,
+      valor: Number(primeiraMensalidade.valor ?? 0),
+    };
+  }
+
   private async gerarComissaoPrimeiroPagamentoTx(tx: any, titularId: number) {
     const titular = await tx.titular.findUnique({
       where: { id: titularId },
@@ -57,13 +127,17 @@ export class AsaasIntegrationService {
             id: true,
             nome: true,
             valorComissaoIndicacao: true,
+            percentualComissaoIndicacao: true,
           },
         },
       },
     });
 
     if (!titular?.vendedorId || !titular.vendedor) return;
-    if ((titular.vendedor.valorComissaoIndicacao ?? 0) <= 0) return;
+    const possuiConfigComissao =
+      (titular.vendedor.valorComissaoIndicacao ?? 0) > 0 ||
+      (titular.vendedor.percentualComissaoIndicacao ?? 0) > 0;
+    if (!possuiConfigComissao) return;
 
     const jaTemComissao = await tx.comissao.findFirst({
       where: { titularId: titular.id },
@@ -71,11 +145,24 @@ export class AsaasIntegrationService {
     });
     if (jaTemComissao) return;
 
+    const primeiraMensalidade = await this.obterPrimeiraMensalidadeElegivel(tx, titular.id);
+    if (!primeiraMensalidade) return;
+
+    const valorComissao = this.calcularValorComissao(
+      titular.vendedor,
+      primeiraMensalidade.valor,
+    );
+    if (valorComissao <= 0) return;
+
+    const vencimentoComissao = this.adicionarAtrasoComissao(
+      primeiraMensalidade.dataReferencia,
+    );
+
     const contaPagar = await tx.contaPagar.create({
       data: {
         descricao: `Comissão de indicação do titular #${titular.id} - ${titular.nome}`,
-        valor: titular.vendedor.valorComissaoIndicacao,
-        vencimento: new Date(),
+        valor: valorComissao,
+        vencimento: vencimentoComissao,
         fornecedor: titular.vendedor.nome,
         status: 'PENDENTE',
       },
@@ -85,7 +172,7 @@ export class AsaasIntegrationService {
       data: {
         vendedorId: titular.vendedor.id,
         titularId: titular.id,
-        valor: titular.vendedor.valorComissaoIndicacao,
+        valor: valorComissao,
         dataGeracao: new Date(),
         statusPagamento: 'PENDENTE',
         contaPagarId: contaPagar.id,

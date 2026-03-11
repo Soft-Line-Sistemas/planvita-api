@@ -12,6 +12,95 @@ export interface TenantRequest extends Request {
 export class TitularController {
   private logger = new Logger({ service: 'TitularController' });
 
+  private formatDate(value?: Date | string | null): string {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toISOString().slice(0, 10);
+  }
+
+  private escapeCsv(value: unknown): string {
+    const text = value == null ? '' : String(value);
+    const escaped = text.replace(/"/g, '""');
+    return `"${escaped}"`;
+  }
+
+  private buildCadastroCsv(data: any[]): string {
+    const headers = [
+      'id',
+      'nome',
+      'cpf',
+      'email',
+      'telefone',
+      'statusPlano',
+      'dataNascimento',
+      'dataContratacao',
+      'planoId',
+      'planoNome',
+      'vendedorId',
+      'vendedorNome',
+      'cep',
+      'uf',
+      'cidade',
+      'bairro',
+      'logradouro',
+      'numero',
+      'complemento',
+      'corresponsavelPrincipalNome',
+      'corresponsavelPrincipalEmail',
+      'corresponsavelPrincipalTelefone',
+      'corresponsavelPrincipalRelacionamento',
+      'dependentesQuantidade',
+      'dependentes',
+    ];
+
+    const rows = data.map((titular) => {
+      const corresponsavel = Array.isArray(titular.corresponsaveis)
+        ? titular.corresponsaveis[0]
+        : null;
+      const dependentes = Array.isArray(titular.dependentes)
+        ? titular.dependentes
+            .map(
+              (dep: any) =>
+                `${dep.nome ?? ''}|${dep.cpf ?? ''}|${this.formatDate(dep.dataNascimento)}|${dep.tipoDependente ?? ''}`,
+            )
+            .join('; ')
+        : '';
+
+      return [
+        titular.id,
+        titular.nome,
+        titular.cpf,
+        titular.email,
+        titular.telefone,
+        titular.statusPlano,
+        this.formatDate(titular.dataNascimento),
+        this.formatDate(titular.dataContratacao),
+        titular.plano?.id,
+        titular.plano?.nome,
+        titular.vendedor?.id,
+        titular.vendedor?.nome,
+        titular.cep,
+        titular.uf,
+        titular.cidade,
+        titular.bairro,
+        titular.logradouro,
+        titular.numero,
+        titular.complemento,
+        corresponsavel?.nome,
+        corresponsavel?.email,
+        corresponsavel?.telefone,
+        corresponsavel?.relacionamento,
+        Array.isArray(titular.dependentes) ? titular.dependentes.length : 0,
+        dependentes,
+      ]
+        .map((value) => this.escapeCsv(value))
+        .join(',');
+    });
+
+    return [headers.map((value) => this.escapeCsv(value)).join(','), ...rows].join('\n');
+  }
+
   async publicSearch(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId)
@@ -79,6 +168,31 @@ export class TitularController {
     } catch (error) {
       this.logger.error("Failed to get all Titular", error);
       res.status(500).json({ message: "Internal server error" });
+    }
+  }
+
+  async exportCadastro(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) {
+        return res.status(400).json({ message: 'Tenant unknown' });
+      }
+
+      const service = new TitularService(req.tenantId);
+      const { search, status, plano } = req.query;
+      const clientes = await service.getAllForExport({
+        search: search?.toString(),
+        status: status?.toString(),
+        plano: plano?.toString(),
+      });
+
+      const csv = this.buildCadastroCsv(clientes);
+      const filename = `cadastro-clientes-${new Date().toISOString().slice(0, 10)}.csv`;
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(`\uFEFF${csv}`);
+    } catch (error) {
+      this.logger.error('Failed to export Titular cadastro', error, { query: req.query });
+      res.status(500).json({ message: 'Internal server error' });
     }
   }
 
@@ -224,7 +338,7 @@ export class TitularController {
     }
   }
 
-   async createFull(req: any, res: Response) {
+  async createFull(req: any, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
@@ -234,7 +348,7 @@ export class TitularController {
 
       res.status(201).json(result);
     } catch (error: any) {
-      if (error?.status === 409 || error?.code === 'EMAIL_IN_USE') {
+      if (error?.code === 'EMAIL_IN_USE') {
         return res.status(409).json({
           message: 'E-mail já cadastrado para um titular.',
           ...(error.meta ? { meta: error.meta } : {}),
@@ -246,6 +360,7 @@ export class TitularController {
       if (error?.status) {
         return res.status(error.status).json({
           message: error.message ?? 'Erro ao criar titular.',
+          ...(error.code ? { code: error.code } : {}),
           ...(error.meta ? { meta: error.meta } : {}),
         });
       }

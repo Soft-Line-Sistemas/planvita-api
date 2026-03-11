@@ -1,6 +1,9 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
 
 type PlanoType = Prisma.PlanoGetPayload<{}>;
+type PlanoInput = Omit<Prisma.PlanoCreateInput, 'beneficiarios'> & {
+  beneficiarios?: string[];
+};
 
 export type ParticipanteInput = {
   dataNascimento?: string | null;
@@ -19,6 +22,58 @@ export class PlanoService {
   }
 
   // -------- CRUD básico --------
+  private normalizarBeneficiarios(beneficiarios: unknown): string[] {
+    if (!Array.isArray(beneficiarios)) return [];
+
+    return beneficiarios
+      .map((item) => (typeof item === 'string' ? item.trim() : ''))
+      .filter(
+        (nome, index, array): nome is string =>
+          nome.length > 0 && array.indexOf(nome) === index,
+      );
+  }
+
+  private buildPlanoCreateData(data: PlanoInput): Prisma.PlanoCreateInput {
+    return {
+      nome: String(data.nome ?? '').trim(),
+      valorMensal: Number(data.valorMensal ?? 0),
+      idadeMaxima: data.idadeMaxima ?? null,
+      coberturaMaxima: Number(data.coberturaMaxima ?? 0),
+      carenciaDias: Number(data.carenciaDias ?? 0),
+      vigenciaMeses: Number(data.vigenciaMeses ?? 0),
+      ativo: data.ativo ?? true,
+      totalClientes: Number(data.totalClientes ?? 0),
+      receitaMensal: Number(data.receitaMensal ?? 0),
+      assistenciaFuneral: Number(data.assistenciaFuneral ?? 0),
+      auxilioCemiterio:
+        data.auxilioCemiterio === undefined || data.auxilioCemiterio === null
+          ? null
+          : Number(data.auxilioCemiterio),
+      taxaInclusaCemiterioPublico: Boolean(data.taxaInclusaCemiterioPublico ?? false),
+    };
+  }
+
+  private buildPlanoUpdateData(data: Partial<PlanoInput>): Prisma.PlanoUpdateInput {
+    const payload: Prisma.PlanoUpdateInput = {};
+    if (data.nome !== undefined) payload.nome = String(data.nome).trim();
+    if (data.valorMensal !== undefined) payload.valorMensal = Number(data.valorMensal);
+    if (data.idadeMaxima !== undefined) payload.idadeMaxima = data.idadeMaxima;
+    if (data.coberturaMaxima !== undefined)
+      payload.coberturaMaxima = Number(data.coberturaMaxima);
+    if (data.carenciaDias !== undefined) payload.carenciaDias = Number(data.carenciaDias);
+    if (data.vigenciaMeses !== undefined) payload.vigenciaMeses = Number(data.vigenciaMeses);
+    if (data.ativo !== undefined) payload.ativo = Boolean(data.ativo);
+    if (data.totalClientes !== undefined) payload.totalClientes = Number(data.totalClientes);
+    if (data.receitaMensal !== undefined) payload.receitaMensal = Number(data.receitaMensal);
+    if (data.assistenciaFuneral !== undefined)
+      payload.assistenciaFuneral = Number(data.assistenciaFuneral);
+    if (data.auxilioCemiterio !== undefined) payload.auxilioCemiterio = data.auxilioCemiterio;
+    if (data.taxaInclusaCemiterioPublico !== undefined) {
+      payload.taxaInclusaCemiterioPublico = Boolean(data.taxaInclusaCemiterioPublico);
+    }
+    return payload;
+  }
+
   async getAll(): Promise<PlanoType[]> {
     const planos = await this.prisma.plano.findMany({
       include: {
@@ -47,7 +102,10 @@ export class PlanoService {
       assistenciaFuneral: plano.assistenciaFuneral,
       auxilioCemiterio: plano.auxilioCemiterio,
       taxaInclusaCemiterioPublico: plano.taxaInclusaCemiterioPublico,
-      beneficiarios: plano.beneficiarios.map((b) => b.nome),
+      beneficiarios: plano.beneficiarios.map((b) => ({
+        id: b.id,
+        nome: b.nome,
+      })),
 
       coberturas: {
         servicosPadrao: plano.coberturas
@@ -128,12 +186,44 @@ export class PlanoService {
     return this.prisma.plano.findUnique({ where: { id: Number(id) } });
   }
 
-  async create(data: PlanoType): Promise<PlanoType> {
-    return this.prisma.plano.create({ data });
+  async create(data: PlanoInput): Promise<PlanoType> {
+    const beneficiarios = this.normalizarBeneficiarios(data.beneficiarios);
+    const planoData = this.buildPlanoCreateData(data);
+
+    return this.prisma.plano.create({
+      data: {
+        ...planoData,
+        beneficiarios:
+          beneficiarios.length > 0
+            ? {
+                create: beneficiarios.map((nome) => ({ nome })),
+              }
+            : undefined,
+      },
+    });
   }
 
-  async update(id: number, data: Partial<PlanoType>): Promise<PlanoType> {
-    return this.prisma.plano.update({ where: { id: Number(id) }, data });
+  async update(id: number, data: Partial<PlanoInput>): Promise<PlanoType> {
+    const planoData = this.buildPlanoUpdateData(data);
+    const beneficiarios =
+      data.beneficiarios === undefined
+        ? undefined
+        : this.normalizarBeneficiarios(data.beneficiarios);
+
+    return this.prisma.plano.update({
+      where: { id: Number(id) },
+      data: {
+        ...planoData,
+        ...(beneficiarios !== undefined
+          ? {
+              beneficiarios: {
+                deleteMany: {},
+                create: beneficiarios.map((nome) => ({ nome })),
+              },
+            }
+          : {}),
+      },
+    });
   }
 
   async delete(id: number): Promise<PlanoType> {

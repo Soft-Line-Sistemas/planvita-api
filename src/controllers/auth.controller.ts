@@ -85,6 +85,7 @@ export class AuthController {
           id: true,
           nome: true,
           valorComissaoIndicacao: true,
+          percentualComissaoIndicacao: true,
         },
       });
 
@@ -92,6 +93,7 @@ export class AuthController {
         id: number;
         nome: string;
         valorComissaoIndicacao: number;
+        percentualComissaoIndicacao: number;
         comissaoPendente: number;
         comissaoPaga: number;
       } | null = null;
@@ -118,6 +120,7 @@ export class AuthController {
           id: consultor.id,
           nome: consultor.nome,
           valorComissaoIndicacao: consultor.valorComissaoIndicacao ?? 0,
+          percentualComissaoIndicacao: consultor.percentualComissaoIndicacao ?? 0,
           comissaoPendente: pendente._sum.valor ?? 0,
           comissaoPaga: pago._sum.valor ?? 0,
         };

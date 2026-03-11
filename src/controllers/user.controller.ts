@@ -27,6 +27,7 @@ export class UserController {
         roleId: u.roles?.[0]?.role?.id ?? null,
         consultorId: (u as any).consultor?.id ?? null,
         valorComissaoIndicacao: (u as any).consultor?.valorComissaoIndicacao ?? null,
+        percentualComissaoIndicacao: (u as any).consultor?.percentualComissaoIndicacao ?? null,
         comissaoPendente: (u as any).consultor?.comissaoPendente ?? 0,
       }));
 
@@ -117,7 +118,7 @@ export class UserController {
 
       const service = new UserService(req.tenantId);
       const { userId } = req.params;
-      const { roleId, valorComissaoIndicacao } = req.body;
+      const { roleId, valorComissaoIndicacao, percentualComissaoIndicacao } = req.body;
 
       if (!roleId) {
         return res.status(400).json({ message: 'roleId é obrigatório' });
@@ -127,6 +128,7 @@ export class UserController {
         Number(userId),
         Number(roleId),
         valorComissaoIndicacao,
+        percentualComissaoIndicacao,
       );
       this.logger.info(`updateUserRole executed for user ${userId} with role ${roleId}`, {
         tenant: req.tenantId,

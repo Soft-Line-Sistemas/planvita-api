@@ -9,6 +9,12 @@ const controller = new TitularController();
 router.get('/public/search', controller.publicSearch.bind(controller));
 
 router.get('/', authenticate, authorize(['titular.view']), controller.getAll.bind(controller));
+router.get(
+  '/export/cadastro',
+  authenticate,
+  authorize(['titular.view']),
+  controller.exportCadastro.bind(controller),
+);
 router.post(
   '/sync-status-plano',
   authenticate,
