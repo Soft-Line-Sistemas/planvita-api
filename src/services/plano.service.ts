@@ -3,6 +3,7 @@ import { Prisma, getPrismaForTenant } from '../utils/prisma';
 type PlanoType = Prisma.PlanoGetPayload<{}>;
 type PlanoInput = Omit<Prisma.PlanoCreateInput, 'beneficiarios'> & {
   beneficiarios?: string[];
+  coberturas?: unknown;
 };
 
 export type ParticipanteInput = {
@@ -72,6 +73,52 @@ export class PlanoService {
       payload.taxaInclusaCemiterioPublico = Boolean(data.taxaInclusaCemiterioPublico);
     }
     return payload;
+  }
+
+  private normalizarCoberturas(
+    coberturas: unknown,
+  ): Array<{ tipo: string; descricao: string }> {
+    const registros: Array<{ tipo: string; descricao: string }> = [];
+    const add = (tipo: string, descricao: string) => {
+      const tipoNormalizado = String(tipo ?? '').trim();
+      const descricaoNormalizada = String(descricao ?? '').trim();
+      if (!tipoNormalizado || !descricaoNormalizada) return;
+      registros.push({
+        tipo: tipoNormalizado,
+        descricao: descricaoNormalizada,
+      });
+    };
+
+    if (Array.isArray(coberturas)) {
+      coberturas.forEach((item) => {
+        if (!item || typeof item !== 'object') return;
+        const registro = item as Record<string, unknown>;
+        if (typeof registro.tipo !== 'string' || typeof registro.descricao !== 'string') return;
+        add(registro.tipo, registro.descricao);
+      });
+    } else if (coberturas && typeof coberturas === 'object') {
+      const registro = coberturas as Record<string, unknown>;
+      const pushStrings = (tipo: string, lista: unknown) => {
+        if (!Array.isArray(lista)) return;
+        lista.forEach((descricao) => {
+          if (typeof descricao === 'string') add(tipo, descricao);
+        });
+      };
+
+      pushStrings('servicosPadrao', registro.servicosPadrao);
+      pushStrings('coberturaTranslado', registro.coberturaTranslado);
+      pushStrings('servicosEspecificos', registro.servicosEspecificos);
+    }
+
+    const unicos = new Map<string, { tipo: string; descricao: string }>();
+    registros.forEach((item) => {
+      const chave = `${item.tipo.toLowerCase()}|${item.descricao.toLowerCase()}`;
+      if (!unicos.has(chave)) {
+        unicos.set(chave, item);
+      }
+    });
+
+    return Array.from(unicos.values());
   }
 
   async getAll(): Promise<PlanoType[]> {
@@ -188,6 +235,7 @@ export class PlanoService {
 
   async create(data: PlanoInput): Promise<PlanoType> {
     const beneficiarios = this.normalizarBeneficiarios(data.beneficiarios);
+    const coberturas = this.normalizarCoberturas(data.coberturas);
     const planoData = this.buildPlanoCreateData(data);
 
     return this.prisma.plano.create({
@@ -196,7 +244,16 @@ export class PlanoService {
         beneficiarios:
           beneficiarios.length > 0
             ? {
-                create: beneficiarios.map((nome) => ({ nome })),
+              create: beneficiarios.map((nome) => ({ nome })),
+              }
+            : undefined,
+        coberturas:
+          coberturas.length > 0
+            ? {
+                create: coberturas.map((item) => ({
+                  tipo: item.tipo,
+                  descricao: item.descricao,
+                })),
               }
             : undefined,
       },
@@ -209,6 +266,8 @@ export class PlanoService {
       data.beneficiarios === undefined
         ? undefined
         : this.normalizarBeneficiarios(data.beneficiarios);
+    const coberturas =
+      data.coberturas === undefined ? undefined : this.normalizarCoberturas(data.coberturas);
 
     return this.prisma.plano.update({
       where: { id: Number(id) },
@@ -219,6 +278,17 @@ export class PlanoService {
               beneficiarios: {
                 deleteMany: {},
                 create: beneficiarios.map((nome) => ({ nome })),
+              },
+            }
+          : {}),
+        ...(coberturas !== undefined
+          ? {
+              coberturas: {
+                deleteMany: {},
+                create: coberturas.map((item) => ({
+                  tipo: item.tipo,
+                  descricao: item.descricao,
+                })),
               },
             }
           : {}),
