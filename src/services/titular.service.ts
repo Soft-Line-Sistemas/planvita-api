@@ -103,6 +103,49 @@ export class TitularService {
     }
   }
 
+  private calcularIdade(dataNascimento: string | Date): number | null {
+    const data = new Date(dataNascimento);
+    if (Number.isNaN(data.getTime())) return null;
+
+    const hoje = new Date();
+    let idade = hoje.getFullYear() - data.getFullYear();
+    const mes = hoje.getMonth() - data.getMonth();
+    if (mes < 0 || (mes === 0 && hoje.getDate() < data.getDate())) {
+      idade -= 1;
+    }
+    return idade;
+  }
+
+  private validarMaioridadeCorresponsavel(
+    usarMesmosDados: boolean,
+    dataNascimentoTitular: string,
+    dataNascimentoCorresponsavel?: string,
+  ) {
+    const referencia = usarMesmosDados ? dataNascimentoTitular : dataNascimentoCorresponsavel;
+    if (!referencia) {
+      const err: any = new Error('Data de nascimento do corresponsável é obrigatória.');
+      err.status = 400;
+      err.code = 'CORRESPONSAVEL_DATA_NASCIMENTO_OBRIGATORIA';
+      throw err;
+    }
+
+    const idade = this.calcularIdade(referencia);
+    if (idade === null) {
+      const err: any = new Error('Data de nascimento do corresponsável inválida.');
+      err.status = 400;
+      err.code = 'CORRESPONSAVEL_DATA_NASCIMENTO_INVALIDA';
+      throw err;
+    }
+
+    if (idade < 18) {
+      const err: any = new Error('Corresponsável deve ser maior de idade (18+).');
+      err.status = 400;
+      err.code = 'CORRESPONSAVEL_MENOR_IDADE';
+      err.meta = { idadeMinima: 18, idadeInformada: idade };
+      throw err;
+    }
+  }
+
   private calcularDiasAtraso(vencimento: Date): number {
     const hoje = new Date();
     const diff = hoje.getTime() - new Date(vencimento).getTime();
@@ -379,6 +422,11 @@ export class TitularService {
 
     // --- Monta dados do corresponsável ---
     const usarMesmosDados = step3.usarMesmosDados;
+    this.validarMaioridadeCorresponsavel(
+      usarMesmosDados,
+      step1.dataNascimento,
+      step3.dataNascimento,
+    );
     const corresponsavelData = usarMesmosDados
       ? {
           nome: step1.nomeCompleto,
