@@ -1,6 +1,12 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
 
 type ConsultorType = Prisma.ConsultorGetPayload<{}>;
+type ConsultorPublicOptionType = Prisma.ConsultorGetPayload<{
+  select: {
+    id: true;
+    nome: true;
+  };
+}>;
 type ConsultorResumoType = Prisma.ConsultorGetPayload<{
   include: {
     user: {
@@ -26,6 +32,18 @@ export class ConsultorService {
 
   async getAll(): Promise<ConsultorType[]> {
     return this.prisma.consultor.findMany();
+  }
+
+  async getPublicOptions(): Promise<ConsultorPublicOptionType[]> {
+    return this.prisma.consultor.findMany({
+      select: {
+        id: true,
+        nome: true,
+      },
+      orderBy: {
+        nome: 'asc',
+      },
+    });
   }
 
   async getById(id: number): Promise<ConsultorType | null> {

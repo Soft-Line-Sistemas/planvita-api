@@ -14,6 +14,19 @@ type TenantAuthRequest = TenantRequest & AuthRequest;
 export class ConsultorController {
   private logger = new Logger({ service: 'ConsultorController' });
 
+  async getPublicOptions(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const service = new ConsultorService(req.tenantId);
+      const result = await service.getPublicOptions();
+      return res.json(result);
+    } catch (error) {
+      this.logger.error('Failed to get public consultor options', error);
+      return res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
   async getAll(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
