@@ -76,11 +76,16 @@ if (!process.env.VERCEL) {
   );
 }
 
-// Add console transport for development or Vercel
-if (config.server.nodeEnv !== "production" || process.env.VERCEL) {
+// Keep console logs enabled by default in all environments.
+// Set LOG_TO_CONSOLE=false to disable explicitly.
+const shouldLogToConsole = process.env.LOG_TO_CONSOLE !== "false";
+if (shouldLogToConsole) {
   logger.add(
     new winston.transports.Console({
-      format: process.env.VERCEL ? customFormat : consoleFormat,
+      format:
+        process.env.VERCEL || config.server.nodeEnv === "production"
+          ? customFormat
+          : consoleFormat,
     }),
   );
 }

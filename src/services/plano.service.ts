@@ -1,4 +1,6 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
+import { canonicalizeRelationship, isRelationshipInGrade } from './family-relationship.service';
+import { TitularPricingService } from './titular-pricing.service';
 
 type PlanoType = Prisma.PlanoGetPayload<{}>;
 type PlanoInput = Omit<Prisma.PlanoCreateInput, 'beneficiarios'> & {
@@ -10,16 +12,19 @@ export type ParticipanteInput = {
   dataNascimento?: string | null;
   idade?: number | null;
   nome?: string | null;
+  parentesco?: string | null;
 };
 
 export class PlanoService {
   private prisma;
+  private pricingService: TitularPricingService;
 
   constructor(private tenantId: string) {
     if (!tenantId) {
       throw new Error('Tenant ID must be provided');
     }
     this.prisma = getPrismaForTenant(tenantId);
+    this.pricingService = new TitularPricingService(tenantId);
   }
 
   // -------- CRUD básico --------
@@ -323,6 +328,23 @@ export class PlanoService {
     return idades.every((i) => i <= (plano.idadeMaxima as number));
   }
 
+  private elegivelPorComposicao(
+    plano: { beneficiarios: Array<{ nome: string }> },
+    participantes: ParticipanteInput[],
+  ): boolean {
+    const dependentes = participantes.filter((p) => {
+      const parentesco = canonicalizeRelationship(p.parentesco);
+      return parentesco !== 'titular';
+    });
+
+    if (dependentes.length === 0) return true;
+
+    const beneficiariosPlano = plano.beneficiarios.map((b) => b.nome);
+    return dependentes.every((p) =>
+      isRelationshipInGrade(p.parentesco, beneficiariosPlano),
+    );
+  }
+
   /**
    * Retorna o melhor plano (ou todos) com base nas idades.
    * Agora inclui os BENEFÍCIOS já achatados no retorno.
@@ -379,7 +401,11 @@ export class PlanoService {
       ].join('|');
 
     // 1) Filtra por elegibilidade de idade
-    const elegiveis = planosAtivos.filter((pl) => this.elegivelPorIdade(pl, idades));
+    const elegiveis = planosAtivos.filter(
+      (pl) =>
+        this.elegivelPorIdade(pl, idades) &&
+        this.elegivelPorComposicao(pl, participantes),
+    );
 
     // 2) Deduplica por (nome|valorMensal|idadeMaxima-normalizada),
     //    escolhendo a "melhor" cópia pelo score; empate por id DESC.
@@ -434,10 +460,12 @@ export class PlanoService {
       }
     }
 
-    return this.prisma.titular.update({
+    const titular = await this.prisma.titular.update({
       where: { id: titularId },
       data: { planoId: planoId ?? undefined },
       select: { id: true, nome: true, planoId: true },
     });
+    await this.pricingService.recalcularDependentesDoTitular(titular.id);
+    return titular;
   }
 }

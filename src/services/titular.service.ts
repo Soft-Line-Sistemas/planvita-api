@@ -4,6 +4,7 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { Buffer } from 'buffer';
 import { AsaasIntegrationService } from './asaas-integration.service';
 import Logger from '../utils/logger';
+import { TitularPricingService } from './titular-pricing.service';
 
 type TitularType = Prisma.TitularGetPayload<{}>;
 
@@ -62,6 +63,7 @@ type AssinaturaTipo = (typeof ASSINATURA_TIPOS)[number];
 export class TitularService {
   private prisma;
   private asaasIntegration: AsaasIntegrationService;
+  private pricingService: TitularPricingService;
   private logger: Logger;
 
   constructor(private tenantId: string) {
@@ -71,6 +73,7 @@ export class TitularService {
 
     this.prisma = getPrismaForTenant(tenantId);
     this.asaasIntegration = new AsaasIntegrationService(tenantId);
+    this.pricingService = new TitularPricingService(tenantId);
     this.logger = new Logger({ service: 'TitularService', tenantId });
   }
 
@@ -448,6 +451,7 @@ export class TitularService {
       dataNascimento: dep.dataNascimento
         ? new Date(dep.dataNascimento)
         : new Date(),
+      excluirCobrancaAdicional: false,
     }));
     await this.validarLimiteBeneficiariosCadastro(dependentesData?.length ?? 0);
     const planoIdSelecionado = step5?.planoId ? Number(step5.planoId) : null;
@@ -522,6 +526,7 @@ export class TitularService {
       });
 
       void this.syncCustomerAsaasSafe(novoTitular.id);
+      await this.pricingService.recalcularDependentesDoTitular(novoTitular.id);
       return novoTitular;
     } catch (e: any) {
       if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
@@ -536,6 +541,7 @@ export class TitularService {
 
   async update(id: number, data: Partial<TitularType>): Promise<TitularType> {
     const titular = await this.prisma.titular.update({ where: { id: Number(id) }, data });
+    await this.pricingService.recalcularDependentesDoTitular(titular.id);
     void this.syncCustomerAsaasSafe(titular.id);
     return titular;
   }

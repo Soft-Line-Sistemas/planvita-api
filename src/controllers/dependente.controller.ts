@@ -1,9 +1,10 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { DependenteService } from '../services/dependente.service';
 import Logger from '../utils/logger';
 import { PrismaClient } from '@prisma/client';
+import { AuthRequest } from '../types/auth';
 
-export interface TenantRequest extends Request {
+export interface TenantRequest extends AuthRequest {
   tenantId?: string;
   prisma?: PrismaClient;
 }
@@ -70,6 +71,16 @@ export class DependenteController {
   async update(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'excluirCobrancaAdicional')) {
+        const userPermissions = req.user?.permissions ?? [];
+        if (!userPermissions.includes('dependente.toggle_adicional_cobranca')) {
+          return res.status(403).json({
+            message:
+              'Permissão insuficiente para excluir ou reativar cobrança adicional do dependente.',
+          });
+        }
+      }
 
       const service = new DependenteService(req.tenantId);
       const { id } = req.params;
