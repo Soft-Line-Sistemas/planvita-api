@@ -31,6 +31,18 @@ function copyRecursiveSync(src, dest) {
 }
 
 const srcDir = candidateSrcDirs.find((dir) => fs.existsSync(dir));
+const relationshipMapSrc = path.join(
+  __dirname,
+  'src',
+  'config',
+  'family-relationship-map.json',
+);
+const relationshipMapDest = path.join(
+  __dirname,
+  'dist',
+  'config',
+  'family-relationship-map.json',
+);
 
 if (!srcDir) {
   console.error(
@@ -42,3 +54,11 @@ if (!srcDir) {
 console.log(`Copying Prisma client from ${srcDir} to ${destDir}...`);
 copyRecursiveSync(srcDir, destDir);
 console.log('Copy complete.');
+
+if (fs.existsSync(relationshipMapSrc)) {
+  console.log(
+    `Copying family relationship map from ${relationshipMapSrc} to ${relationshipMapDest}...`,
+  );
+  copyRecursiveSync(relationshipMapSrc, relationshipMapDest);
+  console.log('Family relationship map copied.');
+}

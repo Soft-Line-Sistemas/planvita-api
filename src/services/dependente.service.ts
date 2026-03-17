@@ -1,9 +1,13 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
+import { TitularPricingService } from './titular-pricing.service';
 
 type DependenteType = Prisma.DependenteGetPayload<{}>;
+type DependenteCreateInput = Prisma.DependenteUncheckedCreateInput;
+type DependenteUpdateInput = Prisma.DependenteUncheckedUpdateInput;
 
 export class DependenteService {
   private prisma;
+  private pricingService: TitularPricingService;
 
   constructor(private tenantId: string) {
     if (!tenantId) {
@@ -11,6 +15,7 @@ export class DependenteService {
     }
 
     this.prisma = getPrismaForTenant(tenantId);
+    this.pricingService = new TitularPricingService(tenantId);
   }
 
   async getAll(): Promise<DependenteType[]> {
@@ -53,7 +58,7 @@ export class DependenteService {
     }
   }
 
-  async create(data: DependenteType): Promise<DependenteType> {
+  async create(data: DependenteCreateInput): Promise<DependenteType> {
     const titularId = Number((data as any)?.titularId);
     if (!Number.isFinite(titularId) || titularId <= 0) {
       const err: any = new Error('titularId inválido.');
@@ -62,10 +67,23 @@ export class DependenteService {
     }
 
     await this.validarLimiteBeneficiarios(titularId);
-    return this.prisma.dependente.create({ data });
+    const dependente = await this.prisma.dependente.create({ data });
+
+    await this.pricingService.recalcularDependentesDoTitular(titularId);
+    return dependente;
   }
 
-  async update(id: number, data: Partial<DependenteType>): Promise<DependenteType> {
+  async update(id: number, data: DependenteUpdateInput): Promise<DependenteType> {
+    const atual = await this.prisma.dependente.findUnique({
+      where: { id: Number(id) },
+      select: { id: true, titularId: true },
+    });
+    if (!atual) {
+      const err: any = new Error('Dependente não encontrado.');
+      err.status = 404;
+      throw err;
+    }
+
     if ((data as any)?.titularId) {
       const titularId = Number((data as any).titularId);
       if (!Number.isFinite(titularId) || titularId <= 0) {
@@ -75,10 +93,32 @@ export class DependenteService {
       }
       await this.validarLimiteBeneficiarios(titularId, 1, Number(id));
     }
-    return this.prisma.dependente.update({ where: { id: Number(id) }, data });
+
+    const dependente = await this.prisma.dependente.update({
+      where: { id: Number(id) },
+      data,
+    });
+
+    const titularIdAtualizado =
+      Number((data as any)?.titularId) > 0
+        ? Number((data as any).titularId)
+        : atual.titularId;
+
+    await this.pricingService.recalcularDependentesDoTitular(titularIdAtualizado);
+    return dependente;
   }
 
   async delete(id: number): Promise<DependenteType> {
-    return this.prisma.dependente.delete({ where: { id: Number(id) } });
+    const atual = await this.prisma.dependente.findUnique({
+      where: { id: Number(id) },
+      select: { titularId: true },
+    });
+    const dependente = await this.prisma.dependente.delete({
+      where: { id: Number(id) },
+    });
+    if (atual?.titularId) {
+      await this.pricingService.recalcularDependentesDoTitular(atual.titularId);
+    }
+    return dependente;
   }
 }

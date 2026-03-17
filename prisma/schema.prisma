@@ -153,6 +153,10 @@ model Dependente {
   nome           String
   dataNascimento DateTime
   tipoDependente String
+  parentescoNormalizado    String?
+  foraGradeFamiliar        Boolean @default(false)
+  excluirCobrancaAdicional Boolean @default(false)
+  valorAdicionalMensal     Float   @default(0)
 }
 
 // ----------------- CORRESPONSÁVEIS -----------------
@@ -695,6 +699,7 @@ model BusinessRules {
   idadeMaximaDependente      Int?
   limiteBeneficiarios        Int?
   maximoBeneficiariosPorTipo Int?    // limite por tipo de beneficiário
+  valorAdicionalDependenteForaGrade Float? @default(14.9)
 
   // -------------------- Frota --------------------
   quilometragemMaxVeiculo    Int?

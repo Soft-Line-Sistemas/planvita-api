@@ -12,6 +12,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate",
     "sync:status-plano": "ts-node src/scripts/sync-status-plano.ts",
+    "sync:dependentes-adicionais": "ts-node src/scripts/recalcular-adicionais-dependentes.ts",
     "test": "jest",
     "lint": "eslint 'src/**/*.{ts,js}'",
     "format": "prettier --write 'src/**/*.{ts,js,json,md}'"
