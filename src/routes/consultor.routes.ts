@@ -5,6 +5,7 @@ import { authenticate, authorize } from '../middlewares/auth.middleware';
 const router = Router();
 const controller = new ConsultorController();
 
+router.get('/public', controller.getPublicOptions.bind(controller));
 router.get('/me/resumo', authenticate, authorize(['titular.view']), controller.getResumoMe.bind(controller));
 router.get('/me/comissoes', authenticate, authorize(['titular.view']), controller.getComissoesMe.bind(controller));
 router.get('/', authenticate, authorize(['consultor.view']), controller.getAll.bind(controller));
