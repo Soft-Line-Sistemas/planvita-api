@@ -86,34 +86,17 @@ export interface AsaasWebhookEvent {
   account?: string;
 }
 
-export function resolveAsaasCredentials(tenantId: string): AsaasCredentials {
-  const normalized = tenantId.trim().toUpperCase();
-  const enabledTenants = (process.env.ASAAS_ENABLED_TENANTS || '')
-    .split(',')
-    .map((t) => t.trim().toUpperCase())
-    .filter(Boolean);
-
-  const enabled = enabledTenants.length === 0 || enabledTenants.includes(normalized);
-
-  const apiKey =
-    process.env[`ASAAS_API_KEY_${normalized}`] ||
-    process.env.ASAAS_API_KEY ||
-    process.env.ASAAS_TOKEN ||
-    '';
-
-  const webhookSecret =
-    process.env[`ASAAS_WEBHOOK_SECRET_${normalized}`] || process.env.ASAAS_WEBHOOK_SECRET;
-
-  const baseUrl =
-    process.env[`ASAAS_BASE_URL_${normalized}`] ||
-    process.env.ASAAS_BASE_URL ||
-    'https://sandbox.asaas.com/api/v3';
+export function resolveAsaasCredentials(_tenantId: string): AsaasCredentials {
+  const enabled = process.env.ASAAS_ENABLED !== 'false';
+  const apiKey = process.env.ASAAS_API_KEY || process.env.ASAAS_TOKEN || '';
+  const webhookSecret = process.env.ASAAS_WEBHOOK_SECRET;
+  const baseUrl = process.env.ASAAS_BASE_URL || 'https://sandbox.asaas.com/api/v3';
 
   const timeoutMs = Number(process.env.ASAAS_TIMEOUT_MS || 8000);
   const maxRetries = Number(process.env.ASAAS_MAX_RETRIES || 3);
 
   if (!apiKey) {
-    throw new Error(`Asaas API key not configured for tenant ${tenantId}`);
+    throw new Error('Asaas API key not configured');
   }
 
   return {
