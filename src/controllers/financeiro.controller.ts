@@ -501,6 +501,32 @@ export class FinanceiroController {
     }
   }
 
+  async gerarRecorrenciaTitular(req: TenantRequest, res: Response) {
+    try {
+      const titularId = Number(req.params.titularId);
+      if (Number.isNaN(titularId)) {
+        return res.status(400).json({ message: 'Titular inválido' });
+      }
+
+      const service = this.resolveService(req);
+      const result = await service.gerarRecorrenciaParaTitular(titularId);
+      this.logger.info('Recorrência gerada para titular existente', {
+        tenant: req.tenantId,
+        titularId,
+        asaasSubscriptionId: result.asaasSubscriptionId,
+      });
+      res.json(result);
+    } catch (error: any) {
+      const message =
+        error instanceof Error && error.message ? error.message : 'Internal server error';
+      this.logger.error('Falha ao gerar recorrência para titular', error, {
+        tenant: req.tenantId,
+        params: req.params,
+      });
+      res.status(/Titular|mensal|Asaas|tenant/i.test(message) ? 400 : 500).json({ message });
+    }
+  }
+
   private normalizeContaPayload<T extends { vencimento: Date; valor: number; descricao: string }>(
     body: any,
   ): T {
