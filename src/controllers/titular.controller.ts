@@ -147,6 +147,25 @@ export class TitularController {
     }
   }
 
+  async me(req: any, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      const titularId = Number(req?.cliente?.titularId);
+      if (!titularId || Number.isNaN(titularId)) {
+        return res.status(401).json({ message: 'Não autenticado' });
+      }
+
+      const service = new TitularService(req.tenantId);
+      const detalhe = await service.getById(titularId);
+      if (!detalhe) return res.status(404).json({ message: 'Titular not found' });
+
+      res.json(detalhe);
+    } catch (error: any) {
+      this.logger.error('Failed to get Titular me', error);
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
   async getAll(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId)
