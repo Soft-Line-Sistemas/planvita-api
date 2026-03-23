@@ -25,5 +25,9 @@ router.get('/relatorios', controller.getRelatorioFinanceiro.bind(controller));
 router.get('/metricas/recorrencia', controller.getMetricasRecorrencia.bind(controller));
 router.get('/recorrencias', controller.getRecorrencias.bind(controller));
 router.post('/recorrencias/sincronizar', controller.syncRecorrencias.bind(controller));
+router.post(
+  '/recorrencias/titular/:titularId/gerar',
+  controller.gerarRecorrenciaTitular.bind(controller),
+);
 
 export default router;

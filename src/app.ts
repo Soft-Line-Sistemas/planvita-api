@@ -31,6 +31,7 @@ import financeiroRoutes from './routes/financeiro.routes';
 import notificacaoRoutes from './routes/notificacao.routes';
 import notificacaoTemplateRoutes from './routes/notificacao-template.routes';
 import asaasRoutes from './routes/asaas.routes';
+import providerRoutes from './routes/provider.routes';
 
 dotenv.config({ quiet: true });
 
@@ -106,6 +107,9 @@ app.use(
       'Authorization',
       'X-Requested-With',
       'X-Tenant',
+      'x-tenant',
+      'X-Client-Id',
+      'x-client-id',
       'X-Signature',
       'X-Asaas-Signature',
     ],
@@ -147,6 +151,7 @@ app.use(`/api/${API_VERSION}/permissions`, permissionRoutes);
 app.use(`/api/${API_VERSION}/users`, userRoutes);
 app.use(`/api/${API_VERSION}/regras`, regrasRoutes);
 app.use(`/api/${API_VERSION}/financeiro`, financeiroRoutes);
+app.use(`/api/${API_VERSION}/providers`, providerRoutes);
 app.use(`/api/${API_VERSION}/notificacoes`, notificacaoRoutes);
 app.use(`/api/${API_VERSION}/notificacoes/templates`, notificacaoTemplateRoutes);
 

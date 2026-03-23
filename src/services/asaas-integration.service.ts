@@ -624,6 +624,58 @@ export class AsaasIntegrationService {
     return subscriptionId;
   }
 
+  async listSubscriptionsFromProvider(maxPages = 10): Promise<any[]> {
+    if (!this.isEnabled()) return [];
+
+    const limit = 100;
+    let offset = 0;
+    let page = 0;
+    const result: any[] = [];
+
+    while (page < Math.max(1, Math.min(maxPages, 20))) {
+      const response = await this.client!.getSubscriptions({ limit, offset });
+      const data = Array.isArray(response?.data) ? response.data : [];
+      if (!data.length) break;
+      result.push(...data);
+      if (data.length < limit) break;
+      offset += limit;
+      page += 1;
+    }
+
+    return result;
+  }
+
+  async listPaymentsFromProvider(params?: {
+    status?: string;
+    customerId?: string;
+    externalReference?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<{ data: any[]; totalCount?: number; limit?: number; offset?: number }> {
+    if (!this.isEnabled()) {
+      return { data: [] };
+    }
+
+    const page = Math.max(1, Number(params?.page ?? 1));
+    const pageSize = Math.max(1, Math.min(Number(params?.pageSize ?? 50), 100));
+    const offset = (page - 1) * pageSize;
+
+    const response = await this.client!.getPayments({
+      status: params?.status ? String(params.status).toUpperCase() : undefined,
+      customer: params?.customerId,
+      externalReference: params?.externalReference,
+      limit: pageSize,
+      offset,
+    });
+
+    return {
+      data: Array.isArray(response?.data) ? response.data : [],
+      totalCount: response?.totalCount,
+      limit: response?.limit,
+      offset: response?.offset,
+    };
+  }
+
   async syncRecurringPaymentsFromProvider(opts?: { maxPages?: number; onlyOpen?: boolean }) {
     if (!this.isEnabled()) {
       return { processed: 0, inserted: 0, updated: 0 };

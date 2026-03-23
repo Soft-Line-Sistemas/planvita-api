@@ -162,9 +162,14 @@ export interface FinanceiroRelatorioDTO {
 }
 
 export interface RecorrenciaFinanceiraDTO {
-  asaasSubscriptionId: string;
-  clienteId: number | null;
+  titularId: number;
   clienteNome: string;
+  referenciaExterna: string;
+  asaasSubscriptionId: string | null;
+  asaasSubscriptionIdLocal: string | null;
+  asaasSubscriptionIdProvider: string | null;
+  temReferenciaLocal: boolean;
+  temReferenciaAsaas: boolean;
   statusAtual: string;
   valorAtual: number;
   proximoVencimento: Date | null;
@@ -1260,7 +1265,26 @@ export class FinanceiroService {
   async listarRecorrencias(): Promise<RecorrenciaFinanceiraDTO[]> {
     await this.sincronizarRecorrenciasAsaas();
 
-    const [abertas, pagas] = await Promise.all([
+    const [titulares, abertas, pagas, subscriptionsProvider] = await Promise.all([
+      this.prisma.titular.findMany({
+        select: {
+          id: true,
+          nome: true,
+          plano: {
+            select: {
+              valorMensal: true,
+            },
+          },
+          dependentes: {
+            select: {
+              valorAdicionalMensal: true,
+            },
+          },
+        },
+        orderBy: {
+          nome: 'asc',
+        },
+      }),
       this.prisma.contaReceber.findMany({
         where: {
           asaasSubscriptionId: { not: null },
@@ -1287,63 +1311,66 @@ export class FinanceiroService {
           },
         },
       }),
+      this.asaasIntegration.isEnabled()
+        ? this.asaasIntegration.listSubscriptionsFromProvider()
+        : [],
     ]);
 
-    const mapa = new Map<string, RecorrenciaFinanceiraDTO>();
+    const mapa = new Map<number, RecorrenciaFinanceiraDTO>();
+
+    for (const titular of titulares) {
+      const adicionais = titular.dependentes.reduce(
+        (acc: number, dep: { valorAdicionalMensal: number }) =>
+          acc + Number(dep.valorAdicionalMensal ?? 0),
+        0,
+      );
+      const valorAtual = this.arredondarMoeda(Number(titular.plano?.valorMensal ?? 0) + adicionais);
+      const referenciaExterna = `titular-${titular.id}`;
+      mapa.set(titular.id, {
+        titularId: titular.id,
+        clienteNome: titular.nome,
+        referenciaExterna,
+        asaasSubscriptionId: null,
+        asaasSubscriptionIdLocal: null,
+        asaasSubscriptionIdProvider: null,
+        temReferenciaLocal: false,
+        temReferenciaAsaas: false,
+        statusAtual: 'SEM_RECORRENCIA',
+        valorAtual,
+        proximoVencimento: null,
+        ultimaLiquidacao: null,
+        aberto: false,
+        totalPagas: 0,
+      });
+    }
 
     for (const conta of abertas) {
-      const subscriptionId = conta.asaasSubscriptionId;
-      if (!subscriptionId) continue;
-
-      const existente = mapa.get(subscriptionId);
+      if (!conta.clienteId) continue;
+      const existente = mapa.get(conta.clienteId);
+      if (!existente) continue;
       const vencimento = conta.dataVencimento ?? conta.vencimento ?? null;
-      if (!existente) {
-        mapa.set(subscriptionId, {
-          asaasSubscriptionId: subscriptionId,
-          clienteId: conta.clienteId ?? null,
-          clienteNome: conta.cliente?.nome ?? `Titular #${conta.clienteId ?? '-'}`,
-          statusAtual: conta.status,
-          valorAtual: Number(conta.valor ?? 0),
-          proximoVencimento: vencimento,
-          ultimaLiquidacao: null,
-          aberto: true,
-          totalPagas: 0,
-        });
-        continue;
-      }
-
+      existente.asaasSubscriptionIdLocal = conta.asaasSubscriptionId ?? existente.asaasSubscriptionIdLocal;
+      existente.asaasSubscriptionId = existente.asaasSubscriptionIdLocal ?? existente.asaasSubscriptionId;
+      existente.temReferenciaLocal = Boolean(existente.asaasSubscriptionIdLocal);
+      existente.statusAtual = conta.status || existente.statusAtual;
+      existente.valorAtual = Number(conta.valor ?? existente.valorAtual);
+      existente.aberto = true;
       if (
         vencimento &&
         (!existente.proximoVencimento || vencimento.getTime() < existente.proximoVencimento.getTime())
       ) {
         existente.proximoVencimento = vencimento;
       }
-      existente.valorAtual = Number(conta.valor ?? existente.valorAtual);
-      existente.statusAtual = conta.status || existente.statusAtual;
-      existente.aberto = true;
     }
 
     for (const pagamento of pagas) {
-      const subscriptionId = pagamento.asaasSubscriptionId;
-      if (!subscriptionId) continue;
-
-      const existente = mapa.get(subscriptionId);
-      if (!existente) {
-        mapa.set(subscriptionId, {
-          asaasSubscriptionId: subscriptionId,
-          clienteId: pagamento.titularId ?? null,
-          clienteNome: pagamento.titular?.nome ?? `Titular #${pagamento.titularId}`,
-          statusAtual: pagamento.status,
-          valorAtual: Number(pagamento.valor ?? 0),
-          proximoVencimento: pagamento.dataVencimento ?? null,
-          ultimaLiquidacao: pagamento.dataPagamento ?? null,
-          aberto: false,
-          totalPagas: 1,
-        });
-        continue;
-      }
-
+      const titularId = pagamento.titularId;
+      const existente = mapa.get(titularId);
+      if (!existente) continue;
       existente.totalPagas += 1;
+      if (!existente.asaasSubscriptionId && pagamento.asaasSubscriptionId) {
+        existente.asaasSubscriptionId = pagamento.asaasSubscriptionId;
+      }
       if (
         pagamento.dataPagamento &&
         (!existente.ultimaLiquidacao ||
@@ -1356,9 +1383,80 @@ export class FinanceiroService {
       }
     }
 
-    return Array.from(mapa.values()).sort((a, b) =>
-      a.clienteNome.localeCompare(b.clienteNome, 'pt-BR'),
+    for (const sub of subscriptionsProvider) {
+      const externalReference = String(sub?.externalReference ?? '');
+      const parsedTitularId = /^titular-(\d+)$/.exec(externalReference)?.[1];
+      if (!parsedTitularId) continue;
+      const titularId = Number(parsedTitularId);
+      const existente = mapa.get(titularId);
+      if (!existente) continue;
+      const subId = String(sub?.id ?? '');
+      if (!subId) continue;
+      existente.asaasSubscriptionIdProvider = subId;
+      existente.temReferenciaAsaas = true;
+      if (!existente.asaasSubscriptionId) {
+        existente.asaasSubscriptionId = subId;
+      }
+    }
+
+    return Array.from(mapa.values())
+      .map((item) => {
+        if (!item.temReferenciaAsaas && item.asaasSubscriptionIdLocal) {
+          item.temReferenciaAsaas = true;
+        }
+        if (!item.temReferenciaLocal && item.asaasSubscriptionIdLocal) {
+          item.temReferenciaLocal = true;
+        }
+        return item;
+      })
+      .sort((a, b) => a.clienteNome.localeCompare(b.clienteNome, 'pt-BR'));
+  }
+
+  async gerarRecorrenciaParaTitular(titularId: number) {
+    const titular = await this.prisma.titular.findUnique({
+      where: { id: titularId },
+      select: {
+        id: true,
+        nome: true,
+        plano: {
+          select: {
+            valorMensal: true,
+          },
+        },
+        dependentes: {
+          select: {
+            valorAdicionalMensal: true,
+          },
+        },
+      },
+    });
+
+    if (!titular) {
+      throw new Error('Titular não encontrado');
+    }
+
+    const valorAdicionais = titular.dependentes.reduce(
+      (acc: number, dep: { valorAdicionalMensal: number }) =>
+        acc + Number(dep.valorAdicionalMensal ?? 0),
+      0,
     );
+    const valorMensal = this.arredondarMoeda(Number(titular.plano?.valorMensal ?? 0) + valorAdicionais);
+    if (valorMensal <= 0) {
+      throw new Error('Titular sem valor mensal válido para gerar recorrência');
+    }
+
+    const subscriptionId = await this.asaasIntegration.ensureMonthlySubscriptionForTitular({
+      titularId: titular.id,
+      valorMensal,
+      descricao: `Mensalidade Plano - ${titular.nome}`,
+    });
+
+    await this.sincronizarRecorrenciasAsaas();
+
+    return {
+      titularId: titular.id,
+      asaasSubscriptionId: subscriptionId,
+    };
   }
 
   async reconsultarContaReceber(id: number, usuarioId?: number): Promise<ContaFinanceiraDTO> {
