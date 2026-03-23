@@ -38,7 +38,8 @@ export const config: AppConfig = {
   notification: {
     baseUrl: getEnvVar('NOTIFICATION_API_URL', 'https://notification.gleeze.com/api/v1'),
     tokenLider: getEnvVarOptional('NOTIFICATION_TOKEN_LIDER'),
-    tokenPax: getEnvVarOptional('NOTIFICATION_TOKEN_TOKEN_PAX') || getEnvVarOptional('NOTIFICATION_TOKEN_PAX'),
+    tokenPax: getEnvVarOptional('NOTIFICATION_TOKEN_PAX'),
+    tokenBosque: getEnvVarOptional('NOTIFICATION_TOKEN_BOSQUE'),
     defaultMethod:
       (process.env.NOTIFICATION_DEFAULT_METHOD ?? 'email').toLowerCase() === 'whatsapp'
         ? 'whatsapp'
