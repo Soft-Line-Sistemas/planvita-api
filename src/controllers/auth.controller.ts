@@ -146,12 +146,13 @@ export class AuthController {
   async firstAccess(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
-      const { verificationToken, password, login, titularId } = req.body ?? {};
+      const { verificationToken, token, password, login, titularId } = req.body ?? {};
 
       const auth = new ClienteAuthService(req.tenantId);
 
-      if (verificationToken && password) {
-        await auth.completeFirstAccess(String(verificationToken), String(password));
+      const tokenValue = String(verificationToken ?? token ?? '').trim();
+      if (tokenValue && password) {
+        await auth.completeFirstAccess(tokenValue, String(password));
         return res.json({ message: 'Senha criada com sucesso.' });
       }
 
@@ -175,7 +176,7 @@ export class AuthController {
         return res.json({ message: 'Enviamos um código para primeiro acesso.', start });
       }
 
-      return res.status(400).json({ message: 'Informe login ou verificationToken+password.' });
+      return res.status(400).json({ message: 'Informe login ou token+password.' });
     } catch (error: any) {
       const status = error?.status ?? 500;
       const message = error?.message ?? 'Erro no primeiro acesso.';

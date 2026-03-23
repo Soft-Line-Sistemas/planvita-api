@@ -230,7 +230,7 @@ export class ClienteAuthService {
     };
   }
 
-  async completeFirstAccess(verificationToken: string, password: string): Promise<void> {
+  async completeFirstAccess(verificationTokenOrLinkToken: string, password: string): Promise<void> {
     if (!isStrongPassword(password)) {
       const err: any = new Error(
         'Senha fraca. Use no mínimo 8 caracteres com letra, número e caractere especial.',
@@ -239,7 +239,9 @@ export class ClienteAuthService {
       throw err;
     }
 
-    const token = await this.consumeTokenByRaw('VERIFY_FIRST_ACCESS', verificationToken);
+    const token =
+      (await this.consumeTokenByRawOrNull('VERIFY_FIRST_ACCESS', verificationTokenOrLinkToken)) ??
+      (await this.consumeTokenByRaw('FIRST_ACCESS_LINK', verificationTokenOrLinkToken));
 
     const senhaHash = await bcrypt.hash(password, 10);
     await this.ensureCredential(token.titularId);
