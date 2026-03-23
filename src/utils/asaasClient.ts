@@ -163,6 +163,10 @@ export class AsaasClient {
     return this.request<AsaasPagedResponse<any>>('GET', '/payments', undefined, { params });
   }
 
+  async getCustomers(params: Record<string, string | number | boolean | undefined> = {}) {
+    return this.request<AsaasPagedResponse<any>>('GET', '/customers', undefined, { params });
+  }
+
   async getPaymentById(paymentId: string) {
     return this.request<any>('GET', `/payments/${paymentId}`);
   }

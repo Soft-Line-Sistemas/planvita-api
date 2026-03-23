@@ -217,6 +217,83 @@ export class AsaasIntegrationService {
     return Math.round((valor + Number.EPSILON) * 100) / 100;
   }
 
+  private sanitizeDigits(value?: string | null): string | undefined {
+    if (!value) return undefined;
+    const digits = String(value).replace(/\D/g, '');
+    return digits || undefined;
+  }
+
+  private sanitizeCpfCnpj(value?: string | null): string | undefined {
+    const digits = this.sanitizeDigits(value);
+    if (!digits) return undefined;
+    if (digits.length === 11 || digits.length === 14) return digits;
+    return undefined;
+  }
+
+  private sanitizePhone(value?: string | null): string | undefined {
+    const digits = this.sanitizeDigits(value);
+    if (!digits) return undefined;
+    if (digits.length < 10 || digits.length > 13) return undefined;
+    return digits;
+  }
+
+  private sanitizePostalCode(value?: string | null): string | undefined {
+    const digits = this.sanitizeDigits(value);
+    if (!digits) return undefined;
+    return digits.length === 8 ? digits : undefined;
+  }
+
+  private sanitizeEmail(value?: string | null): string | undefined {
+    if (!value) return undefined;
+    const email = String(value).trim().toLowerCase();
+    if (!email || !email.includes('@')) return undefined;
+    return email;
+  }
+
+  private sanitizeState(value?: string | null): string | undefined {
+    if (!value) return undefined;
+    const state = String(value).trim().toUpperCase();
+    return /^[A-Z]{2}$/.test(state) ? state : undefined;
+  }
+
+  private async findExistingCustomerOnAsaas(params: {
+    externalReference: string;
+    cpfCnpj?: string;
+    email?: string;
+  }): Promise<string | null> {
+    if (!this.client) return null;
+
+    const byExternalRef = await this.client.getCustomers({
+      externalReference: params.externalReference,
+      limit: 1,
+      offset: 0,
+    });
+    const customerByExternalRef = byExternalRef?.data?.[0]?.id as string | undefined;
+    if (customerByExternalRef) return customerByExternalRef;
+
+    if (params.cpfCnpj) {
+      const byCpf = await this.client.getCustomers({
+        cpfCnpj: params.cpfCnpj,
+        limit: 1,
+        offset: 0,
+      });
+      const customerByCpf = byCpf?.data?.[0]?.id as string | undefined;
+      if (customerByCpf) return customerByCpf;
+    }
+
+    if (params.email) {
+      const byEmail = await this.client.getCustomers({
+        email: params.email,
+        limit: 1,
+        offset: 0,
+      });
+      const customerByEmail = byEmail?.data?.[0]?.id as string | undefined;
+      if (customerByEmail) return customerByEmail;
+    }
+
+    return null;
+  }
+
   private adicionarAtrasoComissao(base: Date): Date {
     const resultado = new Date(base);
     resultado.setTime(resultado.getTime() + COMISSAO_ADESAO_DELAY_MS);
@@ -371,20 +448,43 @@ export class AsaasIntegrationService {
 
     if (titular.asaasCustomerId) return titular.asaasCustomerId;
 
+    const externalReference = `titular-${titular.id}`;
+    const cpfCnpj = this.sanitizeCpfCnpj(titular.cpf);
+    const email = this.sanitizeEmail(titular.email);
+    const existingCustomerId = await this.findExistingCustomerOnAsaas({
+      externalReference,
+      cpfCnpj,
+      email,
+    });
+
+    if (existingCustomerId) {
+      await this.prisma.titular.update({
+        where: { id: titularId },
+        data: { asaasCustomerId: existingCustomerId },
+      });
+      this.logger.info('Cliente Asaas reaproveitado por busca', {
+        tenantId: this.tenantId,
+        titularId,
+        customerId: existingCustomerId,
+        externalReference,
+      });
+      return existingCustomerId;
+    }
+
     const payload = {
-      name: titular.nome,
-      email: titular.email,
-      cpfCnpj: titular.cpf ?? undefined,
-      phone: titular.telefone ?? undefined,
-      mobilePhone: titular.telefone ?? undefined,
-      postalCode: titular.cep ?? undefined,
+      name: titular.nome?.trim() || `Titular ${titular.id}`,
+      email,
+      cpfCnpj,
+      phone: this.sanitizePhone(titular.telefone),
+      mobilePhone: this.sanitizePhone(titular.telefone),
+      postalCode: this.sanitizePostalCode(titular.cep),
       address: titular.logradouro ?? undefined,
       addressNumber: titular.numero ?? undefined,
       complement: titular.complemento ?? undefined,
       province: titular.bairro ?? undefined,
       city: titular.cidade ?? undefined,
-      state: titular.uf ?? undefined,
-      externalReference: `titular-${titular.id}`,
+      state: this.sanitizeState(titular.uf),
+      externalReference,
     };
 
     const result = await this.client!.createCustomer(payload);
