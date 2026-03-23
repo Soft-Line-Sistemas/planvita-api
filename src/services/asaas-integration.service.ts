@@ -6,6 +6,7 @@ import {
   AsaasPaymentPayload,
 } from '../utils/asaasClient';
 import { getPrismaForTenant, Prisma } from '../utils/prisma';
+import { NotificationApiClient } from '../utils/notificationClient';
 
 type ContaReceberWithCliente = Prisma.ContaReceberGetPayload<{
   include: {
@@ -22,6 +23,7 @@ export class AsaasIntegrationService {
   private prisma;
   private logger: Logger;
   private client: AsaasClient | null = null;
+  private notificationClient: NotificationApiClient;
   private enabled: boolean = false;
 
   constructor(private tenantId: string, private requestId?: string) {
@@ -31,6 +33,7 @@ export class AsaasIntegrationService {
       tenantId,
       requestId,
     });
+    this.notificationClient = new NotificationApiClient(tenantId);
 
     try {
       const credentials = resolveAsaasCredentials(tenantId);
@@ -48,6 +51,166 @@ export class AsaasIntegrationService {
 
   isEnabled() {
     return this.enabled && !!this.client;
+  }
+
+  private isStatusPagamentoConfirmado(status: string): boolean {
+    return status === 'RECEBIDO' || status === 'CONFIRMADO';
+  }
+
+  private normalizarTelefoneWhatsapp(telefone?: string | null): string | null {
+    if (!telefone) return null;
+    const digitos = telefone.replace(/\D/g, '');
+    if (!digitos) return null;
+    return digitos.length > 11 ? `+${digitos}` : `+55${digitos}`;
+  }
+
+  private formatarDataCurta(data?: Date | null): string {
+    if (!data) return '-';
+    return new Intl.DateTimeFormat('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    }).format(data);
+  }
+
+  private async registrarLogNotificacaoConfirmacao(args: {
+    titularId?: number;
+    destinatario?: string | null;
+    canal: 'email' | 'whatsapp';
+    status: 'enviado' | 'falha' | 'ignorado';
+    motivo?: string;
+    payload?: Record<string, unknown>;
+    logId: string;
+  }): Promise<void> {
+    try {
+      await this.prisma.notificationLog.create({
+        data: {
+          tenantId: this.tenantId,
+          logId: args.logId,
+          titularId: args.titularId,
+          destinatario: args.destinatario ?? undefined,
+          canal: args.canal,
+          status: args.status,
+          motivo: args.motivo,
+          payload: args.payload ? JSON.stringify(args.payload) : undefined,
+        },
+      });
+    } catch (error: any) {
+      this.logger.warn('Falha ao registrar log de notificação de confirmação', {
+        tenantId: this.tenantId,
+        titularId: args.titularId,
+        canal: args.canal,
+        error: error?.message,
+      });
+    }
+  }
+
+  private async enviarConfirmacaoAssinatura(payload: {
+    titularId: number;
+    nome: string;
+    email?: string | null;
+    telefone?: string | null;
+    valor?: number | null;
+    dataVencimento?: Date | null;
+    descricao?: string | null;
+    paymentUrl?: string | null;
+    paymentId: string;
+  }): Promise<void> {
+    const assunto = 'Assinatura confirmada';
+    const valor = Number(payload.valor ?? 0).toFixed(2);
+    const dataVencimento = this.formatarDataCurta(payload.dataVencimento);
+    const descricao = payload.descricao?.trim() || 'Assinatura do plano';
+    const link = payload.paymentUrl?.trim();
+
+    const mensagemBase =
+      `Olá, ${payload.nome}! Confirmamos o pagamento da sua assinatura (${descricao}). ` +
+      `Valor: R$ ${valor}. Vencimento: ${dataVencimento}.` +
+      (link ? ` Link do comprovante/cobrança: ${link}` : '') +
+      ' Seu plano está ativo.';
+
+    const logBaseId = `assinatura-confirmada:${payload.paymentId}`;
+    const [logEmailExistente, logWhatsappExistente] = await Promise.all([
+      this.prisma.notificationLog.findFirst({
+        where: {
+          tenantId: this.tenantId,
+          logId: `${logBaseId}:email`,
+          status: 'enviado',
+        },
+        select: { id: true },
+      }),
+      this.prisma.notificationLog.findFirst({
+        where: {
+          tenantId: this.tenantId,
+          logId: `${logBaseId}:whatsapp`,
+          status: 'enviado',
+        },
+        select: { id: true },
+      }),
+    ]);
+
+    if (!logEmailExistente) {
+      if (!payload.email) {
+        await this.registrarLogNotificacaoConfirmacao({
+          titularId: payload.titularId,
+          canal: 'email',
+          status: 'ignorado',
+          motivo: 'titular sem e-mail para confirmação',
+          logId: `${logBaseId}:email`,
+        });
+      } else {
+        const response = await this.notificationClient.send({
+          to: payload.email,
+          channel: 'email',
+          subject: assunto,
+          message: mensagemBase,
+          metadata: {
+            flow: 'assinatura-confirmada',
+            paymentId: payload.paymentId,
+            titularId: payload.titularId,
+          },
+        });
+        await this.registrarLogNotificacaoConfirmacao({
+          titularId: payload.titularId,
+          destinatario: payload.email,
+          canal: 'email',
+          status: response.success ? 'enviado' : 'falha',
+          motivo: response.error,
+          logId: `${logBaseId}:email`,
+        });
+      }
+    }
+
+    if (!logWhatsappExistente) {
+      const telefoneWhatsapp = this.normalizarTelefoneWhatsapp(payload.telefone);
+      if (!telefoneWhatsapp) {
+        await this.registrarLogNotificacaoConfirmacao({
+          titularId: payload.titularId,
+          canal: 'whatsapp',
+          status: 'ignorado',
+          motivo: 'titular sem WhatsApp para confirmação',
+          logId: `${logBaseId}:whatsapp`,
+        });
+      } else {
+        const response = await this.notificationClient.send({
+          to: telefoneWhatsapp,
+          channel: 'whatsapp',
+          message: mensagemBase,
+          metadata: {
+            flow: 'assinatura-confirmada',
+            paymentId: payload.paymentId,
+            titularId: payload.titularId,
+          },
+        });
+        await this.registrarLogNotificacaoConfirmacao({
+          titularId: payload.titularId,
+          destinatario: telefoneWhatsapp,
+          canal: 'whatsapp',
+          status: response.success ? 'enviado' : 'falha',
+          motivo: response.error,
+          logId: `${logBaseId}:whatsapp`,
+        });
+      }
+    }
   }
 
   private arredondarMoeda(valor: number): number {
@@ -503,13 +666,26 @@ export class AsaasIntegrationService {
     const paymentId = event.payment?.id;
     const subscriptionId = event.payment?.subscription ?? event.subscription?.id;
     const status = this.mapStatus(event.event);
+    const statusConfirmado = this.isStatusPagamentoConfirmado(status);
     const dueDate = event.payment?.dueDate ? new Date(event.payment.dueDate) : undefined;
     const pixExpiration = event.payment?.pixExpirationDate
       ? new Date(event.payment.pixExpirationDate)
       : undefined;
-
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       let conta: ContaReceberWithCliente | null = null;
+      let notificacaoConfirmacao:
+        | {
+            titularId: number;
+            nome: string;
+            email?: string | null;
+            telefone?: string | null;
+            valor?: number | null;
+            dataVencimento?: Date | null;
+            descricao?: string | null;
+            paymentUrl?: string | null;
+            paymentId: string;
+          }
+        | null = null;
 
       if (paymentId) {
         conta = (await tx.contaReceber.findUnique({
@@ -527,7 +703,8 @@ export class AsaasIntegrationService {
 
       if (conta) {
         const alreadySameStatus = conta.status === status;
-        const dataRecebimento = status === 'RECEBIDO' ? new Date() : null;
+        const estavaConfirmado = this.isStatusPagamentoConfirmado(conta.status);
+        const dataRecebimento = statusConfirmado ? new Date() : null;
         const limparDataRecebimento = status === 'CANCELADO';
 
         const updatedConta = await tx.contaReceber.update({
@@ -555,7 +732,7 @@ export class AsaasIntegrationService {
           include: { cliente: true },
         });
 
-        if (status === 'RECEBIDO' && paymentId && updatedConta.clienteId) {
+        if (statusConfirmado && paymentId && updatedConta.clienteId) {
           await tx.pagamento.upsert({
             where: { asaasPaymentId: paymentId },
             update: {
@@ -584,7 +761,32 @@ export class AsaasIntegrationService {
               dataVencimento: updatedConta.dataVencimento ?? updatedConta.vencimento,
             },
           });
+          await tx.titular.updateMany({
+            where: {
+              id: updatedConta.clienteId,
+              statusPlano: {
+                not: 'ATIVO',
+              },
+            },
+            data: {
+              statusPlano: 'ATIVO',
+            },
+          });
           await this.gerarComissaoPrimeiroPagamentoTx(tx, updatedConta.clienteId);
+
+          if (!estavaConfirmado && updatedConta.cliente && paymentId) {
+            notificacaoConfirmacao = {
+              titularId: updatedConta.clienteId,
+              nome: updatedConta.cliente.nome,
+              email: updatedConta.cliente.email,
+              telefone: updatedConta.cliente.telefone,
+              valor: updatedConta.valor,
+              dataVencimento: updatedConta.dataVencimento ?? updatedConta.vencimento,
+              descricao: updatedConta.descricao,
+              paymentUrl: updatedConta.paymentUrl,
+              paymentId,
+            };
+          }
         } else if (status === 'CANCELADO' && paymentId && updatedConta.clienteId) {
           await tx.pagamento.upsert({
             where: { asaasPaymentId: paymentId },
@@ -613,7 +815,7 @@ export class AsaasIntegrationService {
               dataVencimento: updatedConta.dataVencimento ?? updatedConta.vencimento,
             },
           });
-        } else if (status === 'RECEBIDO' && !updatedConta.clienteId) {
+        } else if (statusConfirmado && !updatedConta.clienteId) {
           this.logger.warn('Pagamento recebido sem titular vinculado', {
             tenantId: this.tenantId,
             contaReceberId: conta.id,
@@ -630,7 +832,7 @@ export class AsaasIntegrationService {
           subscriptionId,
         });
 
-        return { contaReceberId: conta.id, status };
+        return { contaReceberId: conta.id, status, notificacaoConfirmacao };
       }
 
       this.logger.warn('Webhook Asaas recebido sem conta vinculada', {
@@ -640,8 +842,22 @@ export class AsaasIntegrationService {
         event: event.event,
       });
 
-      return { contaReceberId: null, status };
+      return { contaReceberId: null, status, notificacaoConfirmacao: null };
     });
+
+    if (result.notificacaoConfirmacao) {
+      try {
+        await this.enviarConfirmacaoAssinatura(result.notificacaoConfirmacao);
+      } catch (error: any) {
+        this.logger.error('Falha ao enviar confirmações automáticas de assinatura', error, {
+          tenantId: this.tenantId,
+          titularId: result.notificacaoConfirmacao.titularId,
+          paymentId: result.notificacaoConfirmacao.paymentId,
+        });
+      }
+    }
+
+    return { contaReceberId: result.contaReceberId, status: result.status };
   }
 
   private mapEventFromStatus(status: string): string {
