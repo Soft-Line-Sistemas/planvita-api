@@ -56,6 +56,7 @@ export interface DestinatarioNotificacao {
     vencimento: string;
     status: string;
     diasAtraso: number;
+    paymentUrl?: string | null;
   }>;
 }
 
@@ -576,7 +577,7 @@ export class NotificacaoRecorrenteService {
     const tenant = this.tenantId.toLowerCase();
     const displayName = this.getDisplayName(tenant);
     const urlBase = `https://${tenant}.planvita.com.br`;
-    const urlCobranca = `${urlBase}/cliente`;
+    const urlCobranca = cobranca?.paymentUrl || `${urlBase}/cliente`;
     const valor = cobranca
       ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
           cobranca.valor,
@@ -795,7 +796,7 @@ export class NotificacaoRecorrenteService {
     const tenant = this.tenantId.toLowerCase();
     const displayName = this.getDisplayName(tenant);
     const urlBase = `https://${tenant}.planvita.com.br`;
-    const urlCobranca = `${urlBase}/cliente`;
+    const urlCobranca = cobranca?.paymentUrl || `${urlBase}/cliente`;
     const valor = cobranca
       ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
           cobranca.valor,
@@ -927,6 +928,7 @@ export class NotificacaoRecorrenteService {
         vencimento: conta.vencimento.toISOString(),
         status: conta.status,
         diasAtraso: this.calcularDiasAtraso(conta.vencimento),
+        paymentUrl: conta.paymentUrl,
       };
 
       if (existente) {
