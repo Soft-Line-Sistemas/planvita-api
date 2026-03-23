@@ -391,7 +391,9 @@ export class TitularService {
 
   async create(data: TitularType): Promise<TitularType> {
     const titular = await this.prisma.titular.create({ data });
+    const valorMensal = await this.pricingService.recalcularFinanceiroTitular(titular.id);
     void this.syncCustomerAsaasSafe(titular.id);
+    void this.syncSubscriptionAsaasSafe(titular.id, titular.nome, valorMensal);
     return titular;
   }
 
@@ -527,6 +529,8 @@ export class TitularService {
 
       void this.syncCustomerAsaasSafe(novoTitular.id);
       await this.pricingService.recalcularDependentesDoTitular(novoTitular.id);
+      const valorMensal = await this.pricingService.recalcularFinanceiroTitular(novoTitular.id);
+      void this.syncSubscriptionAsaasSafe(novoTitular.id, novoTitular.nome, valorMensal);
       return novoTitular;
     } catch (e: any) {
       if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
@@ -737,6 +741,25 @@ export class TitularService {
       await this.asaasIntegration.ensureCustomerForTitular(titularId);
     } catch (error: any) {
       this.logger.warn('Falha ao sincronizar titular com Asaas', {
+        error: error?.message,
+        titularId,
+      });
+    }
+  }
+
+  private async syncSubscriptionAsaasSafe(
+    titularId: number,
+    titularNome: string,
+    valorMensal: number,
+  ) {
+    try {
+      await this.asaasIntegration.ensureMonthlySubscriptionForTitular({
+        titularId,
+        valorMensal,
+        descricao: `Mensalidade Plano - ${titularNome}`,
+      });
+    } catch (error: any) {
+      this.logger.warn('Falha ao sincronizar assinatura mensal com Asaas', {
         error: error?.message,
         titularId,
       });

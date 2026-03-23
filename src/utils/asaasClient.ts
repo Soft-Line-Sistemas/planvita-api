@@ -67,12 +67,14 @@ export interface AsaasWebhookEvent {
     status: string;
     dueDate?: string;
     value?: number;
+    description?: string;
     invoiceUrl?: string;
     bankSlipUrl?: string;
     pixQrCode?: string;
     pixExpirationDate?: string;
     subscription?: string;
     billingType?: string;
+    customer?: string | { id?: string };
   };
   subscription?: {
     id: string;

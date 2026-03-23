@@ -470,6 +470,37 @@ export class FinanceiroController {
     }
   }
 
+  async getRecorrencias(req: TenantRequest, res: Response) {
+    try {
+      const service = this.resolveService(req);
+      const result = await service.listarRecorrencias();
+      this.logger.info('Recorrências Asaas listadas', { tenant: req.tenantId });
+      res.json(result);
+    } catch (error) {
+      this.logger.error('Falha ao listar recorrências Asaas', error);
+      res.status(this.shouldReturnTenantError(error) ? 400 : 500).json({
+        message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : 'Internal server error',
+      });
+    }
+  }
+
+  async syncRecorrencias(req: TenantRequest, res: Response) {
+    try {
+      const service = this.resolveService(req);
+      const result = await service.sincronizarRecorrenciasAsaas();
+      this.logger.info('Sincronização de recorrências Asaas executada', {
+        tenant: req.tenantId,
+        ...result,
+      });
+      res.json(result);
+    } catch (error) {
+      this.logger.error('Falha ao sincronizar recorrências Asaas', error);
+      res.status(this.shouldReturnTenantError(error) ? 400 : 500).json({
+        message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : 'Internal server error',
+      });
+    }
+  }
+
   private normalizeContaPayload<T extends { vencimento: Date; valor: number; descricao: string }>(
     body: any,
   ): T {

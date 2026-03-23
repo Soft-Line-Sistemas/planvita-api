@@ -23,5 +23,7 @@ router.post('/cadastros/centros', controller.createCentroResultado.bind(controll
 router.delete('/cadastros/centros/:id', controller.deleteCentroResultado.bind(controller));
 router.get('/relatorios', controller.getRelatorioFinanceiro.bind(controller));
 router.get('/metricas/recorrencia', controller.getMetricasRecorrencia.bind(controller));
+router.get('/recorrencias', controller.getRecorrencias.bind(controller));
+router.post('/recorrencias/sincronizar', controller.syncRecorrencias.bind(controller));
 
 export default router;
