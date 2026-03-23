@@ -51,6 +51,7 @@ export interface NotificationConfig {
   baseUrl: string;
   tokenLider?: string;
   tokenPax?: string;
+  tokenBosque?: string;
   defaultMethod: 'whatsapp' | 'email';
 }
 

@@ -29,8 +29,31 @@ export class NotificationApiClient {
   }
 
   private resolveToken(channel: NotificationChannel): string | undefined {
-    if (channel === 'email') return config.notification.tokenPax || config.notification.tokenLider;
-    return config.notification.tokenLider || config.notification.tokenPax;
+    const tenant = String(this.tenantId ?? '').trim().toLowerCase();
+    const tokenByTenant =
+      tenant === 'lider'
+        ? config.notification.tokenLider
+        : tenant === 'pax'
+          ? config.notification.tokenPax
+          : tenant === 'bosque'
+            ? config.notification.tokenBosque
+            : undefined;
+
+    if (tokenByTenant) return tokenByTenant;
+
+    if (channel === 'email') {
+      return (
+        config.notification.tokenPax ||
+        config.notification.tokenLider ||
+        config.notification.tokenBosque
+      );
+    }
+
+    return (
+      config.notification.tokenLider ||
+      config.notification.tokenPax ||
+      config.notification.tokenBosque
+    );
   }
 
   async send(payload: NotificationPayload): Promise<NotificationSendResult> {

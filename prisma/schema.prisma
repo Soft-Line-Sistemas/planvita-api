@@ -131,6 +131,9 @@ model Titular {
   orcamentos      Orcamento[]
   recibos         Recibo[]
   assinaturas     AssinaturaDigital[]
+  credential      TitularCredential?
+  otps            TitularOtp[]
+  tokens          TitularToken[]
 
   planoId        Int?
   plano          Plano?      @relation(fields: [planoId], references: [id]) // 🔹 Relação adicionada
@@ -143,6 +146,56 @@ model Titular {
 
   // Método preferencial para notificações recorrentes (whatsapp | email)
   metodoNotificacaoRecorrente String? @default("email")
+}
+
+// ----------------- AUTH CLIENTE -----------------
+model TitularCredential {
+  id              Int      @id @default(autoincrement())
+  titularId        Int      @unique @map("titular_id")
+  senhaHash        String?  @map("senha_hash")
+  emailVerified    Boolean  @default(false) @map("email_verified")
+  whatsappVerified Boolean  @default(false) @map("whatsapp_verified")
+  lastLoginAt      DateTime? @map("last_login_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  titular Titular @relation(fields: [titularId], references: [id], onDelete: Cascade)
+
+  @@map("titular_credentials")
+}
+
+model TitularOtp {
+  id        String   @id @default(uuid())
+  titularId Int      @map("titular_id")
+  channel   String
+  purpose   String
+  codeHash  String   @map("code_hash")
+  attempts  Int      @default(0)
+  expiresAt DateTime @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  titular Titular @relation(fields: [titularId], references: [id], onDelete: Cascade)
+
+  @@index([titularId, purpose, expiresAt])
+  @@map("titular_otps")
+}
+
+model TitularToken {
+  id        String   @id @default(uuid())
+  titularId Int      @map("titular_id")
+  type      String
+  purpose   String?
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  metadata  String?
+
+  titular Titular @relation(fields: [titularId], references: [id], onDelete: Cascade)
+
+  @@index([titularId, type, expiresAt])
+  @@map("titular_tokens")
 }
 
 // ----------------- DEPENDENTES -----------------

@@ -70,17 +70,29 @@ app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      
+
+      const originLower = origin.toLowerCase();
       const allowed = config.server.allowedOrigins.map((o) => o.toLowerCase().trim());
-      const isAllowed = allowed.some(pattern => {
+      const isAllowed = allowed.some((pattern) => {
         if (pattern.includes('*')) {
           const regex = new RegExp('^' + pattern.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$');
-          return regex.test(origin.toLowerCase());
+          return regex.test(originLower);
         }
-        return pattern === origin.toLowerCase();
+        return pattern === originLower;
       });
 
-      if (isAllowed || allowed.includes(origin.toLowerCase())) {
+      const isLocalhostDevOrigin = (() => {
+        if (config.server.nodeEnv !== 'development') return false;
+        try {
+          const parsed = new URL(origin);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+          return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname.endsWith('.localhost');
+        } catch {
+          return false;
+        }
+      })();
+
+      if (isAllowed || allowed.includes(originLower) || isLocalhostDevOrigin) {
         callback(null, true);
       } else {
         console.warn(`CORS blocked request from origin: ${origin}`);
