@@ -543,6 +543,188 @@ export class AsaasIntegrationService {
     }
   }
 
+  async ensureMonthlySubscriptionForTitular(args: {
+    titularId: number;
+    valorMensal: number;
+    descricao: string;
+    billingType?: 'PIX' | 'BOLETO' | 'CREDIT_CARD';
+    proximoVencimento?: Date;
+  }): Promise<string | null> {
+    if (!this.isEnabled()) return null;
+
+    const valorMensal = this.arredondarMoeda(Number(args.valorMensal ?? 0));
+    if (!Number.isFinite(valorMensal) || valorMensal <= 0) {
+      return null;
+    }
+
+    const clienteAsaasId = await this.ensureCustomerForTitular(args.titularId);
+    if (!clienteAsaasId) return null;
+
+    const referenciaExistente = await this.prisma.contaReceber.findFirst({
+      where: {
+        clienteId: args.titularId,
+        asaasSubscriptionId: { not: null },
+      },
+      orderBy: { id: 'desc' },
+      select: { asaasSubscriptionId: true },
+    });
+
+    if (referenciaExistente?.asaasSubscriptionId) {
+      return referenciaExistente.asaasSubscriptionId;
+    }
+
+    const baseDueDate = args.proximoVencimento ?? new Date();
+    const dueDate = new Date(baseDueDate);
+    dueDate.setHours(0, 0, 0, 0);
+    if (dueDate.getTime() <= Date.now()) {
+      dueDate.setDate(dueDate.getDate() + 1);
+    }
+
+    const subscription = await this.client!.createOrUpdateSubscription({
+      customer: clienteAsaasId,
+      billingType: args.billingType ?? 'PIX',
+      value: valorMensal,
+      nextDueDate: dueDate.toISOString().slice(0, 10),
+      description: args.descricao,
+      cycle: 'MONTHLY',
+      externalReference: `titular-${args.titularId}`,
+    });
+
+    const subscriptionId = (subscription?.id as string | undefined) ?? null;
+    if (!subscriptionId) {
+      return null;
+    }
+
+    await this.syncRecurringPaymentsFromProvider({ maxPages: 2, onlyOpen: true });
+
+    const contaComPayment = await this.prisma.contaReceber.findFirst({
+      where: {
+        clienteId: args.titularId,
+        asaasSubscriptionId: subscriptionId,
+      },
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+
+    if (!contaComPayment) {
+      await this.prisma.contaReceber.create({
+        data: {
+          clienteId: args.titularId,
+          descricao: args.descricao,
+          valor: valorMensal,
+          vencimento: dueDate,
+          dataVencimento: dueDate,
+          status: 'PENDENTE',
+          asaasSubscriptionId: subscriptionId,
+          metodoPagamento: args.billingType ?? 'PIX',
+        },
+      });
+    }
+
+    return subscriptionId;
+  }
+
+  async syncRecurringPaymentsFromProvider(opts?: { maxPages?: number; onlyOpen?: boolean }) {
+    if (!this.isEnabled()) {
+      return { processed: 0, inserted: 0, updated: 0 };
+    }
+
+    const maxPages = Math.max(1, Math.min(opts?.maxPages ?? 5, 20));
+    const limit = 100;
+    let offset = 0;
+    let page = 0;
+    let processed = 0;
+    let inserted = 0;
+    let updated = 0;
+
+    while (page < maxPages) {
+      const response = await this.client!.getPayments({
+        limit,
+        offset,
+      });
+      const items = Array.isArray(response?.data) ? response.data : [];
+      if (!items.length) break;
+
+      for (const payment of items) {
+        const subscriptionId = payment?.subscription as string | undefined;
+        if (!subscriptionId) continue;
+
+        const providerStatus = String(payment?.status ?? '').toUpperCase();
+        const isClosedStatus =
+          providerStatus === 'RECEIVED' ||
+          providerStatus === 'RECEIVED_IN_CASH' ||
+          providerStatus === 'CONFIRMED' ||
+          providerStatus === 'REFUNDED' ||
+          providerStatus === 'CANCELLED' ||
+          providerStatus === 'CANCELED' ||
+          providerStatus === 'DELETED';
+
+        if (opts?.onlyOpen && isClosedStatus) continue;
+
+        const paymentId = payment?.id as string | undefined;
+        const existed = paymentId
+          ? await this.prisma.contaReceber.findUnique({
+              where: { asaasPaymentId: paymentId },
+              select: { id: true },
+            })
+          : null;
+
+        const customer =
+          typeof payment?.customer === 'string'
+            ? { id: payment.customer as string }
+            : ((payment?.customer as { id?: string } | undefined) ?? undefined);
+
+        const result = await this.handleWebhook({
+          event: this.mapEventFromStatus(String(payment?.status ?? 'PENDING')),
+          dateCreated: new Date().toISOString(),
+          payment: {
+            id: payment?.id as string,
+            status: String(payment?.status ?? 'PENDING'),
+            dueDate: payment?.dueDate as string | undefined,
+            value: Number(payment?.value ?? 0),
+            description: (payment?.description as string | undefined) ?? undefined,
+            invoiceUrl:
+              (payment?.invoiceUrl as string | undefined) ??
+              (payment?.bankSlipUrl as string | undefined) ??
+              (payment?.paymentLink as string | undefined),
+            bankSlipUrl: (payment?.bankSlipUrl as string | undefined) ?? undefined,
+            pixQrCode:
+              (payment?.pixQrCode as string | undefined) ??
+              (payment?.pixQrCodeId as string | undefined),
+            pixExpirationDate: (payment?.pixExpirationDate as string | undefined) ?? undefined,
+            subscription: subscriptionId,
+            billingType: (payment?.billingType as string | undefined) ?? 'PIX',
+            customer,
+          },
+          subscription: {
+            id: subscriptionId,
+            status: String(payment?.status ?? 'PENDING'),
+            nextDueDate: (payment?.nextDueDate as string | undefined) ?? undefined,
+            value: Number(payment?.value ?? 0),
+          },
+          customer,
+        } as AsaasWebhookEvent);
+
+        processed += 1;
+        if (!existed && result.contaReceberId) inserted += 1;
+        if (existed || (!result.contaReceberId && isClosedStatus)) updated += 1;
+      }
+
+      if (items.length < limit) break;
+      offset += limit;
+      page += 1;
+    }
+
+    this.logger.info('Sincronização recorrente Asaas concluída', {
+      tenantId: this.tenantId,
+      processed,
+      inserted,
+      updated,
+    });
+
+    return { processed, inserted, updated };
+  }
+
   async refreshPaymentStatus(contaReceberId: number): Promise<ContaReceberWithCliente> {
     if (!this.isEnabled()) {
       throw new Error('Integração Asaas desabilitada para o tenant');
@@ -652,6 +834,10 @@ export class AsaasIntegrationService {
       include: { cliente: true },
     });
 
+    if (!atualizada) {
+      throw new Error('Cobrança recorrente liquidada e removida das contas a receber');
+    }
+
     return atualizada as ContaReceberWithCliente;
   }
 
@@ -699,6 +885,44 @@ export class AsaasIntegrationService {
           where: { asaasSubscriptionId: subscriptionId },
           include: { cliente: true },
         })) as ContaReceberWithCliente | null;
+      }
+
+      if (!conta && paymentId && subscriptionId) {
+        const customerId =
+          event.customer?.id ||
+          (typeof event.payment?.customer === 'string'
+            ? event.payment.customer
+            : event.payment?.customer?.id);
+        const titular = customerId
+          ? await tx.titular.findUnique({
+              where: { asaasCustomerId: customerId },
+              select: { id: true },
+            })
+          : null;
+        if (titular) {
+          conta = (await tx.contaReceber.create({
+            data: {
+              clienteId: titular.id,
+              descricao:
+                event.payment?.description ??
+                `Recorrência Asaas ${subscriptionId.slice(0, 8)}`,
+              valor: Number(event.payment?.value ?? 0),
+              vencimento: dueDate ?? new Date(),
+              dataVencimento: dueDate ?? new Date(),
+              status,
+              asaasPaymentId: paymentId,
+              asaasSubscriptionId: subscriptionId,
+              paymentUrl:
+                (event.payment as any)?.invoiceUrl ||
+                (event.payment as any)?.bankSlipUrl ||
+                undefined,
+              pixQrCode: event.payment?.pixQrCode,
+              pixExpiration: pixExpiration ?? undefined,
+              metodoPagamento: event.payment?.billingType ?? 'ASAAS',
+            },
+            include: { cliente: true },
+          })) as ContaReceberWithCliente;
+        }
       }
 
       if (conta) {
@@ -787,6 +1011,11 @@ export class AsaasIntegrationService {
               paymentId,
             };
           }
+          if (updatedConta.asaasSubscriptionId) {
+            await tx.contaReceber.delete({
+              where: { id: updatedConta.id },
+            });
+          }
         } else if (status === 'CANCELADO' && paymentId && updatedConta.clienteId) {
           await tx.pagamento.upsert({
             where: { asaasPaymentId: paymentId },
@@ -815,6 +1044,11 @@ export class AsaasIntegrationService {
               dataVencimento: updatedConta.dataVencimento ?? updatedConta.vencimento,
             },
           });
+          if (updatedConta.asaasSubscriptionId) {
+            await tx.contaReceber.delete({
+              where: { id: updatedConta.id },
+            });
+          }
         } else if (statusConfirmado && !updatedConta.clienteId) {
           this.logger.warn('Pagamento recebido sem titular vinculado', {
             tenantId: this.tenantId,

@@ -161,6 +161,18 @@ export interface FinanceiroRelatorioDTO {
   }>;
 }
 
+export interface RecorrenciaFinanceiraDTO {
+  asaasSubscriptionId: string;
+  clienteId: number | null;
+  clienteNome: string;
+  statusAtual: string;
+  valorAtual: number;
+  proximoVencimento: Date | null;
+  ultimaLiquidacao: Date | null;
+  aberto: boolean;
+  totalPagas: number;
+}
+
 export class FinanceiroService {
   private prisma;
   private asaasIntegration: AsaasIntegrationService;
@@ -1236,6 +1248,117 @@ export class FinanceiroService {
       { tipo: 'Pagamentos pendentes', total: contasPagar },
       { tipo: 'Recebimentos pendentes', total: contasReceber },
     ];
+  }
+
+  async sincronizarRecorrenciasAsaas() {
+    if (!this.asaasIntegration.isEnabled()) {
+      return { processed: 0, inserted: 0, updated: 0 };
+    }
+    return this.asaasIntegration.syncRecurringPaymentsFromProvider();
+  }
+
+  async listarRecorrencias(): Promise<RecorrenciaFinanceiraDTO[]> {
+    await this.sincronizarRecorrenciasAsaas();
+
+    const [abertas, pagas] = await Promise.all([
+      this.prisma.contaReceber.findMany({
+        where: {
+          asaasSubscriptionId: { not: null },
+        },
+        include: {
+          cliente: {
+            select: {
+              id: true,
+              nome: true,
+            },
+          },
+        },
+      }),
+      this.prisma.pagamento.findMany({
+        where: {
+          asaasSubscriptionId: { not: null },
+        },
+        include: {
+          titular: {
+            select: {
+              id: true,
+              nome: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const mapa = new Map<string, RecorrenciaFinanceiraDTO>();
+
+    for (const conta of abertas) {
+      const subscriptionId = conta.asaasSubscriptionId;
+      if (!subscriptionId) continue;
+
+      const existente = mapa.get(subscriptionId);
+      const vencimento = conta.dataVencimento ?? conta.vencimento ?? null;
+      if (!existente) {
+        mapa.set(subscriptionId, {
+          asaasSubscriptionId: subscriptionId,
+          clienteId: conta.clienteId ?? null,
+          clienteNome: conta.cliente?.nome ?? `Titular #${conta.clienteId ?? '-'}`,
+          statusAtual: conta.status,
+          valorAtual: Number(conta.valor ?? 0),
+          proximoVencimento: vencimento,
+          ultimaLiquidacao: null,
+          aberto: true,
+          totalPagas: 0,
+        });
+        continue;
+      }
+
+      if (
+        vencimento &&
+        (!existente.proximoVencimento || vencimento.getTime() < existente.proximoVencimento.getTime())
+      ) {
+        existente.proximoVencimento = vencimento;
+      }
+      existente.valorAtual = Number(conta.valor ?? existente.valorAtual);
+      existente.statusAtual = conta.status || existente.statusAtual;
+      existente.aberto = true;
+    }
+
+    for (const pagamento of pagas) {
+      const subscriptionId = pagamento.asaasSubscriptionId;
+      if (!subscriptionId) continue;
+
+      const existente = mapa.get(subscriptionId);
+      if (!existente) {
+        mapa.set(subscriptionId, {
+          asaasSubscriptionId: subscriptionId,
+          clienteId: pagamento.titularId ?? null,
+          clienteNome: pagamento.titular?.nome ?? `Titular #${pagamento.titularId}`,
+          statusAtual: pagamento.status,
+          valorAtual: Number(pagamento.valor ?? 0),
+          proximoVencimento: pagamento.dataVencimento ?? null,
+          ultimaLiquidacao: pagamento.dataPagamento ?? null,
+          aberto: false,
+          totalPagas: 1,
+        });
+        continue;
+      }
+
+      existente.totalPagas += 1;
+      if (
+        pagamento.dataPagamento &&
+        (!existente.ultimaLiquidacao ||
+          pagamento.dataPagamento.getTime() > existente.ultimaLiquidacao.getTime())
+      ) {
+        existente.ultimaLiquidacao = pagamento.dataPagamento;
+      }
+      if (!existente.aberto) {
+        existente.statusAtual = pagamento.status;
+      }
+    }
+
+    return Array.from(mapa.values()).sort((a, b) =>
+      a.clienteNome.localeCompare(b.clienteNome, 'pt-BR'),
+    );
   }
 
   async reconsultarContaReceber(id: number, usuarioId?: number): Promise<ContaFinanceiraDTO> {

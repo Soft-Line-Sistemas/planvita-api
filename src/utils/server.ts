@@ -3,6 +3,7 @@ import { Logger } from './logger';
 import config from '../config';
 import https from 'https';
 import fs from 'fs';
+import { startRecorrenciaSyncScheduler } from '../services/recorrencia-sync.scheduler';
 
 const logger = new Logger({ service: 'main' });
 let server: any;
@@ -58,6 +59,7 @@ export async function startServer(app: any): Promise<void> {
           api: `${baseUrl}/api/v1`,
           health: `${baseUrl}/health`,
         });
+        startRecorrenciaSyncScheduler();
       });
     };
 
