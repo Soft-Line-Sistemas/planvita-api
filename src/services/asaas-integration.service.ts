@@ -226,7 +226,12 @@ export class AsaasIntegrationService {
   private sanitizeCpfCnpj(value?: string | null): string | undefined {
     const digits = this.sanitizeDigits(value);
     if (!digits) return undefined;
-    if (digits.length === 11 || digits.length === 14) return digits;
+    if (digits.length === 11) {
+      return this.isValidCpf(digits) ? digits : undefined;
+    }
+    if (digits.length === 14) {
+      return this.isValidCnpj(digits) ? digits : undefined;
+    }
     return undefined;
   }
 
@@ -254,6 +259,43 @@ export class AsaasIntegrationService {
     if (!value) return undefined;
     const state = String(value).trim().toUpperCase();
     return /^[A-Z]{2}$/.test(state) ? state : undefined;
+  }
+
+  private isValidCpf(cpf: string): boolean {
+    if (!/^\d{11}$/.test(cpf)) return false;
+    if (/^(\d)\1{10}$/.test(cpf)) return false;
+
+    const calcDigit = (base: string, factor: number) => {
+      let total = 0;
+      for (const digit of base) {
+        total += Number(digit) * factor--;
+      }
+      const remainder = total % 11;
+      return remainder < 2 ? 0 : 11 - remainder;
+    };
+
+    const first = calcDigit(cpf.slice(0, 9), 10);
+    const second = calcDigit(cpf.slice(0, 9) + first.toString(), 11);
+    return cpf.endsWith(`${first}${second}`);
+  }
+
+  private isValidCnpj(cnpj: string): boolean {
+    if (!/^\d{14}$/.test(cnpj)) return false;
+    if (/^(\d)\1{13}$/.test(cnpj)) return false;
+
+    const calcDigit = (base: string, weights: number[]) => {
+      const total = base
+        .split('')
+        .reduce((sum, digit, index) => sum + Number(digit) * weights[index], 0);
+      const remainder = total % 11;
+      return remainder < 2 ? 0 : 11 - remainder;
+    };
+
+    const firstWeights = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    const secondWeights = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    const first = calcDigit(cnpj.slice(0, 12), firstWeights);
+    const second = calcDigit(cnpj.slice(0, 12) + first.toString(), secondWeights);
+    return cnpj.endsWith(`${first}${second}`);
   }
 
   private async findExistingCustomerOnAsaas(params: {
@@ -487,7 +529,29 @@ export class AsaasIntegrationService {
       externalReference,
     };
 
-    const result = await this.client!.createCustomer(payload);
+    let result: any = null;
+    try {
+      result = await this.client!.createCustomer(payload);
+    } catch (error: any) {
+      if (error?.status === 400) {
+        this.logger.warn('Falha ao criar cliente Asaas com payload completo; tentando payload mínimo', {
+          tenantId: this.tenantId,
+          titularId,
+          externalReference,
+          asaasStatus: error?.status,
+          asaasBody: error?.body,
+        });
+
+        const minimalPayload = {
+          name: payload.name,
+          email: payload.email,
+          externalReference,
+        };
+        result = await this.client!.createCustomer(minimalPayload);
+      } else {
+        throw error;
+      }
+    }
     const customerId = result?.id;
 
     if (customerId) {
@@ -641,6 +705,53 @@ export class AsaasIntegrationService {
         error: error?.message,
       });
     }
+  }
+
+  async confirmPaymentForContaReceber(contaReceberId: number): Promise<void> {
+    if (!this.isEnabled()) return;
+
+    const conta = await this.prisma.contaReceber.findUnique({
+      where: { id: contaReceberId },
+    });
+
+    if (!conta?.asaasPaymentId) return;
+
+    await this.client!.confirmCashReceipt(conta.asaasPaymentId, {
+      paymentDate: new Date().toISOString().slice(0, 10),
+      value: Number(conta.valor ?? 0),
+      notifyCustomer: false,
+    });
+
+    this.logger.info('Baixa confirmada no Asaas', {
+      contaReceberId,
+      asaasPaymentId: conta.asaasPaymentId,
+    });
+  }
+
+  async revertPaymentForContaReceber(contaReceberId: number): Promise<void> {
+    if (!this.isEnabled()) return;
+
+    const conta = await this.prisma.contaReceber.findUnique({
+      where: { id: contaReceberId },
+    });
+
+    if (!conta?.asaasPaymentId) return;
+
+    const status = String(conta.status ?? '').toUpperCase();
+    if (status === 'RECEBIDO' || status === 'PAGO' || status === 'CONFIRMADO') {
+      await this.client!.undoCashReceipt(conta.asaasPaymentId);
+      this.logger.info('Baixa desfeita no Asaas', {
+        contaReceberId,
+        asaasPaymentId: conta.asaasPaymentId,
+      });
+      return;
+    }
+
+    await this.client!.deletePayment(conta.asaasPaymentId);
+    this.logger.info('Cobrança removida no Asaas em estorno local', {
+      contaReceberId,
+      asaasPaymentId: conta.asaasPaymentId,
+    });
   }
 
   async ensureMonthlySubscriptionForTitular(args: {
