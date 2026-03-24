@@ -663,24 +663,32 @@ export class TitularService {
     };
   }
 
-  private parseBase64Image(dataUrl: string) {
-    const matches = dataUrl.match(/^data:(.+);base64,(.+)$/);
-    if (!matches) {
+  private parseBase64Image(input: string) {
+    const trimmed = (input || '').trim();
+    if (!trimmed) {
       throw Object.assign(new Error('Formato de assinatura inválido.'), { status: 400 });
     }
+
+    const matches = trimmed.match(/^data:(.+);base64,(.+)$/);
     const mimetype = matches?.[1] ?? 'image/png';
-    const payload = matches?.[2] ?? dataUrl;
+    const rawPayload = matches?.[2] ?? trimmed;
+    const payload = rawPayload.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+
     if (!ASSINATURA_ALLOWED_MIME.includes(mimetype)) {
       throw Object.assign(new Error('Tipo de arquivo de assinatura não permitido.'), { status: 400 });
-    }
-    const sizeBytes = Math.floor((payload.length * 3) / 4);
-    if (sizeBytes > ASSINATURA_MAX_BYTES) {
-      throw Object.assign(new Error('Arquivo de assinatura excede o limite de 5MB.'), { status: 400 });
     }
     if (!/^[A-Za-z0-9+/=]+$/.test(payload)) {
       throw Object.assign(new Error('Assinatura em base64 inválida.'), { status: 400 });
     }
+
     const buffer = Buffer.from(payload, 'base64');
+    if (!buffer.length) {
+      throw Object.assign(new Error('Assinatura em base64 inválida.'), { status: 400 });
+    }
+    if (buffer.length > ASSINATURA_MAX_BYTES) {
+      throw Object.assign(new Error('Arquivo de assinatura excede o limite de 5MB.'), { status: 400 });
+    }
+
     return { buffer, mimetype };
   }
 
