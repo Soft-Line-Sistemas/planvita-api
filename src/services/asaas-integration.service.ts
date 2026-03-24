@@ -856,6 +856,56 @@ export class AsaasIntegrationService {
     return result;
   }
 
+  async cancelMonthlySubscriptionForTitular(titularId: number): Promise<string> {
+    if (!this.isEnabled()) {
+      throw new Error('Integração Asaas desabilitada para o tenant');
+    }
+
+    const localRef = await this.prisma.contaReceber.findFirst({
+      where: {
+        clienteId: titularId,
+        asaasSubscriptionId: { not: null },
+      },
+      orderBy: { id: 'desc' },
+      select: { asaasSubscriptionId: true },
+    });
+
+    let subscriptionId = localRef?.asaasSubscriptionId ?? null;
+
+    if (!subscriptionId) {
+      const providerList = await this.client!.getSubscriptions({
+        externalReference: `titular-${titularId}`,
+        limit: 1,
+        offset: 0,
+      });
+      subscriptionId = (providerList?.data?.[0]?.id as string | undefined) ?? null;
+    }
+
+    if (!subscriptionId) {
+      throw new Error('Titular sem recorrência ativa no Asaas');
+    }
+
+    await this.client!.deleteSubscription(subscriptionId);
+
+    await this.prisma.contaReceber.updateMany({
+      where: {
+        clienteId: titularId,
+        asaasSubscriptionId: subscriptionId,
+      },
+      data: {
+        asaasSubscriptionId: null,
+      },
+    });
+
+    this.logger.info('Recorrência cancelada no Asaas', {
+      tenantId: this.tenantId,
+      titularId,
+      asaasSubscriptionId: subscriptionId,
+    });
+
+    return subscriptionId;
+  }
+
   async listPaymentsFromProvider(params?: {
     status?: string;
     customerId?: string;

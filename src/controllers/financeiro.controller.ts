@@ -507,13 +507,24 @@ export class FinanceiroController {
       if (Number.isNaN(titularId)) {
         return res.status(400).json({ message: 'Titular inválido' });
       }
+      const billingTypeRaw = String((req.body as any)?.billingType ?? 'PIX').toUpperCase();
+      const allowedBillingTypes = ['PIX', 'BOLETO', 'CREDIT_CARD'] as const;
+      const billingType = allowedBillingTypes.includes(
+        billingTypeRaw as (typeof allowedBillingTypes)[number],
+      )
+        ? (billingTypeRaw as 'PIX' | 'BOLETO' | 'CREDIT_CARD')
+        : null;
+      if (!billingType) {
+        return res.status(400).json({ message: 'billingType inválido' });
+      }
 
       const service = this.resolveService(req);
-      const result = await service.gerarRecorrenciaParaTitular(titularId);
+      const result = await service.gerarRecorrenciaParaTitular(titularId, billingType);
       this.logger.info('Recorrência gerada para titular existente', {
         tenant: req.tenantId,
         titularId,
         asaasSubscriptionId: result.asaasSubscriptionId,
+        billingType,
       });
       res.json(result);
     } catch (error: any) {
@@ -524,6 +535,32 @@ export class FinanceiroController {
         params: req.params,
       });
       res.status(/Titular|mensal|Asaas|tenant/i.test(message) ? 400 : 500).json({ message });
+    }
+  }
+
+  async cancelarRecorrenciaTitular(req: TenantRequest, res: Response) {
+    try {
+      const titularId = Number(req.params.titularId);
+      if (Number.isNaN(titularId)) {
+        return res.status(400).json({ message: 'Titular inválido' });
+      }
+
+      const service = this.resolveService(req);
+      const result = await service.cancelarRecorrenciaParaTitular(titularId);
+      this.logger.info('Recorrência cancelada para titular', {
+        tenant: req.tenantId,
+        titularId,
+        asaasSubscriptionId: result.asaasSubscriptionId,
+      });
+      res.json(result);
+    } catch (error: any) {
+      const message =
+        error instanceof Error && error.message ? error.message : 'Internal server error';
+      this.logger.error('Falha ao cancelar recorrência do titular', error, {
+        tenant: req.tenantId,
+        params: req.params,
+      });
+      res.status(/Titular|recorrência|Asaas|tenant/i.test(message) ? 400 : 500).json({ message });
     }
   }
 

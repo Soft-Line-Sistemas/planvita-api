@@ -1399,7 +1399,10 @@ export class FinanceiroService {
       .sort((a, b) => a.clienteNome.localeCompare(b.clienteNome, 'pt-BR'));
   }
 
-  async gerarRecorrenciaParaTitular(titularId: number) {
+  async gerarRecorrenciaParaTitular(
+    titularId: number,
+    billingType: 'PIX' | 'BOLETO' | 'CREDIT_CARD' = 'PIX',
+  ) {
     const titular = await this.prisma.titular.findUnique({
       where: { id: titularId },
       select: {
@@ -1436,6 +1439,7 @@ export class FinanceiroService {
       titularId: titular.id,
       valorMensal,
       descricao: `Mensalidade Plano - ${titular.nome}`,
+      billingType,
     });
 
     await this.sincronizarRecorrenciasAsaas();
@@ -1443,6 +1447,27 @@ export class FinanceiroService {
     return {
       titularId: titular.id,
       asaasSubscriptionId: subscriptionId,
+      billingType,
+    };
+  }
+
+  async cancelarRecorrenciaParaTitular(titularId: number) {
+    const titular = await this.prisma.titular.findUnique({
+      where: { id: titularId },
+      select: { id: true },
+    });
+    if (!titular) {
+      throw new Error('Titular não encontrado');
+    }
+
+    const subscriptionId =
+      await this.asaasIntegration.cancelMonthlySubscriptionForTitular(titularId);
+    await this.sincronizarRecorrenciasAsaas();
+
+    return {
+      titularId,
+      asaasSubscriptionId: subscriptionId,
+      cancelled: true,
     };
   }
 

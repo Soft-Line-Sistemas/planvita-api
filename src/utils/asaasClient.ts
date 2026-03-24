@@ -190,6 +190,12 @@ export class AsaasClient {
     return this.request<AsaasPagedResponse<any>>('GET', '/subscriptions', undefined, { params });
   }
 
+  async deleteSubscription(id: string) {
+    return this.request<any>('DELETE', `/subscriptions/${id}`, undefined, {
+      context: { subscriptionId: id },
+    });
+  }
+
   validateWebhookSignature(rawBody: string | Buffer, signature?: string | null): boolean {
     if (!signature || !this.credentials.webhookSecret) return false;
     const computed = crypto
