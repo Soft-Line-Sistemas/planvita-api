@@ -715,15 +715,7 @@ export class FinanceiroService {
     if (!contaExistente) throw new Error("Conta não encontrada");
 
     if (contaExistente?.asaasPaymentId) {
-      this.logger.warn(
-        'Baixa manual em cobrança integrada ao Asaas',
-        {
-          contaReceberId: id,
-          tenantId: this.tenantId,
-          asaasPaymentId: contaExistente.asaasPaymentId,
-          usuarioId,
-        },
-      );
+      await this.asaasIntegration.confirmPaymentForContaReceber(id);
     }
 
     const includeCliente = {
@@ -798,12 +790,7 @@ export class FinanceiroService {
     if (!contaExistente) throw new Error("Conta não encontrada");
 
     if (contaExistente?.asaasPaymentId) {
-      this.logger.warn('Estorno manual em cobrança integrada ao Asaas', {
-        contaReceberId: id,
-        tenantId: this.tenantId,
-        asaasPaymentId: contaExistente.asaasPaymentId,
-        usuarioId,
-      });
+      await this.asaasIntegration.revertPaymentForContaReceber(id);
     }
 
     const conta = await this.prisma.contaReceber.update({

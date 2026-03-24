@@ -159,6 +159,21 @@ export class AsaasClient {
     });
   }
 
+  async confirmCashReceipt(
+    id: string,
+    payload?: { paymentDate?: string; value?: number; notifyCustomer?: boolean },
+  ) {
+    return this.request<any>('POST', `/payments/${id}/receiveInCash`, payload ?? {}, {
+      context: { paymentId: id },
+    });
+  }
+
+  async undoCashReceipt(id: string) {
+    return this.request<any>('POST', `/payments/${id}/undoReceivedInCash`, {}, {
+      context: { paymentId: id },
+    });
+  }
+
   async getPayments(params: Record<string, string | number | boolean | undefined> = {}) {
     return this.request<AsaasPagedResponse<any>>('GET', '/payments', undefined, { params });
   }
@@ -301,6 +316,8 @@ export class AsaasClient {
         method,
         tenantId: this.tenantId,
         requestId: this.requestId,
+        asaasStatus: error?.status,
+        asaasBody: error?.body,
         ...context,
       });
       throw error;
