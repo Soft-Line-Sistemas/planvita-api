@@ -29,5 +29,9 @@ router.post(
   '/recorrencias/titular/:titularId/gerar',
   controller.gerarRecorrenciaTitular.bind(controller),
 );
+router.post(
+  '/recorrencias/titular/:titularId/cancelar',
+  controller.cancelarRecorrenciaTitular.bind(controller),
+);
 
 export default router;
