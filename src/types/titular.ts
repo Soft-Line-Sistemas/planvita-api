@@ -7,6 +7,8 @@ export interface CadastroTitularRequest {
     telefone: string;
     whatsapp: string;
     email: string;
+    situacaoConjugal: string;
+    profissao: string;
   };
   step2: {
     cep: string;
@@ -27,6 +29,8 @@ export interface CadastroTitularRequest {
     email?: string;
     telefone?: string;
     whatsapp?: string;
+    situacaoConjugal?: string;
+    profissao?: string;
   };
   dependentes: {
     nome: string;
