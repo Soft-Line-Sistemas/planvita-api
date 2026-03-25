@@ -109,6 +109,9 @@ model Titular {
   email           String           @unique
   telefone        String?
   dataNascimento  DateTime
+  sexo            String?
+  rg              String?
+  naturalidade    String?
   situacaoConjugal String?
   profissao       String?
   statusPlano     String
@@ -123,6 +126,7 @@ model Titular {
   logradouro String?
   complemento String?
   numero      String?
+  pontoReferencia String?
 
   dependentes     Dependente[]
   corresponsaveis Corresponsavel[]
@@ -223,8 +227,19 @@ model Corresponsavel {
   email          String
   telefone       String?
   relacionamento String
+  sexo           String?
+  rg             String?
+  naturalidade   String?
   situacaoConjugal String?
   profissao       String?
+  cep       String?
+  uf        String?
+  cidade    String?
+  bairro    String?
+  logradouro String?
+  complemento String?
+  numero      String?
+  pontoReferencia String?
 
   autorizacoesLegais AutorizacaoLegal[] @relation("CorresponsavelToAutorizacaoLegal")
 }

@@ -413,10 +413,14 @@ export class TitularService {
     const cpf = step1.cpf.replace(/\D/g, '');
     const situacaoConjugal = String(step1.situacaoConjugal ?? '').trim();
     const profissao = String(step1.profissao ?? '').trim();
+    const sexo = String(step1.sexo ?? '').trim();
+    const rg = String(step1.rg ?? '').trim();
+    const naturalidade = String(step1.naturalidade ?? '').trim();
+    const pontoReferenciaTitular = String(step2?.pontoReferencia ?? '').trim();
 
-    if (!situacaoConjugal || !profissao) {
+    if (!situacaoConjugal || !profissao || !sexo || !rg || !naturalidade) {
       throw Object.assign(
-        new Error('Situação conjugal e profissão são obrigatórios'),
+        new Error('Sexo, RG, Naturalidade, Situação conjugal e Profissão são obrigatórios'),
         { status: 400 },
       );
     }
@@ -452,6 +456,17 @@ export class TitularService {
           relacionamento: 'Titular',
           situacaoConjugal,
           profissao,
+          sexo,
+          rg,
+          naturalidade,
+          cep: step2.cep,
+          uf: step2.uf,
+          cidade: step2.cidade,
+          bairro: step2.bairro,
+          logradouro: step2.logradouro,
+          complemento: step2.complemento,
+          numero: step2.numero,
+          pontoReferencia: pontoReferenciaTitular,
         }
       : {
           nome: step3.nomeCompleto || 'Sem nome',
@@ -460,11 +475,27 @@ export class TitularService {
           relacionamento: step3.parentesco || 'Outro',
           situacaoConjugal: String(step3.situacaoConjugal ?? '').trim(),
           profissao: String(step3.profissao ?? '').trim(),
+          sexo: String(step3.sexo ?? '').trim(),
+          rg: String(step3.rg ?? '').trim(),
+          naturalidade: String(step3.naturalidade ?? '').trim(),
+          cep: String(step3.cep ?? '').trim(),
+          uf: String(step3.uf ?? '').trim(),
+          cidade: String(step3.cidade ?? '').trim(),
+          bairro: String(step3.bairro ?? '').trim(),
+          logradouro: String(step3.logradouro ?? '').trim(),
+          complemento: String(step3.complemento ?? '').trim(),
+          numero: String(step3.numero ?? '').trim(),
+          pontoReferencia: String(step3.pontoReferencia ?? '').trim(),
         };
 
     if (!usarMesmosDados) {
-      if (!corresponsavelData.situacaoConjugal || !corresponsavelData.profissao) {
-        const err: any = new Error('Situação conjugal e profissão do corresponsável são obrigatórios.');
+      if (
+        !corresponsavelData.situacaoConjugal ||
+        !corresponsavelData.profissao ||
+        !corresponsavelData.sexo ||
+        !corresponsavelData.naturalidade
+      ) {
+        const err: any = new Error('Sexo, Naturalidade, Situação conjugal e profissão do responsável financeiro são obrigatórios.');
         err.status = 400;
         err.code = 'CORRESPONSAVEL_CAMPOS_OBRIGATORIOS';
         throw err;
@@ -516,6 +547,9 @@ export class TitularService {
             dataNascimento: new Date(step1.dataNascimento),
             situacaoConjugal,
             profissao,
+            sexo,
+            rg,
+            naturalidade,
             statusPlano: 'ATIVO',
             dataContratacao: new Date(),
             cpf,
@@ -526,6 +560,7 @@ export class TitularService {
             logradouro: step2.logradouro,
             complemento: step2.complemento,
             numero: step2.numero,
+            pontoReferencia: pontoReferenciaTitular,
             plano: planoIdSelecionado
               ? {
                   connect: {
