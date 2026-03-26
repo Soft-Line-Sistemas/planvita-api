@@ -8,6 +8,9 @@ export interface NotificationPayload {
   channel: NotificationChannel;
   subject?: string;
   message: string;
+  text?: string;
+  html?: string;
+  phone?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -74,6 +77,13 @@ export class NotificationApiClient {
           ? '/notifications/whatsapp'
           : '/notifications';
     const url = `${base}${path}`;
+    const requestBody =
+      payload.channel === 'email'
+        ? {
+            ...payload,
+            text: payload.text ?? payload.message,
+          }
+        : payload;
 
     try {
       const response = await fetch(url, {
@@ -82,7 +92,7 @@ export class NotificationApiClient {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
