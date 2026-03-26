@@ -401,13 +401,25 @@ export class TitularService {
     const { step1, step2, step3, dependentes, step5 } = data;
 
     // --- Validações básicas ---
-    if (!step1.email || !step1.cpf) {
-      throw Object.assign(new Error('Email e CPF são obrigatórios'), { status: 400 });
+    if (!step1.email || !step1.cpf || !step1.situacaoConjugal || !step1.profissao) {
+      throw Object.assign(
+        new Error('Email, CPF, situação conjugal e profissão são obrigatórios'),
+        { status: 400 },
+      );
     }
 
     // Normaliza email e CPF
     const email = step1.email.trim().toLowerCase();
     const cpf = step1.cpf.replace(/\D/g, '');
+    const situacaoConjugal = String(step1.situacaoConjugal ?? '').trim();
+    const profissao = String(step1.profissao ?? '').trim();
+
+    if (!situacaoConjugal || !profissao) {
+      throw Object.assign(
+        new Error('Situação conjugal e profissão são obrigatórios'),
+        { status: 400 },
+      );
+    }
 
     // --- Verifica duplicidade ---
     const existente = await this.prisma.titular.findFirst({
@@ -438,13 +450,26 @@ export class TitularService {
           email: email,
           telefone: step1.telefone,
           relacionamento: 'Titular',
+          situacaoConjugal,
+          profissao,
         }
       : {
           nome: step3.nomeCompleto || 'Sem nome',
           email: (step3.email || '').trim().toLowerCase(),
           telefone: step3.telefone,
           relacionamento: step3.parentesco || 'Outro',
+          situacaoConjugal: String(step3.situacaoConjugal ?? '').trim(),
+          profissao: String(step3.profissao ?? '').trim(),
         };
+
+    if (!usarMesmosDados) {
+      if (!corresponsavelData.situacaoConjugal || !corresponsavelData.profissao) {
+        const err: any = new Error('Situação conjugal e profissão do corresponsável são obrigatórios.');
+        err.status = 400;
+        err.code = 'CORRESPONSAVEL_CAMPOS_OBRIGATORIOS';
+        throw err;
+      }
+    }
 
     // --- Monta dependentes ---
     const dependentesData = dependentes?.map((dep) => ({
@@ -489,6 +514,8 @@ export class TitularService {
             email,
             telefone: step1.telefone,
             dataNascimento: new Date(step1.dataNascimento),
+            situacaoConjugal,
+            profissao,
             statusPlano: 'ATIVO',
             dataContratacao: new Date(),
             cpf,

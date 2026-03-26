@@ -109,6 +109,8 @@ model Titular {
   email           String           @unique
   telefone        String?
   dataNascimento  DateTime
+  situacaoConjugal String?
+  profissao       String?
   statusPlano     String
   dataContratacao DateTime
   asaasCustomerId String?          @unique
@@ -221,6 +223,8 @@ model Corresponsavel {
   email          String
   telefone       String?
   relacionamento String
+  situacaoConjugal String?
+  profissao       String?
 
   autorizacoesLegais AutorizacaoLegal[] @relation("CorresponsavelToAutorizacaoLegal")
 }
