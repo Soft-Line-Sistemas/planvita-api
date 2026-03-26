@@ -146,7 +146,7 @@ export class AuthController {
   async firstAccess(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
-      const { verificationToken, token, password, login, titularId } = req.body ?? {};
+      const { verificationToken, token, password, login, titularId, channel } = req.body ?? {};
 
       const auth = new ClienteAuthService(req.tenantId);
 
@@ -167,12 +167,12 @@ export class AuthController {
           return res.status(403).json({ message: 'Ação permitida apenas para admin/consultor autenticado.' });
         }
 
-        const start = await auth.startFirstAccessByTitularId(Number(titularId));
+        const start = await auth.startFirstAccessByTitularId(Number(titularId), channel);
         return res.json({ message: 'Enviamos um código para primeiro acesso.', start });
       }
 
       if (login) {
-        const start = await auth.startFirstAccessByLogin(String(login));
+        const start = await auth.startFirstAccessByLogin(String(login), channel);
         return res.json({ message: 'Enviamos um código para primeiro acesso.', start });
       }
 
