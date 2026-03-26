@@ -1,9 +1,9 @@
 {
   "titular": ["titular", "responsavel", "responsável", "contratante"],
   "conjuge": ["conjuge", "cônjuge", "esposa", "esposo", "marido", "companheira", "companheiro", "parceira", "parceiro"],
-  "filho": ["filho", "filha", "filho(a)", "enteado", "enteada", "menor", "crianca", "criança"],
-  "pai": ["pai", "genitor", "padrasto", "sogro"],
-  "mae": ["mae", "mãe", "genitora", "madrasta", "sogra"],
+  "filho": ["filho", "filha", "filho(a)", "enteado", "enteada", "enteado(a)", "menor", "crianca", "criança"],
+  "pai": ["pai", "genitor", "padrasto", "sogro", "sogro(a)"],
+  "mae": ["mae", "mãe", "genitora", "madrasta", "sogra", "sogro(a)"],
   "irmao": ["irmao", "irmão", "irma", "irmã", "irmão(ã)"],
   "avo": ["avo", "avô", "avó", "avô/avó", "avos", "avós", "bisavo", "bisavô", "bisavoa", "bisavó"],
   "neto": ["neto", "neta", "neto(a)", "bisneto", "bisneta"],
