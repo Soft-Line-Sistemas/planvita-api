@@ -129,7 +129,10 @@ export class ClienteAuthService {
     return { titularId: titular.id, start };
   }
 
-  async startFirstAccessByLogin(loginRaw: string): Promise<AuthStartResult> {
+  async startFirstAccessByLogin(
+    loginRaw: string,
+    requestedChannelRaw?: unknown,
+  ): Promise<AuthStartResult> {
     const titular = await this.findTitularByLogin(loginRaw);
     if (!titular) {
       const err: any = new Error('Cliente não encontrado.');
@@ -139,11 +142,15 @@ export class ClienteAuthService {
 
     await this.ensureCredential(titular.id);
     const linkToken = await this.createToken('FIRST_ACCESS_LINK', titular.id, 'FIRST_ACCESS');
-    const start = await this.startOtp(titular.id, this.resolvePreferredChannel(titular), 'FIRST_ACCESS', linkToken);
+    const channel = this.resolveChannel(titular, requestedChannelRaw);
+    const start = await this.startOtp(titular.id, channel, 'FIRST_ACCESS', linkToken);
     return start;
   }
 
-  async startFirstAccessByTitularId(titularId: number): Promise<AuthStartResult> {
+  async startFirstAccessByTitularId(
+    titularId: number,
+    requestedChannelRaw?: unknown,
+  ): Promise<AuthStartResult> {
     const titular = await this.prisma.titular.findUnique({
       where: { id: titularId },
       select: { id: true, email: true, telefone: true, metodoNotificacaoRecorrente: true },
@@ -157,7 +164,8 @@ export class ClienteAuthService {
 
     await this.ensureCredential(titular.id);
     const linkToken = await this.createToken('FIRST_ACCESS_LINK', titular.id, 'FIRST_ACCESS');
-    const start = await this.startOtp(titular.id, this.resolvePreferredChannel(titular), 'FIRST_ACCESS', linkToken);
+    const channel = this.resolveChannel(titular, requestedChannelRaw);
+    const start = await this.startOtp(titular.id, channel, 'FIRST_ACCESS', linkToken);
     return start;
   }
 
@@ -176,7 +184,7 @@ export class ClienteAuthService {
   }
 
   async verifyOtp(loginRawOrToken: string, otp: string, purpose: OtpPurpose): Promise<VerifyResult> {
-    const { titularId, channel } = await this.resolveTitularForOtp(loginRawOrToken, purpose);
+    const { titularId } = await this.resolveTitularForOtp(loginRawOrToken, purpose);
 
     const otpRecord = await (this.prisma as any).titularOtp.findFirst({
       where: {
@@ -217,6 +225,7 @@ export class ClienteAuthService {
     });
 
     await this.ensureCredential(titularId);
+    const channel = String(otpRecord.channel ?? '').toLowerCase() === 'whatsapp' ? 'whatsapp' : 'email';
     await this.markVerifiedChannel(titularId, channel);
 
     const tokenType = purpose === 'RESET_PASSWORD' ? 'VERIFY_RESET_PASSWORD' : 'VERIFY_FIRST_ACCESS';
@@ -319,6 +328,41 @@ export class ClienteAuthService {
     return canWhatsapp ? 'whatsapp' : config.notification.defaultMethod;
   }
 
+  private resolveChannel(
+    titular: { email?: string | null; telefone?: string | null; metodoNotificacaoRecorrente?: string | null },
+    requestedChannelRaw?: unknown,
+  ): NotificationChannel {
+    const requestedChannel = String(requestedChannelRaw ?? '').trim().toLowerCase();
+    const canWhatsapp = Boolean(titular.telefone && titular.telefone.trim().length >= 8);
+    const canEmail = Boolean(titular.email && titular.email.includes('@'));
+
+    if (!requestedChannel) {
+      return this.resolvePreferredChannel(titular);
+    }
+
+    if (requestedChannel === 'whatsapp') {
+      if (!canWhatsapp) {
+        const err: any = new Error('Não há telefone válido para envio via WhatsApp.');
+        err.status = 400;
+        throw err;
+      }
+      return 'whatsapp';
+    }
+
+    if (requestedChannel === 'email') {
+      if (!canEmail) {
+        const err: any = new Error('Não há e-mail válido para envio.');
+        err.status = 400;
+        throw err;
+      }
+      return 'email';
+    }
+
+    const err: any = new Error('Canal inválido. Use "email" ou "whatsapp".');
+    err.status = 400;
+    throw err;
+  }
+
   private async ensureCredential(titularId: number) {
     await (this.prisma as any).titularCredential.upsert({
       where: { titularId },
@@ -391,7 +435,7 @@ export class ClienteAuthService {
     return url.toString();
   }
 
-  private async resolveTitularForOtp(loginOrToken: string, purpose: OtpPurpose): Promise<{ titularId: number; channel: NotificationChannel }> {
+  private async resolveTitularForOtp(loginOrToken: string, purpose: OtpPurpose): Promise<{ titularId: number }> {
     const value = String(loginOrToken ?? '').trim();
     const isLikelyToken = value.length >= 32 && value.includes('-');
     if (isLikelyToken) {
@@ -412,7 +456,7 @@ export class ClienteAuthService {
         err.status = 404;
         throw err;
       }
-      return { titularId: token.titularId, channel: this.resolvePreferredChannel(titular) };
+      return { titularId: token.titularId };
     }
 
     const titular = await this.findTitularByLogin(value);
@@ -421,7 +465,7 @@ export class ClienteAuthService {
       err.status = 404;
       throw err;
     }
-    return { titularId: titular.id, channel: this.resolvePreferredChannel(titular) };
+    return { titularId: titular.id };
   }
 
   private async markVerifiedChannel(titularId: number, channel: NotificationChannel) {

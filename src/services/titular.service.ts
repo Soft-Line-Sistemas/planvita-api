@@ -401,13 +401,29 @@ export class TitularService {
     const { step1, step2, step3, dependentes, step5 } = data;
 
     // --- Validações básicas ---
-    if (!step1.email || !step1.cpf) {
-      throw Object.assign(new Error('Email e CPF são obrigatórios'), { status: 400 });
+    if (!step1.email || !step1.cpf || !step1.situacaoConjugal || !step1.profissao) {
+      throw Object.assign(
+        new Error('Email, CPF, situação conjugal e profissão são obrigatórios'),
+        { status: 400 },
+      );
     }
 
     // Normaliza email e CPF
     const email = step1.email.trim().toLowerCase();
     const cpf = step1.cpf.replace(/\D/g, '');
+    const situacaoConjugal = String(step1.situacaoConjugal ?? '').trim();
+    const profissao = String(step1.profissao ?? '').trim();
+    const sexo = String(step1.sexo ?? '').trim();
+    const rg = String(step1.rg ?? '').trim();
+    const naturalidade = String(step1.naturalidade ?? '').trim();
+    const pontoReferenciaTitular = String(step2?.pontoReferencia ?? '').trim();
+
+    if (!situacaoConjugal || !profissao || !sexo || !rg || !naturalidade) {
+      throw Object.assign(
+        new Error('Sexo, RG, Naturalidade, Situação conjugal e Profissão são obrigatórios'),
+        { status: 400 },
+      );
+    }
 
     // --- Verifica duplicidade ---
     const existente = await this.prisma.titular.findFirst({
@@ -438,13 +454,53 @@ export class TitularService {
           email: email,
           telefone: step1.telefone,
           relacionamento: 'Titular',
+          situacaoConjugal,
+          profissao,
+          sexo,
+          rg,
+          naturalidade,
+          cep: step2.cep,
+          uf: step2.uf,
+          cidade: step2.cidade,
+          bairro: step2.bairro,
+          logradouro: step2.logradouro,
+          complemento: step2.complemento,
+          numero: step2.numero,
+          pontoReferencia: pontoReferenciaTitular,
         }
       : {
           nome: step3.nomeCompleto || 'Sem nome',
           email: (step3.email || '').trim().toLowerCase(),
           telefone: step3.telefone,
           relacionamento: step3.parentesco || 'Outro',
+          situacaoConjugal: String(step3.situacaoConjugal ?? '').trim(),
+          profissao: String(step3.profissao ?? '').trim(),
+          sexo: String(step3.sexo ?? '').trim(),
+          rg: String(step3.rg ?? '').trim(),
+          naturalidade: String(step3.naturalidade ?? '').trim(),
+          cep: String(step3.cep ?? '').trim(),
+          uf: String(step3.uf ?? '').trim(),
+          cidade: String(step3.cidade ?? '').trim(),
+          bairro: String(step3.bairro ?? '').trim(),
+          logradouro: String(step3.logradouro ?? '').trim(),
+          complemento: String(step3.complemento ?? '').trim(),
+          numero: String(step3.numero ?? '').trim(),
+          pontoReferencia: String(step3.pontoReferencia ?? '').trim(),
         };
+
+    if (!usarMesmosDados) {
+      if (
+        !corresponsavelData.situacaoConjugal ||
+        !corresponsavelData.profissao ||
+        !corresponsavelData.sexo ||
+        !corresponsavelData.naturalidade
+      ) {
+        const err: any = new Error('Sexo, Naturalidade, Situação conjugal e profissão do responsável financeiro são obrigatórios.');
+        err.status = 400;
+        err.code = 'CORRESPONSAVEL_CAMPOS_OBRIGATORIOS';
+        throw err;
+      }
+    }
 
     // --- Monta dependentes ---
     const dependentesData = dependentes?.map((dep) => ({
@@ -489,6 +545,11 @@ export class TitularService {
             email,
             telefone: step1.telefone,
             dataNascimento: new Date(step1.dataNascimento),
+            situacaoConjugal,
+            profissao,
+            sexo,
+            rg,
+            naturalidade,
             statusPlano: 'ATIVO',
             dataContratacao: new Date(),
             cpf,
@@ -499,6 +560,7 @@ export class TitularService {
             logradouro: step2.logradouro,
             complemento: step2.complemento,
             numero: step2.numero,
+            pontoReferencia: pontoReferenciaTitular,
             plano: planoIdSelecionado
               ? {
                   connect: {

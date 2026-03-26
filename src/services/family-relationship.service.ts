@@ -85,9 +85,53 @@ export const isRelationshipInGrade = (
   dependentRelationship: string | null | undefined,
   planBeneficiaries: Array<string | null | undefined>,
 ): boolean => {
-  const beneficiarios = normalizeRelationshipSet(planBeneficiaries);
-  if (beneficiarios.size === 0) return true;
-
   const normalizedDependent = canonicalizeRelationship(dependentRelationship);
-  return beneficiarios.has(normalizedDependent);
+  const rawBeneficiaries = planBeneficiaries
+    .map((value) => String(value ?? '').trim())
+    .filter((value) => value.length > 0);
+
+  if (rawBeneficiaries.length === 0) return true;
+
+  const matchesGroupedBeneficiary = (rawBeneficiary: string): boolean => {
+    const normalizedBeneficiary = normalizeText(rawBeneficiary);
+
+    if (
+      normalizedBeneficiary.includes('pai e mae') ||
+      normalizedBeneficiary.includes('mae e pai')
+    ) {
+      return normalizedDependent === 'pai' || normalizedDependent === 'mae';
+    }
+
+    if (normalizedBeneficiary.includes('filhos e netos')) {
+      return normalizedDependent === 'filho' || normalizedDependent === 'neto';
+    }
+
+    if (normalizedBeneficiary.includes('neto e bisnetos')) {
+      return normalizedDependent === 'neto';
+    }
+
+    if (normalizedBeneficiary.includes('sobrinhos ate 50 anos')) {
+      return normalizedDependent === 'sobrinho';
+    }
+
+    if (normalizedBeneficiary.includes('esposo a ate 55 anos')) {
+      return normalizedDependent === 'conjuge';
+    }
+
+    if (normalizedBeneficiary.includes('filhos')) {
+      return normalizedDependent === 'filho';
+    }
+
+    if (normalizedBeneficiary.includes('irmaos')) {
+      return normalizedDependent === 'irmao';
+    }
+
+    return false;
+  };
+
+  return rawBeneficiaries.some((beneficiary) => {
+    const canonicalBeneficiary = canonicalizeRelationship(beneficiary);
+    if (canonicalBeneficiary === normalizedDependent) return true;
+    return matchesGroupedBeneficiary(beneficiary);
+  });
 };

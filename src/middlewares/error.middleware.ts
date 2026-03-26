@@ -41,48 +41,28 @@ export function errorHandler(
   // Handle validation errors
   if (isValidationError(error)) {
     return res.status(400).json(
-      createErrorResponse(
-        'VALIDATION_ERROR',
-        error.message,
-        error.details,
-        { requestId }
-      )
+      createErrorResponse('ERRO_VALIDACAO', error.message || 'Falha na validação dos dados', error.details, { requestId })
     );
   }
 
   // Handle authentication errors
   if (isAuthenticationError(error)) {
     return res.status(401).json(
-      createErrorResponse(
-        'AUTH_001',
-        error.message,
-        undefined,
-        { requestId }
-      )
+      createErrorResponse('AUTH_001', error.message || 'Não autenticado', undefined, { requestId })
     );
   }
 
   // Handle database errors
   if (error instanceof DatabaseError) {
     return res.status(500).json(
-      createErrorResponse(
-        'DATABASE_ERROR',
-        'Database operation failed',
-        process.env.NODE_ENV === 'development' ? error.details : undefined,
-        { requestId }
-      )
+      createErrorResponse('ERRO_BANCO_DADOS', 'Falha na operação com o banco de dados', process.env.NODE_ENV === 'development' ? error.details : undefined, { requestId })
     );
   }
 
   // Handle configuration errors
   if (error instanceof ConfigurationError) {
     return res.status(500).json(
-      createErrorResponse(
-        'CONFIGURATION_ERROR',
-        'Service configuration error',
-        process.env.NODE_ENV === 'development' ? error.details : undefined,
-        { requestId }
-      )
+      createErrorResponse('ERRO_CONFIGURACAO', 'Erro de configuração do serviço', process.env.NODE_ENV === 'development' ? error.details : undefined, { requestId })
     );
   }
 
@@ -95,12 +75,7 @@ export function errorHandler(
     }));
 
     return res.status(400).json(
-      createErrorResponse(
-        'VALIDATION_ERROR',
-        'Request validation failed',
-        { errors: validationErrors },
-        { requestId }
-      )
+      createErrorResponse('ERRO_VALIDACAO', 'Falha na validação da requisição', { errors: validationErrors }, { requestId })
     );
   }
 
@@ -113,33 +88,21 @@ export function errorHandler(
   if (error.status || error.statusCode) {
     const statusCode = error.status || error.statusCode;
     return res.status(statusCode).json(
-      createErrorResponse(
-        `HTTP_${statusCode}`,
-        error.message || 'HTTP error occurred',
-        process.env.NODE_ENV === 'development' ? error.stack : undefined,
-        { requestId }
-      )
+      createErrorResponse(`HTTP_${statusCode}`, error.message || 'Erro HTTP', process.env.NODE_ENV === 'development' ? error.stack : undefined, { requestId })
     );
   }
 
   // Handle syntax errors (malformed JSON, etc.)
   if (error instanceof SyntaxError && 'body' in error) {
     return res.status(400).json(
-      createErrorResponse(
-        'SYNTAX_ERROR',
-        'Invalid JSON in request body',
-        undefined,
-        { requestId }
-      )
+      createErrorResponse('ERRO_SINTAXE', 'JSON inválido no corpo da requisição', undefined, { requestId })
     );
   }
 
   // Handle generic errors
   const statusCode = 500;
-  const errorCode = 'INTERNAL_ERROR';
-  const message = process.env.NODE_ENV === 'production' 
-    ? 'An internal error occurred' 
-    : error.message || 'Unknown error occurred';
+  const errorCode = 'ERRO_INTERNO';
+  const message = process.env.NODE_ENV === 'production' ? 'Erro interno no servidor' : error.message || 'Erro desconhecido'
 
   res.status(statusCode).json(
     createErrorResponse(
@@ -162,88 +125,43 @@ function handlePrismaError(error: any, req: AuthenticatedRequest, res: Response)
     case 'P2002':
       // Unique constraint violation
       return res.status(409).json(
-        createErrorResponse(
-          'DUPLICATE_ENTRY',
-          'A record with this data already exists',
-          { 
-            fields: error.meta?.target,
-            constraint: error.meta?.constraint
-          },
-          { requestId }
-        )
+      createErrorResponse('REGISTRO_DUPLICADO', 'Já existe um registro com estes dados', { fields: error.meta?.target, constraint: error.meta?.constraint }, { requestId })
       );
 
     case 'P2025':
       // Record not found
       return res.status(404).json(
-        createErrorResponse(
-          'RECORD_NOT_FOUND',
-          'The requested record was not found',
-          { cause: error.meta?.cause },
-          { requestId }
-        )
+      createErrorResponse('REGISTRO_NAO_ENCONTRADO', 'Registro não encontrado', { cause: error.meta?.cause }, { requestId })
       );
 
     case 'P2003':
       // Foreign key constraint violation
       return res.status(400).json(
-        createErrorResponse(
-          'FOREIGN_KEY_VIOLATION',
-          'Referenced record does not exist',
-          { 
-            field: error.meta?.field_name,
-            constraint: error.meta?.constraint
-          },
-          { requestId }
-        )
+      createErrorResponse('VIOLACAO_CHAVE_ESTRANGEIRA', 'Registro referenciado não existe', { field: error.meta?.field_name, constraint: error.meta?.constraint }, { requestId })
       );
 
     case 'P2014':
       // Required relation violation
       return res.status(400).json(
-        createErrorResponse(
-          'REQUIRED_RELATION_VIOLATION',
-          'Required related record is missing',
-          { relation: error.meta?.relation_name },
-          { requestId }
-        )
+      createErrorResponse('RELACAO_OBRIGATORIA_AUSENTE', 'Registro relacionado obrigatório está ausente', { relation: error.meta?.relation_name }, { requestId })
       );
 
     case 'P1001':
       // Database unreachable
       return res.status(503).json(
-        createErrorResponse(
-          'DATABASE_UNREACHABLE',
-          'Database is currently unavailable',
-          undefined,
-          { requestId }
-        )
+      createErrorResponse('BANCO_INDISPONIVEL', 'Banco de dados indisponível', undefined, { requestId })
       );
 
     case 'P1008':
       // Timeout
       return res.status(504).json(
-        createErrorResponse(
-          'DATABASE_TIMEOUT',
-          'Database operation timed out',
-          undefined,
-          { requestId }
-        )
+      createErrorResponse('TEMPO_ESGOTADO', 'Tempo excedido na operação de banco de dados', undefined, { requestId })
       );
 
     default:
       // Generic Prisma error
       return res.status(500).json(
-        createErrorResponse(
-          'DATABASE_ERROR',
-          'Database operation failed',
-          process.env.NODE_ENV === 'development' ? {
-            code: error.code,
-            message: error.message,
-            meta: error.meta
-          } : undefined,
-          { requestId }
-        )
+      createErrorResponse('ERRO_BANCO_DADOS', 'Falha na operação com o banco de dados', process.env.NODE_ENV === 'development' ? { code: error.code, message: error.message, meta: error.meta } : undefined, { requestId })
       );
   }
 }
@@ -257,7 +175,7 @@ export function notFoundHandler(
  const authenticatedReq = req as unknown as  AuthenticatedRequest;
   const requestId = authenticatedReq.requestId || 'unknown';
   
-  logger.warn('Route not found', {
+  logger.warn('Rota não encontrada', {
     requestId,
     method: req.method,
     url: req.url,
@@ -265,19 +183,7 @@ export function notFoundHandler(
   });
 
   res.status(404).json(
-    createErrorResponse(
-      'ROUTE_NOT_FOUND',
-      `Route ${req.method} ${req.url} not found`,
-      {
-        method: req.method,
-        url: req.url,
-        availableEndpoints: [
-          `GET /health`
-          // `GET /api/${API_VERSION}/`,
-        ]
-      },
-      { requestId }
-    )
+    createErrorResponse('ROTA_NAO_ENCONTRADA', `Rota ${req.method} ${req.url} não encontrada`, { method: req.method, url: req.url, availableEndpoints: [`GET /health`] }, { requestId })
   );
 }
 
