@@ -26,6 +26,68 @@ export class DependenteService {
     return this.prisma.dependente.findUnique({ where: { id: Number(id) } });
   }
 
+  private invalidDateError(): Error {
+    const err: any = new Error(
+      'dataNascimento inválida. Use formato YYYY-MM-DD ou ISO-8601 completo.',
+    );
+    err.status = 400;
+    return err;
+  }
+
+  private parseDataNascimento(value: unknown): Date {
+    if (value instanceof Date) {
+      if (Number.isNaN(value.getTime())) throw this.invalidDateError();
+      return value;
+    }
+
+    if (typeof value !== 'string') throw this.invalidDateError();
+
+    const normalized = value.trim();
+    if (!normalized) throw this.invalidDateError();
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      return new Date(`${normalized}T00:00:00.000Z`);
+    }
+
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) throw this.invalidDateError();
+    return parsed;
+  }
+
+  private normalizeCreateInput(data: DependenteCreateInput): DependenteCreateInput {
+    return {
+      ...data,
+      dataNascimento: this.parseDataNascimento((data as any)?.dataNascimento),
+    };
+  }
+
+  private normalizeUpdateInput(data: DependenteUpdateInput): DependenteUpdateInput {
+    if (!Object.prototype.hasOwnProperty.call(data, 'dataNascimento')) {
+      return data;
+    }
+
+    const current = (data as any).dataNascimento;
+    if (
+      current &&
+      typeof current === 'object' &&
+      !Array.isArray(current) &&
+      Object.prototype.hasOwnProperty.call(current, 'set')
+    ) {
+      return {
+        ...data,
+        dataNascimento: {
+          ...current,
+          set: this.parseDataNascimento(current.set),
+        },
+      };
+    }
+
+    return {
+      ...data,
+      dataNascimento: this.parseDataNascimento(current),
+    };
+  }
+
   private async validarLimiteBeneficiarios(
     titularId: number,
     novosDependentes = 1,
@@ -59,7 +121,8 @@ export class DependenteService {
   }
 
   async create(data: DependenteCreateInput): Promise<DependenteType> {
-    const titularId = Number((data as any)?.titularId);
+    const normalizedData = this.normalizeCreateInput(data);
+    const titularId = Number((normalizedData as any)?.titularId);
     if (!Number.isFinite(titularId) || titularId <= 0) {
       const err: any = new Error('titularId inválido.');
       err.status = 400;
@@ -67,13 +130,14 @@ export class DependenteService {
     }
 
     await this.validarLimiteBeneficiarios(titularId);
-    const dependente = await this.prisma.dependente.create({ data });
+    const dependente = await this.prisma.dependente.create({ data: normalizedData });
 
     await this.pricingService.recalcularDependentesDoTitular(titularId);
     return dependente;
   }
 
   async update(id: number, data: DependenteUpdateInput): Promise<DependenteType> {
+    const normalizedData = this.normalizeUpdateInput(data);
     const atual = await this.prisma.dependente.findUnique({
       where: { id: Number(id) },
       select: { id: true, titularId: true },
@@ -84,8 +148,8 @@ export class DependenteService {
       throw err;
     }
 
-    if ((data as any)?.titularId) {
-      const titularId = Number((data as any).titularId);
+    if ((normalizedData as any)?.titularId) {
+      const titularId = Number((normalizedData as any).titularId);
       if (!Number.isFinite(titularId) || titularId <= 0) {
         const err: any = new Error('titularId inválido.');
         err.status = 400;
@@ -96,12 +160,12 @@ export class DependenteService {
 
     const dependente = await this.prisma.dependente.update({
       where: { id: Number(id) },
-      data,
+      data: normalizedData,
     });
 
     const titularIdAtualizado =
-      Number((data as any)?.titularId) > 0
-        ? Number((data as any).titularId)
+      Number((normalizedData as any)?.titularId) > 0
+        ? Number((normalizedData as any).titularId)
         : atual.titularId;
 
     await this.pricingService.recalcularDependentesDoTitular(titularIdAtualizado);
