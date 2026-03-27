@@ -5,7 +5,7 @@ export interface CadastroTitularRequest {
     cpf: string;
     dataNascimento: string;
     sexo: 'Masculino' | 'Feminino';
-    rg: string;
+    rg?: string;
     naturalidade: string;
     telefone: string;
     whatsapp: string;

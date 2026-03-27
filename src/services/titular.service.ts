@@ -439,13 +439,13 @@ export class TitularService {
     const situacaoConjugal = String(step1.situacaoConjugal ?? '').trim();
     const profissao = String(step1.profissao ?? '').trim();
     const sexo = String(step1.sexo ?? '').trim();
-    const rg = String(step1.rg ?? '').trim();
+    const rg = String(step1.rg ?? '').trim() || null;
     const naturalidade = String(step1.naturalidade ?? '').trim();
     const pontoReferenciaTitular = String(step2?.pontoReferencia ?? '').trim();
 
-    if (!situacaoConjugal || !profissao || !sexo || !rg || !naturalidade) {
+    if (!situacaoConjugal || !profissao || !sexo || !naturalidade) {
       throw Object.assign(
-        new Error('Sexo, RG, Naturalidade, Situação conjugal e Profissão são obrigatórios'),
+        new Error('Sexo, Naturalidade, Situação conjugal e Profissão são obrigatórios'),
         { status: 400 },
       );
     }
@@ -501,7 +501,7 @@ export class TitularService {
           situacaoConjugal: String(step3.situacaoConjugal ?? '').trim(),
           profissao: String(step3.profissao ?? '').trim(),
           sexo: String(step3.sexo ?? '').trim(),
-          rg: String(step3.rg ?? '').trim(),
+          rg: String(step3.rg ?? '').trim() || null,
           naturalidade: String(step3.naturalidade ?? '').trim(),
           cep: String(step3.cep ?? '').trim(),
           uf: String(step3.uf ?? '').trim(),
