@@ -4,6 +4,7 @@ import { TitularPricingService } from './titular-pricing.service';
 type DependenteType = Prisma.DependenteGetPayload<{}>;
 type DependenteCreateInput = Prisma.DependenteUncheckedCreateInput;
 type DependenteUpdateInput = Prisma.DependenteUncheckedUpdateInput;
+const MAX_DEPENDENTES_POR_TITULAR = 8;
 
 export class DependenteService {
   private prisma;
@@ -98,8 +99,11 @@ export class DependenteService {
       select: { limiteBeneficiarios: true },
     });
 
-    const limite = regras?.limiteBeneficiarios ?? null;
-    if (!limite || limite <= 0) return;
+    const limiteConfigurado = regras?.limiteBeneficiarios ?? null;
+    const limite =
+      !limiteConfigurado || limiteConfigurado <= 0
+        ? MAX_DEPENDENTES_POR_TITULAR
+        : Math.min(limiteConfigurado, MAX_DEPENDENTES_POR_TITULAR);
 
     const totalAtual = await this.prisma.dependente.count({
       where: {
