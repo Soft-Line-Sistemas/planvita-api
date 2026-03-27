@@ -308,10 +308,28 @@ export class PlanoService {
   // -------- Regras para sugestão de plano --------
   private calcularIdade(isoDate: string): number {
     const hoje = new Date();
-    const nasc = new Date(isoDate);
-    let idade = hoje.getFullYear() - nasc.getFullYear();
-    const m = hoje.getMonth() - nasc.getMonth();
-    if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade--;
+    let ano: number;
+    let mes: number;
+    let dia: number;
+
+    const normalized = String(isoDate ?? '').trim();
+    const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
+
+    if (match) {
+      ano = Number(match[1]);
+      mes = Number(match[2]);
+      dia = Number(match[3]);
+    } else {
+      const nasc = new Date(normalized);
+      if (Number.isNaN(nasc.getTime())) return 0;
+      ano = nasc.getFullYear();
+      mes = nasc.getMonth() + 1;
+      dia = nasc.getDate();
+    }
+
+    let idade = hoje.getFullYear() - ano;
+    const deltaMes = hoje.getMonth() + 1 - mes;
+    if (deltaMes < 0 || (deltaMes === 0 && hoje.getDate() < dia)) idade--;
     return idade;
   }
 

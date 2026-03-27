@@ -46,6 +46,7 @@ const ASSINATURA_TIPOS = [
 const ASSINATURA_ALLOWED_MIME = ['image/png', 'image/jpeg'];
 const ASSINATURA_MAX_BYTES = 5 * 1024 * 1024; // 5MB
 const DEFAULT_DIAS_SUSPENSAO = 90;
+const MAX_DEPENDENTES_POR_TITULAR = 8;
 type AssinaturaDigitalType = {
   id: number;
   titularId: number;
@@ -83,9 +84,9 @@ export class TitularService {
       select: { limiteBeneficiarios: true },
     });
 
-    const limite = regras?.limiteBeneficiarios ?? null;
-    if (!limite || limite <= 0) return null;
-    return limite;
+    const limiteConfigurado = regras?.limiteBeneficiarios ?? null;
+    if (!limiteConfigurado || limiteConfigurado <= 0) return MAX_DEPENDENTES_POR_TITULAR;
+    return Math.min(limiteConfigurado, MAX_DEPENDENTES_POR_TITULAR);
   }
 
   private async validarLimiteBeneficiariosCadastro(quantidadeDependentes: number) {
@@ -107,13 +108,37 @@ export class TitularService {
   }
 
   private calcularIdade(dataNascimento: string | Date): number | null {
-    const data = new Date(dataNascimento);
-    if (Number.isNaN(data.getTime())) return null;
+    let ano: number;
+    let mes: number;
+    let dia: number;
+
+    if (dataNascimento instanceof Date) {
+      if (Number.isNaN(dataNascimento.getTime())) return null;
+      ano = dataNascimento.getFullYear();
+      mes = dataNascimento.getMonth() + 1;
+      dia = dataNascimento.getDate();
+    } else {
+      const normalized = String(dataNascimento ?? '').trim();
+      if (!normalized) return null;
+
+      const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (match) {
+        ano = Number(match[1]);
+        mes = Number(match[2]);
+        dia = Number(match[3]);
+      } else {
+        const parsed = new Date(normalized);
+        if (Number.isNaN(parsed.getTime())) return null;
+        ano = parsed.getFullYear();
+        mes = parsed.getMonth() + 1;
+        dia = parsed.getDate();
+      }
+    }
 
     const hoje = new Date();
-    let idade = hoje.getFullYear() - data.getFullYear();
-    const mes = hoje.getMonth() - data.getMonth();
-    if (mes < 0 || (mes === 0 && hoje.getDate() < data.getDate())) {
+    let idade = hoje.getFullYear() - ano;
+    const deltaMes = hoje.getMonth() + 1 - mes;
+    if (deltaMes < 0 || (deltaMes === 0 && hoje.getDate() < dia)) {
       idade -= 1;
     }
     return idade;
