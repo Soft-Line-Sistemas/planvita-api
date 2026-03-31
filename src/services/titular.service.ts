@@ -433,6 +433,14 @@ export class TitularService {
       );
     }
 
+    const planoIdSelecionado = Number(step5?.planoId);
+    if (!Number.isFinite(planoIdSelecionado) || planoIdSelecionado <= 0) {
+      const err: any = new Error('Seleção de plano é obrigatória para concluir o cadastro.');
+      err.status = 400;
+      err.code = 'PLANO_OBRIGATORIO';
+      throw err;
+    }
+
     // Normaliza email e CPF
     const email = step1.email.trim().toLowerCase();
     const cpf = step1.cpf.replace(/\D/g, '');
@@ -537,7 +545,6 @@ export class TitularService {
       excluirCobrancaAdicional: false,
     }));
     await this.validarLimiteBeneficiariosCadastro(dependentesData?.length ?? 0);
-    const planoIdSelecionado = step5?.planoId ? Number(step5.planoId) : null;
     const consultorIdInformado = data.consultorId ? Number(data.consultorId) : null;
 
     try {
