@@ -174,6 +174,44 @@ export class TitularService {
     }
   }
 
+  private validarCpfUnicoNoCadastro(data: CadastroTitularRequest) {
+    const titularCpf = String(data?.step1?.cpf ?? '').replace(/\D/g, '');
+    const responsavelCpf = String(data?.step3?.cpf ?? '').replace(/\D/g, '');
+    const usarMesmosDados = Boolean(data?.step3?.usarMesmosDados);
+    const dependentes = Array.isArray(data?.dependentes) ? data.dependentes : [];
+
+    const porCpf = new Map<string, string[]>();
+    const registrar = (cpfDigits: string, origem: string) => {
+      if (cpfDigits.length !== 11) return;
+      const atual = porCpf.get(cpfDigits) ?? [];
+      atual.push(origem);
+      porCpf.set(cpfDigits, atual);
+    };
+
+    registrar(titularCpf, 'titular.cpf');
+    if (!usarMesmosDados) {
+      registrar(responsavelCpf, 'responsavelFinanceiro.cpf');
+    }
+    dependentes.forEach((dep, index) => {
+      const cpfDependente = String(dep?.cpf ?? '').replace(/\D/g, '');
+      registrar(cpfDependente, `dependentes[${index}].cpf`);
+    });
+
+    const duplicados = Array.from(porCpf.entries())
+      .filter(([, origens]) => origens.length > 1)
+      .map(([cpf, origens]) => ({ cpf, origens }));
+
+    if (!duplicados.length) return;
+
+    const err: any = new Error(
+      'CPF já informado no cadastro. Não é permitido repetir CPF entre titular, responsável financeiro e dependentes.',
+    );
+    err.status = 400;
+    err.code = 'CPF_DUPLICADO_NO_CADASTRO';
+    err.meta = { duplicados };
+    throw err;
+  }
+
   private calcularDiasAtraso(vencimento: Date): number {
     const hoje = new Date();
     const diff = hoje.getTime() - new Date(vencimento).getTime();
@@ -457,6 +495,8 @@ export class TitularService {
         { status: 400 },
       );
     }
+
+    this.validarCpfUnicoNoCadastro(data);
 
     // --- Verifica duplicidade ---
     const existente = await this.prisma.titular.findFirst({
