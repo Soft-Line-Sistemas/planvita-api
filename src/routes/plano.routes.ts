@@ -16,7 +16,7 @@ router.put('/:id', authenticate, authorize(['plano.update']), (req, res) =>
 router.delete('/:id', authenticate, authorize(['plano.delete']), (req, res) =>
   controller.delete(req as any, res),
 );
-router.post('/sugerir', authenticate, (req, res) => controller.sugerir(req as any, res));
+router.post('/sugerir', (req, res) => controller.sugerir(req as any, res));
 router.patch(
   '/titulares/:titularId/plano',
   authenticate,
