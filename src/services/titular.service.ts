@@ -478,6 +478,13 @@ export class TitularService {
       err.code = 'PLANO_OBRIGATORIO';
       throw err;
     }
+    const billingTypeRaw = String(step5?.billingType ?? 'PIX').toUpperCase();
+    const allowedBillingTypes = ['PIX', 'BOLETO', 'CREDIT_CARD'] as const;
+    const billingType = allowedBillingTypes.includes(
+      billingTypeRaw as (typeof allowedBillingTypes)[number],
+    )
+      ? (billingTypeRaw as 'PIX' | 'BOLETO' | 'CREDIT_CARD')
+      : 'PIX';
 
     // Normaliza email e CPF
     const email = step1.email.trim().toLowerCase();
@@ -664,7 +671,12 @@ export class TitularService {
       void this.syncCustomerAsaasSafe(novoTitular.id);
       await this.pricingService.recalcularDependentesDoTitular(novoTitular.id);
       const valorMensal = await this.pricingService.recalcularFinanceiroTitular(novoTitular.id);
-      void this.syncSubscriptionAsaasSafe(novoTitular.id, novoTitular.nome, valorMensal);
+      void this.syncSubscriptionAsaasSafe(
+        novoTitular.id,
+        novoTitular.nome,
+        valorMensal,
+        billingType,
+      );
       return novoTitular;
     } catch (e: any) {
       if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
@@ -893,12 +905,14 @@ export class TitularService {
     titularId: number,
     titularNome: string,
     valorMensal: number,
+    billingType?: 'PIX' | 'BOLETO' | 'CREDIT_CARD',
   ) {
     try {
       await this.asaasIntegration.ensureMonthlySubscriptionForTitular({
         titularId,
         valorMensal,
         descricao: `Mensalidade Plano - ${titularNome}`,
+        billingType,
       });
     } catch (error: any) {
       this.logger.warn('Falha ao sincronizar assinatura mensal com Asaas', {
