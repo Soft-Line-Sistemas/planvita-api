@@ -110,6 +110,8 @@ export class AsaasIntegrationService {
     nome: string;
     email?: string | null;
     telefone?: string | null;
+    nomeResponsavelFinanceiro?: string | null;
+    telefoneResponsavelFinanceiro?: string | null;
     valor?: number | null;
     dataVencimento?: Date | null;
     descricao?: string | null;
@@ -129,11 +131,22 @@ export class AsaasIntegrationService {
       ' Seu plano está ativo.';
 
     const logBaseId = `assinatura-confirmada:${payload.paymentId}`;
-    const [logEmailExistente, logWhatsappExistente] = await Promise.all([
+    const logEmailExistente = await this.prisma.notificationLog.findFirst({
+      where: {
+        tenantId: this.tenantId,
+        logId: `${logBaseId}:email`,
+        status: 'enviado',
+      },
+      select: { id: true },
+    });
+
+    const logWhatsappTitularId = `${logBaseId}:whatsapp:titular`;
+    const logWhatsappResponsavelId = `${logBaseId}:whatsapp:responsavel-financeiro`;
+    const [logWhatsappTitularExistente, logWhatsappResponsavelExistente] = await Promise.all([
       this.prisma.notificationLog.findFirst({
         where: {
           tenantId: this.tenantId,
-          logId: `${logBaseId}:email`,
+          logId: logWhatsappTitularId,
           status: 'enviado',
         },
         select: { id: true },
@@ -141,7 +154,7 @@ export class AsaasIntegrationService {
       this.prisma.notificationLog.findFirst({
         where: {
           tenantId: this.tenantId,
-          logId: `${logBaseId}:whatsapp`,
+          logId: logWhatsappResponsavelId,
           status: 'enviado',
         },
         select: { id: true },
@@ -180,35 +193,77 @@ export class AsaasIntegrationService {
       }
     }
 
-    if (!logWhatsappExistente) {
-      const telefoneWhatsapp = this.normalizarTelefoneWhatsapp(payload.telefone);
+    const destinatariosWhatsapp = [
+      {
+        key: 'titular',
+        nome: payload.nome,
+        telefone: payload.telefone,
+        logId: logWhatsappTitularId,
+        jaEnviado: !!logWhatsappTitularExistente,
+      },
+      {
+        key: 'responsavel-financeiro',
+        nome: payload.nomeResponsavelFinanceiro || 'Responsável financeiro',
+        telefone: payload.telefoneResponsavelFinanceiro,
+        logId: logWhatsappResponsavelId,
+        jaEnviado: !!logWhatsappResponsavelExistente,
+      },
+    ] as const;
+
+    const telefonesProcessados = new Set<string>();
+    for (const destinatario of destinatariosWhatsapp) {
+      if (destinatario.jaEnviado) {
+        continue;
+      }
+
+      const telefoneWhatsapp = this.normalizarTelefoneWhatsapp(destinatario.telefone);
       if (!telefoneWhatsapp) {
         await this.registrarLogNotificacaoConfirmacao({
           titularId: payload.titularId,
           canal: 'whatsapp',
           status: 'ignorado',
-          motivo: 'titular sem WhatsApp para confirmação',
-          logId: `${logBaseId}:whatsapp`,
+          motivo: `${destinatario.nome} sem WhatsApp para confirmação`,
+          logId: destinatario.logId,
         });
-      } else {
-        const response = await this.notificationClient.send({
-          to: telefoneWhatsapp,
-          channel: 'whatsapp',
-          message: mensagemBase,
-          metadata: {
-            flow: 'assinatura-confirmada',
-            paymentId: payload.paymentId,
-            titularId: payload.titularId,
-          },
-        });
+        continue;
+      }
+
+      if (telefonesProcessados.has(telefoneWhatsapp)) {
         await this.registrarLogNotificacaoConfirmacao({
           titularId: payload.titularId,
           destinatario: telefoneWhatsapp,
           canal: 'whatsapp',
-          status: response.success ? 'enviado' : 'falha',
-          motivo: response.error,
-          logId: `${logBaseId}:whatsapp`,
+          status: 'ignorado',
+          motivo: 'número já notificado nesta confirmação',
+          logId: destinatario.logId,
         });
+        continue;
+      }
+
+      const response = await this.notificationClient.send({
+        to: telefoneWhatsapp,
+        phone: telefoneWhatsapp,
+        channel: 'whatsapp',
+        message: mensagemBase,
+        metadata: {
+          flow: 'assinatura-confirmada',
+          paymentId: payload.paymentId,
+          titularId: payload.titularId,
+          destinatario: destinatario.key,
+        },
+      });
+
+      await this.registrarLogNotificacaoConfirmacao({
+        titularId: payload.titularId,
+        destinatario: telefoneWhatsapp,
+        canal: 'whatsapp',
+        status: response.success ? 'enviado' : 'falha',
+        motivo: response.error,
+        logId: destinatario.logId,
+      });
+
+      if (response.success) {
+        telefonesProcessados.add(telefoneWhatsapp);
       }
     }
   }
@@ -1206,6 +1261,8 @@ export class AsaasIntegrationService {
             nome: string;
             email?: string | null;
             telefone?: string | null;
+            nomeResponsavelFinanceiro?: string | null;
+            telefoneResponsavelFinanceiro?: string | null;
             valor?: number | null;
             dataVencimento?: Date | null;
             descricao?: string | null;
@@ -1340,11 +1397,26 @@ export class AsaasIntegrationService {
           await this.gerarComissaoPrimeiroPagamentoTx(tx, updatedConta.clienteId);
 
           if (!estavaConfirmado && updatedConta.cliente && paymentId) {
+            const responsavelFinanceiro = await tx.corresponsavel.findFirst({
+              where: {
+                titularId: updatedConta.clienteId,
+              },
+              orderBy: {
+                id: 'asc',
+              },
+              select: {
+                nome: true,
+                telefone: true,
+              },
+            });
+
             notificacaoConfirmacao = {
               titularId: updatedConta.clienteId,
               nome: updatedConta.cliente.nome,
               email: updatedConta.cliente.email,
               telefone: updatedConta.cliente.telefone,
+              nomeResponsavelFinanceiro: responsavelFinanceiro?.nome,
+              telefoneResponsavelFinanceiro: responsavelFinanceiro?.telefone,
               valor: updatedConta.valor,
               dataVencimento: updatedConta.dataVencimento ?? updatedConta.vencimento,
               descricao: updatedConta.descricao,
