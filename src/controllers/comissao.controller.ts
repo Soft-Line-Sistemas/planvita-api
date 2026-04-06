@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { ComissaoService } from '../services/comissao.service';
+import { ComissaoService, CreateComissaoManualInput } from '../services/comissao.service';
 import Logger from '../utils/logger';
 import { PrismaClient } from '@prisma/client';
 
@@ -52,14 +52,18 @@ export class ComissaoController {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
       const service = new ComissaoService(req.tenantId);
-      const data = req.body;
-      const result = await service.create(data);
+      const data = req.body as CreateComissaoManualInput;
+      const result = await service.createManual(data);
 
       this.logger.info('create executed successfully', { tenant: req.tenantId, data });
       res.status(201).json(result);
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error('Failed to create Comissao', error, { body: req.body });
-      res.status(500).json({ message: 'Internal server error' });
+      const message =
+        error instanceof Error && error.message ? error.message : 'Internal server error';
+      res.status(/inválido|não encontrado|já possui comissão/i.test(message) ? 400 : 500).json({
+        message,
+      });
     }
   }
 
