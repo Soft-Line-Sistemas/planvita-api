@@ -777,18 +777,46 @@ export class AsaasIntegrationService {
         asaasSubscriptionId: { not: null },
       },
       orderBy: { id: 'desc' },
-      select: { asaasSubscriptionId: true },
+      select: { asaasSubscriptionId: true, descricao: true, metodoPagamento: true },
     });
-
-    if (referenciaExistente?.asaasSubscriptionId) {
-      return referenciaExistente.asaasSubscriptionId;
-    }
 
     const baseDueDate = args.proximoVencimento ?? new Date();
     const dueDate = new Date(baseDueDate);
     dueDate.setHours(0, 0, 0, 0);
     if (dueDate.getTime() <= Date.now()) {
       dueDate.setDate(dueDate.getDate() + 1);
+    }
+
+    if (referenciaExistente?.asaasSubscriptionId) {
+      const subscriptionId = referenciaExistente.asaasSubscriptionId;
+      await this.client!.createOrUpdateSubscription(
+        {
+          customer: clienteAsaasId,
+          billingType:
+            (args.billingType ??
+              (referenciaExistente.metodoPagamento as
+                | 'PIX'
+                | 'BOLETO'
+                | 'CREDIT_CARD'
+                | null) ??
+              'PIX'),
+          value: valorMensal,
+          nextDueDate: dueDate.toISOString().slice(0, 10),
+          description: args.descricao || referenciaExistente.descricao || undefined,
+          cycle: 'MONTHLY',
+          externalReference: `titular-${args.titularId}`,
+        },
+        subscriptionId,
+      );
+
+      this.logger.info('Recorrência existente atualizada no Asaas', {
+        tenantId: this.tenantId,
+        titularId: args.titularId,
+        asaasSubscriptionId: subscriptionId,
+        valorMensal,
+      });
+
+      return subscriptionId;
     }
 
     const subscription = await this.client!.createOrUpdateSubscription({
