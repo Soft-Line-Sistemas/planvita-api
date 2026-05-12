@@ -3,6 +3,7 @@ import { TitularService } from '../services/titular.service';
 import Logger from '../utils/logger';
 import { PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { ClienteAuthRequest } from '../middlewares/cliente-auth.middleware';
 
 export interface TenantRequest extends Request {
   tenantId?: string;
@@ -11,6 +12,12 @@ export interface TenantRequest extends Request {
 
 export class TitularController {
   private logger = new Logger({ service: 'TitularController' });
+
+  private getTitularIdFromClienteRequest(req: TenantRequest & ClienteAuthRequest): number | null {
+    const titularId = Number(req?.cliente?.titularId);
+    if (!titularId || Number.isNaN(titularId)) return null;
+    return titularId;
+  }
 
   private formatDate(value?: Date | string | null): string {
     if (!value) return '';
@@ -140,7 +147,10 @@ export class TitularController {
          return res.status(404).json({ message: "Titular details not found" });
       }
 
-      res.json(detalhe);
+      res.json({
+        ...detalhe,
+        tenantSlug: req.tenantId,
+      });
     } catch (error: any) {
       this.logger.error("Failed to public search Titular", error);
       res.status(500).json({ message: "Internal server error", error: error.message, stack: error.stack });
@@ -159,7 +169,10 @@ export class TitularController {
       const detalhe = await service.getById(titularId);
       if (!detalhe) return res.status(404).json({ message: 'Titular not found' });
 
-      res.json(detalhe);
+      res.json({
+        ...detalhe,
+        tenantSlug: req.tenantId,
+      });
     } catch (error: any) {
       this.logger.error('Failed to get Titular me', error);
       res.status(500).json({ message: 'Internal server error' });
@@ -231,6 +244,21 @@ export class TitularController {
     }
   }
 
+  async getAssinaturasMe(req: TenantRequest & ClienteAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      const titularId = this.getTitularIdFromClienteRequest(req);
+      if (!titularId) return res.status(401).json({ message: 'Não autenticado' });
+
+      const service = new TitularService(req.tenantId);
+      const assinaturas = await service.listarAssinaturas(titularId);
+      res.json(assinaturas);
+    } catch (error) {
+      this.logger.error('Falha ao listar assinaturas do cliente', error);
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
   async salvarAssinatura(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
@@ -266,6 +294,38 @@ export class TitularController {
     }
   }
 
+  async salvarAssinaturaMe(req: TenantRequest & ClienteAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      const titularId = this.getTitularIdFromClienteRequest(req);
+      if (!titularId) return res.status(401).json({ message: 'Não autenticado' });
+
+      const { tipo, assinaturaBase64 } = req.body as {
+        tipo?: string;
+        assinaturaBase64?: string;
+      };
+
+      if (!tipo || !assinaturaBase64) {
+        return res
+          .status(400)
+          .json({ message: 'Tipo de assinatura e imagem são obrigatórios.' });
+      }
+
+      const service = new TitularService(req.tenantId);
+      const result = await service.salvarAssinaturaDigital(
+        titularId,
+        tipo as any,
+        assinaturaBase64,
+      );
+      res.status(201).json(result);
+    } catch (error) {
+      this.logger.error('Falha ao salvar assinatura do cliente', error, { body: req.body });
+      const status = (error as any)?.status ?? 500;
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      res.status(status).json({ message });
+    }
+  }
+
   async downloadAssinatura(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
@@ -295,6 +355,88 @@ export class TitularController {
       const status = error?.status ?? 500;
       const message = error instanceof Error ? error.message : 'Internal server error';
       this.logger.error('Falha ao baixar assinatura', error, { params: req.params });
+      res.status(status).json({ message });
+    }
+  }
+
+  async downloadAssinaturaMe(req: TenantRequest & ClienteAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const titularId = this.getTitularIdFromClienteRequest(req);
+      const assinaturaId = Number(req.params.assinaturaId);
+      if (!titularId) return res.status(401).json({ message: 'Não autenticado' });
+      if (Number.isNaN(assinaturaId)) {
+        return res.status(400).json({ message: 'Parâmetros inválidos' });
+      }
+
+      const service = new TitularService(req.tenantId);
+      const { buffer, mimetype, filename } = await service.baixarAssinaturaDigital(
+        titularId,
+        assinaturaId,
+      );
+
+      const mode = req.query.mode === 'inline' ? 'inline' : 'attachment';
+      res.setHeader('Content-Type', mimetype);
+      res.setHeader(
+        'Content-Disposition',
+        `${mode}; filename="${encodeURIComponent(filename)}"`,
+      );
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+      res.send(buffer);
+    } catch (error: any) {
+      const status = error?.status ?? 500;
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      this.logger.error('Falha ao baixar assinatura do cliente', error, { params: req.params });
+      res.status(status).json({ message });
+    }
+  }
+
+  async uploadFotoPerfilMe(req: TenantRequest & ClienteAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      const titularId = this.getTitularIdFromClienteRequest(req);
+      if (!titularId) return res.status(401).json({ message: 'Não autenticado' });
+
+      const { imageBase64, filename, mimeType } = req.body as {
+        imageBase64?: string;
+        filename?: string;
+        mimeType?: 'image/png' | 'image/jpeg' | 'image/webp';
+      };
+
+      if (!imageBase64) {
+        return res.status(400).json({ message: 'Imagem em base64 é obrigatória.' });
+      }
+
+      const service = new TitularService(req.tenantId);
+      const foto = await service.salvarFotoPerfil(titularId, {
+        imageBase64,
+        filename,
+        mimeType,
+      });
+      res.status(201).json(foto);
+    } catch (error) {
+      this.logger.error('Falha ao salvar foto de perfil do cliente', error, { body: req.body });
+      const status = (error as any)?.status ?? 500;
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      res.status(status).json({ message });
+    }
+  }
+
+  async deleteFotoPerfilMe(req: TenantRequest & ClienteAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      const titularId = this.getTitularIdFromClienteRequest(req);
+      if (!titularId) return res.status(401).json({ message: 'Não autenticado' });
+
+      const service = new TitularService(req.tenantId);
+      await service.removerFotoPerfil(titularId);
+      res.status(204).send();
+    } catch (error) {
+      this.logger.error('Falha ao remover foto de perfil do cliente', error);
+      const status = (error as any)?.status ?? 500;
+      const message = error instanceof Error ? error.message : 'Internal server error';
       res.status(status).json({ message });
     }
   }

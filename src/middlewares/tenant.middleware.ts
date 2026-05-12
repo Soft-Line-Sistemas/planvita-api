@@ -2,6 +2,9 @@ import { Request, Response, NextFunction } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { getPrismaForTenant } from '../utils/prisma';
 import Logger from '../utils/logger';
+import jwt from 'jsonwebtoken';
+import config from '../config';
+import type { ClienteJwtPayload } from '../services/cliente-auth.service';
 
 export interface TenantRequest extends Request {
   tenantId?: string;
@@ -21,6 +24,21 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
     if (!tenant) {
       const tenantQuery = (req.query?.tenant as string | undefined)?.toLowerCase();
       if (tenantQuery) tenant = tenantQuery;
+    }
+
+    // Fallback para rotas do cliente autenticado: usa tenant dentro do cliente_token.
+    // Isso mantém sessão no refresh mesmo sem query/header/cookie "tenant" no frontend.
+    if (!tenant) {
+      const clienteToken = (req as any).cookies?.cliente_token as string | undefined;
+      if (clienteToken) {
+        try {
+          const decoded = jwt.verify(clienteToken, config.jwt.secret) as ClienteJwtPayload;
+          const tenantFromToken = String(decoded?.tenant ?? '').trim().toLowerCase();
+          if (tenantFromToken) tenant = tenantFromToken;
+        } catch {
+          // Token inválido/expirado: segue fluxo normal de resolução de tenant.
+        }
+      }
     }
 
     if (!tenant) {

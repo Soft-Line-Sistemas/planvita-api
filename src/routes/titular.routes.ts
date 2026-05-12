@@ -9,6 +9,15 @@ const controller = new TitularController();
 // Rota pública de busca por CPF (deve vir antes das rotas parametrizadas e não ter auth)
 router.get('/public/search', controller.publicSearch.bind(controller));
 router.get('/me', authenticateCliente, controller.me.bind(controller));
+router.post('/me/foto', authenticateCliente, controller.uploadFotoPerfilMe.bind(controller));
+router.delete('/me/foto', authenticateCliente, controller.deleteFotoPerfilMe.bind(controller));
+router.get('/me/assinaturas', authenticateCliente, controller.getAssinaturasMe.bind(controller));
+router.post('/me/assinaturas', authenticateCliente, controller.salvarAssinaturaMe.bind(controller));
+router.get(
+  '/me/assinaturas/:assinaturaId/arquivo',
+  authenticateCliente,
+  controller.downloadAssinaturaMe.bind(controller),
+);
 
 router.get('/', authenticate, authorize(['titular.view']), controller.getAll.bind(controller));
 router.get(

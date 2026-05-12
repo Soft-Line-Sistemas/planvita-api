@@ -8,6 +8,7 @@ import { getPrismaForTenant } from '../utils/prisma';
 import { AuthRequest } from '../types/auth';
 import jwt from 'jsonwebtoken';
 import config from '../config';
+import { ClienteAuthRequest } from '../middlewares/cliente-auth.middleware';
 
 export interface TenantRequest extends Request {
   tenantId?: string;
@@ -16,6 +17,17 @@ export interface TenantRequest extends Request {
 
 export class AuthController {
   private logger = new Logger({ service: 'AuthController' });
+  private getClienteCookieOptions() {
+    const isProd = config.server.nodeEnv === 'production';
+    return {
+      httpOnly: true as const,
+      secure: isProd,
+      sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
+      domain: isProd ? '.planvita.com.br' : undefined,
+      maxAge: 1000 * 60 * 60 * 24 * 30, // 30 dias (sessão cliente)
+      path: '/',
+    };
+  }
 
   async login(req: TenantRequest, res: Response) {
     try {
@@ -53,13 +65,7 @@ export class AuthController {
           email: result.email,
         });
 
-        res.cookie('cliente_token', clienteToken, {
-          httpOnly: true,
-          secure: config.server.nodeEnv === 'production',
-          sameSite: config.server.nodeEnv === 'production' ? 'none' : 'lax',
-          domain: config.server.nodeEnv === 'production' ? '.planvita.com.br' : undefined,
-          maxAge: 1000 * 60 * 60 * 24,
-        });
+        res.cookie('cliente_token', clienteToken, this.getClienteCookieOptions());
 
         return res.json(result);
       }
@@ -220,6 +226,26 @@ export class AuthController {
     }
   }
 
+  async changeClientePassword(req: TenantRequest & ClienteAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const titularId = Number(req?.cliente?.titularId);
+      if (!titularId || Number.isNaN(titularId)) {
+        return res.status(401).json({ message: 'Não autenticado' });
+      }
+
+      const { currentPassword, newPassword } = req.body ?? {};
+      const auth = new ClienteAuthService(req.tenantId);
+      await auth.changePassword(titularId, String(currentPassword ?? ''), String(newPassword ?? ''));
+      res.json({ message: 'Senha alterada com sucesso.' });
+    } catch (error: any) {
+      const status = error?.status ?? 500;
+      const message = error?.message ?? 'Erro ao alterar senha.';
+      res.status(status).json({ message });
+    }
+  }
+
   async check(req: AuthRequest, res: Response) {
     try {
       if (!req.user) {
@@ -313,8 +339,14 @@ export class AuthController {
   }
 
   async logout(req: Request, res: Response) {
-    res.cookie('auth_token', '', { maxAge: -1 });
-    res.cookie('cliente_token', '', { maxAge: -1 });
+    const isProd = config.server.nodeEnv === 'production';
+    const domain = isProd ? '.planvita.com.br' : undefined;
+
+    res.cookie('auth_token', '', { maxAge: -1, path: '/', domain });
+    res.cookie('cliente_token', '', {
+      ...this.getClienteCookieOptions(),
+      maxAge: -1,
+    });
     res.json({ message: 'Logout realizado com sucesso' });
   }
 }

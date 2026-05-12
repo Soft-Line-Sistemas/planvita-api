@@ -190,6 +190,16 @@ export class AsaasClient {
     return this.request<AsaasPagedResponse<any>>('GET', '/subscriptions', undefined, { params });
   }
 
+  async getSubscriptionPayments(
+    subscriptionId: string,
+    params: Record<string, string | number | boolean | undefined> = {},
+  ) {
+    return this.request<any>('GET', `/subscriptions/${subscriptionId}/payments`, undefined, {
+      params,
+      context: { subscriptionId },
+    });
+  }
+
   async deleteSubscription(id: string) {
     return this.request<any>('DELETE', `/subscriptions/${id}`, undefined, {
       context: { subscriptionId: id },

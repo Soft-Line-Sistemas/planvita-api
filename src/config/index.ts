@@ -23,6 +23,7 @@ export const config: AppConfig = {
       '5b75be29b1aafd1b19d85c99f1ecf824faccd406083800ac4481f743c037860a',
     ),
     expiresIn: getEnvVar('JWT_EXPIRES_IN', '1d') as StringValue | number,
+    clienteExpiresIn: getEnvVar('JWT_CLIENTE_EXPIRES_IN', '30d') as StringValue | number,
   },
 
   rateLimitWindowMs: getEnvVarAsNumber('RATE_LIMIT_WINDOW_MS', 900000), // 15 minutes

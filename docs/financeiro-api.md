@@ -2,6 +2,7 @@
 
 ## Contas Financeiras
 
+- GET /financeiro/cliente/contas (cliente autenticado)
 - GET /financeiro/contas
 - POST /financeiro/contas/pagar
 - POST /financeiro/contas/receber

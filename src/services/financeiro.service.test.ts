@@ -16,6 +16,7 @@ const prismaMock = {
   },
   pagamento: {
     create: jest.fn(),
+    findMany: jest.fn(),
     update: jest.fn(),
     findFirst: jest.fn(),
     upsert: jest.fn(),
@@ -32,10 +33,21 @@ jest.mock('../utils/prisma', () => ({
   getPrismaForTenant: () => prismaMock,
 }));
 
+const mockAsaasIntegration = {
+  ensurePaymentForContaReceber: jest.fn().mockResolvedValue(null),
+  syncRecurringPaymentsForTitular: jest.fn().mockResolvedValue({
+    processed: 0,
+    inserted: 0,
+    updated: 0,
+  }),
+  confirmPaymentForContaReceber: jest.fn().mockResolvedValue(undefined),
+  revertPaymentForContaReceber: jest.fn().mockResolvedValue(undefined),
+  deletePaymentForContaReceber: jest.fn().mockResolvedValue(undefined),
+  updatePaymentForContaReceber: jest.fn().mockResolvedValue(undefined),
+};
+
 jest.mock('./asaas-integration.service', () => ({
-  AsaasIntegrationService: jest.fn().mockImplementation(() => ({
-    ensurePaymentForContaReceber: jest.fn().mockResolvedValue(null),
-  })),
+  AsaasIntegrationService: jest.fn().mockImplementation(() => mockAsaasIntegration),
 }));
 
 describe('FinanceiroService', () => {
@@ -124,6 +136,61 @@ describe('FinanceiroService', () => {
     expect(prismaMock.financialAudit.create).toHaveBeenCalled();
   });
 
+  it('should list contas only for the authenticated client', async () => {
+    const titularId = 10;
+    const contasMock = [
+      {
+        id: 3,
+        descricao: 'Mensalidade Maio',
+        valor: 199.9,
+        vencimento: new Date('2026-05-10T00:00:00.000Z'),
+        status: 'PENDENTE',
+        paymentUrl: 'https://asaas.com/p/123',
+        pixQrCode: '000201010212...',
+        asaasPaymentId: 'pay_123',
+        asaasSubscriptionId: 'sub_456',
+      },
+      {
+        id: 2,
+        descricao: 'Mensalidade Abril',
+        valor: 199.9,
+        vencimento: new Date('2026-04-10T00:00:00.000Z'),
+        status: 'RECEBIDO',
+        paymentUrl: null,
+        pixQrCode: null,
+        asaasPaymentId: null,
+        asaasSubscriptionId: 'sub_456',
+      },
+    ];
+
+    (prismaMock.contaReceber.findMany as jest.Mock).mockResolvedValue(contasMock);
+    (prismaMock.pagamento.findMany as jest.Mock).mockResolvedValue([]);
+
+    const result = await service.listarContasDoCliente(titularId);
+
+    expect(prismaMock.contaReceber.findMany).toHaveBeenCalledWith({
+      where: {
+        clienteId: titularId,
+      },
+      orderBy: [{ vencimento: 'desc' }, { id: 'desc' }],
+      select: {
+        id: true,
+        descricao: true,
+        valor: true,
+        vencimento: true,
+        status: true,
+        paymentUrl: true,
+        pixQrCode: true,
+        asaasPaymentId: true,
+        asaasSubscriptionId: true,
+      },
+    });
+    expect(result).toEqual([
+      { ...contasMock[0], tipo: 'Receber' },
+      { ...contasMock[1], tipo: 'Receber' },
+    ]);
+  });
+
   it('should settle (baixar) a conta pagar', async () => {
     const contaId = 1;
     const expectedResult = {
@@ -201,6 +268,46 @@ describe('FinanceiroService', () => {
         valor: 150,
       }),
     });
+    expect(gerarComissaoSpy).toHaveBeenCalledWith(10);
+    expect(prismaMock.financialAudit.create).toHaveBeenCalled();
+  });
+
+  it('should treat an already received conta receber as an idempotent baixa', async () => {
+    const contaId = 38;
+    const gerarComissaoSpy = jest
+      .spyOn(service as any, 'gerarComissaoPrimeiroPagamento')
+      .mockResolvedValue(undefined);
+    const expectedResult = {
+      id: contaId,
+      descricao: 'Receber já baixado',
+      valor: 150,
+      vencimento: new Date('2026-01-30T00:00:00.000Z'),
+      status: 'RECEBIDO',
+      dataRecebimento: new Date('2026-05-12T21:30:00.000Z'),
+      asaasPaymentId: 'pay_q29ufly32ci7e0ot',
+      cliente: {
+        id: 10,
+        nome: 'Cliente Teste',
+        email: 'teste@planvita.com',
+        telefone: '11999999999',
+        cpf: '12345678901',
+      },
+    };
+
+    (prismaMock.contaReceber.findUnique as jest.Mock)
+      .mockResolvedValueOnce({
+        id: contaId,
+        status: 'RECEBIDO',
+        asaasPaymentId: 'pay_q29ufly32ci7e0ot',
+      })
+      .mockResolvedValueOnce(expectedResult);
+
+    const result = await service.baixarConta('Receber', contaId, 1);
+
+    expect(mockAsaasIntegration.confirmPaymentForContaReceber).not.toHaveBeenCalled();
+    expect(prismaMock.contaReceber.update).not.toHaveBeenCalled();
+    expect(prismaMock.pagamento.upsert).not.toHaveBeenCalled();
+    expect(result.status).toBe('RECEBIDO');
     expect(gerarComissaoSpy).toHaveBeenCalledWith(10);
     expect(prismaMock.financialAudit.create).toHaveBeenCalled();
   });
