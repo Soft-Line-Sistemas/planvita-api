@@ -1703,10 +1703,14 @@ export class AsaasIntegrationService {
   private mapEventFromStatus(status: string): string {
     const normalized = (status || '').toUpperCase();
     switch (normalized) {
+      case 'RECEBIDO':
       case 'RECEIVED':
+      case 'RECEIVED_IN_CASH':
         return 'PAYMENT_RECEIVED';
+      case 'CONFIRMADO':
       case 'CONFIRMED':
         return 'PAYMENT_CONFIRMED';
+      case 'VENCIDO':
       case 'OVERDUE':
         return 'PAYMENT_OVERDUE';
       case 'CHARGEBACK_REQUESTED':
@@ -1717,10 +1721,12 @@ export class AsaasIntegrationService {
       case 'REFUND_IN_PROGRESS':
       case 'REFUNDED':
         return 'PAYMENT_REFUNDED';
+      case 'CANCELADO':
       case 'CANCELLED':
       case 'CANCELED':
       case 'DELETED':
         return 'PAYMENT_DELETED';
+      case 'PENDENTE':
       case 'PENDING':
       default:
         return 'PAYMENT_CREATED';
