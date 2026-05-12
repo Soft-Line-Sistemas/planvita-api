@@ -85,4 +85,9 @@ describe('AsaasIntegrationService', () => {
 
     await expect(service.confirmPaymentForContaReceber(38)).rejects.toBe(error);
   });
+
+  it('should map RECEIVED_IN_CASH to PAYMENT_RECEIVED event', () => {
+    const event = (service as any).mapEventFromStatus('RECEIVED_IN_CASH');
+    expect(event).toBe('PAYMENT_RECEIVED');
+  });
 });
