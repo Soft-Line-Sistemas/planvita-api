@@ -10,6 +10,7 @@ import {
 } from '../services/financeiro.service';
 import Logger from '../utils/logger';
 import { TenantRequest } from '../middlewares/tenant.middleware';
+import { ClienteAuthRequest } from '../middlewares/cliente-auth.middleware';
 
 const isValidTipo = (tipo: string): tipo is 'pagar' | 'receber' => {
   const normalized = tipo.toLowerCase();
@@ -52,6 +53,28 @@ export class FinanceiroController {
           error instanceof Error && error.message === 'Tenant unknown'
             ? 'Tenant unknown'
             : 'Internal server error',
+      });
+    }
+  }
+
+  async getContasCliente(req: TenantRequest & ClienteAuthRequest, res: Response) {
+    try {
+      const titularId = req.cliente?.titularId;
+      if (!titularId) {
+        return res.status(401).json({ message: 'Não autenticado' });
+      }
+
+      const service = this.resolveService(req);
+      const result = await service.listarContasDoCliente(titularId);
+      this.logger.info('Contas financeiras do cliente listadas', {
+        tenant: req.tenantId,
+        titularId,
+      });
+      res.json(result);
+    } catch (error) {
+      this.logger.error('Falha ao listar contas financeiras do cliente', error);
+      res.status(this.shouldReturnTenantError(error) ? 400 : 500).json({
+        message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : 'Internal server error',
       });
     }
   }

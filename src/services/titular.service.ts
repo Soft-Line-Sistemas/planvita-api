@@ -45,6 +45,9 @@ const ASSINATURA_TIPOS = [
 ] as const;
 const ASSINATURA_ALLOWED_MIME = ['image/png', 'image/jpeg'];
 const ASSINATURA_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+const FOTO_PERFIL_TIPO_DOCUMENTO = 'FOTO_PERFIL';
+const FOTO_PERFIL_ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp'];
+const FOTO_PERFIL_MAX_BYTES = 5 * 1024 * 1024; // 5MB
 const DEFAULT_DIAS_SUSPENSAO = 90;
 const MAX_DEPENDENTES_POR_TITULAR = 8;
 type AssinaturaDigitalType = {
@@ -60,6 +63,12 @@ type AssinaturaDigitalType = {
   updatedAt: Date;
 };
 type AssinaturaTipo = (typeof ASSINATURA_TIPOS)[number];
+
+export type FotoPerfilPayload = {
+  imageBase64: string;
+  filename?: string;
+  mimeType?: 'image/png' | 'image/jpeg' | 'image/webp';
+};
 
 export class TitularService {
   private prisma;
@@ -809,18 +818,101 @@ export class TitularService {
     };
   }
 
+  async salvarFotoPerfil(
+    titularId: number,
+    payload: FotoPerfilPayload,
+  ): Promise<{ id: number; titularId: number; arquivoUrl: string; dataUpload: Date }> {
+    const titular = await this.prisma.titular.findUnique({
+      where: { id: titularId },
+      select: { id: true },
+    });
+    if (!titular) {
+      const err: any = new Error('Titular não encontrado.');
+      err.status = 404;
+      throw err;
+    }
+
+    const { buffer, mimetype } = this.parseBase64ImageCustom(
+      payload.imageBase64,
+      FOTO_PERFIL_ALLOWED_MIME,
+      FOTO_PERFIL_MAX_BYTES,
+      payload.mimeType,
+    );
+    const filename = this.normalizeFilename(payload.filename, mimetype, 'foto-perfil');
+    const uploadInfo = await this.uploadAssinaturaArquivo(buffer, mimetype, filename);
+
+    const documentoAtual = await this.prisma.documento.findFirst({
+      where: { titularId, tipoDocumento: FOTO_PERFIL_TIPO_DOCUMENTO },
+      orderBy: { dataUpload: 'desc' },
+      select: { id: true },
+    });
+
+    if (documentoAtual) {
+      return this.prisma.documento.update({
+        where: { id: documentoAtual.id },
+        data: {
+          arquivoUrl: uploadInfo.arquivoUrl,
+          dataUpload: new Date(),
+        },
+        select: {
+          id: true,
+          titularId: true,
+          arquivoUrl: true,
+          dataUpload: true,
+        },
+      });
+    }
+
+    return this.prisma.documento.create({
+      data: {
+        titularId,
+        tipoDocumento: FOTO_PERFIL_TIPO_DOCUMENTO,
+        arquivoUrl: uploadInfo.arquivoUrl,
+        dataUpload: new Date(),
+      },
+      select: {
+        id: true,
+        titularId: true,
+        arquivoUrl: true,
+        dataUpload: true,
+      },
+    });
+  }
+
+  async removerFotoPerfil(titularId: number): Promise<void> {
+    await this.prisma.documento.deleteMany({
+      where: {
+        titularId,
+        tipoDocumento: FOTO_PERFIL_TIPO_DOCUMENTO,
+      },
+    });
+  }
+
   private parseBase64Image(input: string) {
+    return this.parseBase64ImageWithConstraints(
+      input,
+      ASSINATURA_ALLOWED_MIME,
+      ASSINATURA_MAX_BYTES,
+    );
+  }
+
+  private parseBase64ImageWithConstraints(
+    input: string,
+    allowedMimeTypes: readonly string[],
+    maxBytes: number,
+    fallbackMimeType?: string,
+  ) {
     const trimmed = (input || '').trim();
     if (!trimmed) {
       throw Object.assign(new Error('Formato de assinatura inválido.'), { status: 400 });
     }
 
     const matches = trimmed.match(/^data:(.+);base64,(.+)$/);
-    const mimetype = matches?.[1] ?? 'image/png';
+    const mimetype = matches?.[1] ?? fallbackMimeType ?? 'image/png';
     const rawPayload = matches?.[2] ?? trimmed;
     const payload = rawPayload.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
 
-    if (!ASSINATURA_ALLOWED_MIME.includes(mimetype)) {
+    if (!allowedMimeTypes.includes(mimetype)) {
       throw Object.assign(new Error('Tipo de arquivo de assinatura não permitido.'), { status: 400 });
     }
     if (!/^[A-Za-z0-9+/=]+$/.test(payload)) {
@@ -831,11 +923,54 @@ export class TitularService {
     if (!buffer.length) {
       throw Object.assign(new Error('Assinatura em base64 inválida.'), { status: 400 });
     }
-    if (buffer.length > ASSINATURA_MAX_BYTES) {
+    if (buffer.length > maxBytes) {
       throw Object.assign(new Error('Arquivo de assinatura excede o limite de 5MB.'), { status: 400 });
     }
 
     return { buffer, mimetype };
+  }
+
+  private parseBase64ImageCustom(
+    input: string,
+    allowedMimeTypes: readonly string[],
+    maxBytes: number,
+    fallbackMimeType?: string,
+  ) {
+    return this.parseBase64ImageWithConstraints(
+      input,
+      allowedMimeTypes,
+      maxBytes,
+      fallbackMimeType,
+    );
+  }
+
+  private normalizeFilename(
+    filenameRaw: string | undefined,
+    mimeType: string,
+    fallbackBaseName: string,
+  ): string {
+    const extensionByMime: Record<string, string> = {
+      'image/png': 'png',
+      'image/jpeg': 'jpg',
+      'image/webp': 'webp',
+    };
+    const extension = extensionByMime[mimeType] ?? 'bin';
+    const sanitizedBase = String(filenameRaw ?? '')
+      .trim()
+      .replace(/[^\w.-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+
+    if (!sanitizedBase) {
+      return `${fallbackBaseName}-${Date.now()}.${extension}`;
+    }
+    if (sanitizedBase.toLowerCase().endsWith(`.${extension}`)) {
+      return sanitizedBase;
+    }
+    if (/\.[a-z0-9]+$/i.test(sanitizedBase)) {
+      return sanitizedBase;
+    }
+    return `${sanitizedBase}.${extension}`;
   }
 
   private async uploadAssinaturaArquivo(

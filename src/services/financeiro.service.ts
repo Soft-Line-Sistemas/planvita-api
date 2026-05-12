@@ -161,6 +161,19 @@ export interface FinanceiroRelatorioDTO {
   }>;
 }
 
+export interface ClienteContaFinanceiraDTO {
+  id: number;
+  descricao: string;
+  valor: number;
+  vencimento: Date;
+  status: string;
+  tipo: 'Receber';
+  paymentUrl: string | null;
+  pixQrCode: string | null;
+  asaasPaymentId: string | null;
+  asaasSubscriptionId: string | null;
+}
+
 export interface RecorrenciaFinanceiraDTO {
   titularId: number;
   clienteNome: string;
@@ -537,6 +550,77 @@ export class FinanceiroService {
     ];
   }
 
+  async listarContasDoCliente(titularId: number): Promise<ClienteContaFinanceiraDTO[]> {
+    try {
+      await this.asaasIntegration.syncRecurringPaymentsForTitular(titularId, {
+        maxPages: 3,
+      });
+    } catch (error: any) {
+      this.logger.warn('Falha ao sincronizar recorrências do titular antes da listagem', {
+        titularId,
+        error: error?.message,
+      });
+    }
+
+    const contas = await this.prisma.contaReceber.findMany({
+      where: {
+        clienteId: titularId,
+      },
+      orderBy: [{ vencimento: 'desc' }, { id: 'desc' }],
+      select: {
+        id: true,
+        descricao: true,
+        valor: true,
+        vencimento: true,
+        status: true,
+        paymentUrl: true,
+        pixQrCode: true,
+        asaasPaymentId: true,
+        asaasSubscriptionId: true,
+      },
+    });
+
+    const asaasPaymentIds = contas
+      .map((conta) => conta.asaasPaymentId)
+      .filter((id): id is string => Boolean(id));
+
+    const pagamentosPorAsaasId =
+      asaasPaymentIds.length > 0
+        ? await this.prisma.pagamento.findMany({
+            where: {
+              titularId,
+              asaasPaymentId: { in: asaasPaymentIds },
+            },
+            select: {
+              asaasPaymentId: true,
+              paymentUrl: true,
+              pixQrCode: true,
+            },
+          })
+        : [];
+
+    const pagamentoMap = new Map(
+      pagamentosPorAsaasId
+        .filter((p) => p.asaasPaymentId)
+        .map((p) => [p.asaasPaymentId as string, p]),
+    );
+
+    return contas.map((conta) => ({
+      ...conta,
+      paymentUrl:
+        conta.paymentUrl ??
+        (conta.asaasPaymentId
+          ? (pagamentoMap.get(conta.asaasPaymentId)?.paymentUrl ?? null)
+          : null),
+      pixQrCode:
+        conta.pixQrCode ??
+        (conta.asaasPaymentId
+          ? (pagamentoMap.get(conta.asaasPaymentId)?.pixQrCode ?? null)
+          : null),
+      tipo: 'Receber' as const,
+    }));
+  }
+
   async criarContaPagar(data: ContaPagarInput, userId?: number): Promise<ContaFinanceiraDTO> {
     if (data.valor <= 0) {
       throw new Error("O valor deve ser positivo.");
@@ -714,7 +798,12 @@ export class FinanceiroService {
     });
     if (!contaExistente) throw new Error("Conta não encontrada");
 
-    if (contaExistente?.asaasPaymentId) {
+    const statusContaExistente = String(contaExistente.status ?? '').toUpperCase();
+    const contaJaRecebida = STATUS_RECEBIMENTO_COMISSAO.includes(
+      statusContaExistente as (typeof STATUS_RECEBIMENTO_COMISSAO)[number],
+    );
+
+    if (contaExistente?.asaasPaymentId && !contaJaRecebida) {
       await this.asaasIntegration.confirmPaymentForContaReceber(id);
     }
 
@@ -731,7 +820,7 @@ export class FinanceiroService {
     } as const;
 
     const conta =
-      contaExistente.status === 'RECEBIDO'
+      contaJaRecebida
         ? await this.prisma.contaReceber.findUnique({
             where: { id },
             include: includeCliente,
@@ -747,7 +836,7 @@ export class FinanceiroService {
 
     if (!conta) throw new Error("Conta não encontrada");
 
-    if (contaExistente.status !== 'RECEBIDO') {
+    if (!contaJaRecebida) {
       await this.registrarPagamentoHistoricoContaReceber(conta);
     }
 

@@ -281,6 +281,50 @@ export class ClienteAuthService {
     });
   }
 
+  async changePassword(
+    titularId: number,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<void> {
+    if (!currentPassword || !newPassword) {
+      const err: any = new Error('Senha atual e nova senha são obrigatórias.');
+      err.status = 400;
+      throw err;
+    }
+
+    if (!isStrongPassword(newPassword)) {
+      const err: any = new Error(
+        'Senha fraca. Use no mínimo 8 caracteres com letra, número e caractere especial.',
+      );
+      err.status = 400;
+      throw err;
+    }
+
+    const credential = await (this.prisma as any).titularCredential.findUnique({
+      where: { titularId },
+      select: { senhaHash: true },
+    });
+
+    if (!credential?.senhaHash) {
+      const err: any = new Error('Credenciais inválidas.');
+      err.status = 401;
+      throw err;
+    }
+
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, credential.senhaHash);
+    if (!isCurrentPasswordValid) {
+      const err: any = new Error('Credenciais inválidas.');
+      err.status = 401;
+      throw err;
+    }
+
+    const senhaHash = await bcrypt.hash(newPassword, 10);
+    await (this.prisma as any).titularCredential.update({
+      where: { titularId },
+      data: { senhaHash },
+    });
+  }
+
   async getTitularFull(titularId: number): Promise<any | null> {
     return this.prisma.titular.findUnique({
       where: { id: titularId },
@@ -293,7 +337,9 @@ export class ClienteAuthService {
   }
 
   generateClienteJwt(payload: ClienteJwtPayload): string {
-    return jwt.sign(payload, config.jwt.secret, { expiresIn: config.jwt.expiresIn });
+    return jwt.sign(payload, config.jwt.secret, {
+      expiresIn: config.jwt.clienteExpiresIn,
+    });
   }
 
   private async findTitularByLogin(loginRaw: string) {

@@ -14,6 +14,16 @@ function discoverTenantsFromEnv(): string[] {
 }
 
 export function startRecorrenciaSyncScheduler() {
+  // Desativa o scheduler se ASAAS_SYNC_ENABLED=false ou em NODE_ENV=development
+  // sem opt-in explícito (ASAAS_SYNC_ENABLED=true).
+  const syncEnabled = process.env.ASAAS_SYNC_ENABLED;
+  const isDev = process.env.NODE_ENV === 'development';
+
+  if (syncEnabled === 'false' || (isDev && syncEnabled !== 'true')) {
+    logger.info('Scheduler de recorrência desativado (dev mode ou ASAAS_SYNC_ENABLED=false)');
+    return;
+  }
+
   const intervalMinutes = Number(
     process.env.RECORRENCIA_SYNC_INTERVAL_MINUTES || DEFAULT_INTERVAL_MINUTES,
   );

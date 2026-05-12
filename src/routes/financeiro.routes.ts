@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { FinanceiroController } from '../controllers/financeiro.controller';
+import { authenticateCliente } from '../middlewares/cliente-auth.middleware';
 
 const router = Router();
 const controller = new FinanceiroController();
 
+router.get('/cliente/contas', authenticateCliente, controller.getContasCliente.bind(controller));
 router.get('/contas', controller.getContas.bind(controller));
 router.post('/contas/pagar', controller.createContaPagar.bind(controller));
 router.post('/contas/receber', controller.createContaReceber.bind(controller));

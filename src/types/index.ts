@@ -45,6 +45,7 @@ export interface ServerConfig {
 export interface JwtConfig {
   secret: jwt.Secret;
   expiresIn: StringValue | number;
+  clienteExpiresIn: StringValue | number;
 }
 
 export interface NotificationConfig {
