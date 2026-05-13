@@ -19,6 +19,7 @@ const logger = new Logger({ service: 'tenant-middleware' });
 
 export const tenantMiddleware = async (req: TenantRequest, res: Response, next: NextFunction) => {
   try {
+    const isClienteLoginRoute = req.path.includes('/auth/login');
     let tenant = (req.headers['x-tenant'] as string | undefined)?.toLowerCase();
 
     if (!tenant) {
@@ -66,10 +67,16 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
     }
 
     if (!tenant) {
+      if (isClienteLoginRoute) {
+        return next();
+      }
       return res.status(400).send('Tenant not identified. Please provide X-Tenant header or tenant query param.');
     }
 
     if (!/^[a-z0-9-]+$/.test(tenant)) {
+      if (isClienteLoginRoute) {
+        return next();
+      }
       return res.status(400).send('Invalid tenant format');
     }
 
@@ -77,6 +84,12 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
     try {
       req.prisma = getPrismaForTenant(tenant);
     } catch (e: any) {
+      if (isClienteLoginRoute) {
+        logger.warn(`Skipping tenant db binding on login route for tenant ${tenant}`, {
+          reason: e?.message,
+        });
+        return next();
+      }
       logger.error(`Failed to get Prisma for tenant ${tenant}`, e);
       return res.status(404).send(`Tenant database not configured: ${tenant}`);
     }

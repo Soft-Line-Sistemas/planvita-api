@@ -17,6 +17,28 @@ export interface TenantRequest extends Request {
 
 export class AuthController {
   private logger = new Logger({ service: 'AuthController' });
+  private readonly clienteTenantFallback = ['lider', 'pax', 'bosque'];
+
+  private getClienteTenantCookieOptions() {
+    const isProd = config.server.nodeEnv === 'production';
+    return {
+      httpOnly: false as const,
+      secure: isProd,
+      sameSite: 'lax' as const,
+      domain: isProd ? '.planvita.com.br' : undefined,
+      maxAge: 1000 * 60 * 60 * 24 * 30,
+      path: '/',
+    };
+  }
+
+  private getClienteTenantCandidates(currentTenant?: string): string[] {
+    const preferred = String(currentTenant ?? '').trim().toLowerCase();
+    const ordered = preferred
+      ? [preferred, ...this.clienteTenantFallback]
+      : [...this.clienteTenantFallback];
+    return Array.from(new Set(ordered));
+  }
+
   private getClienteCookieOptions() {
     const isProd = config.server.nodeEnv === 'production';
     return {
@@ -31,11 +53,6 @@ export class AuthController {
 
   async login(req: TenantRequest, res: Response) {
     try {
-      if (!req.tenantId) {
-        res.status(400).json({ message: 'Tenant unknown' });
-        return;
-      }
-
       const { email, password, login, audience } = req.body ?? {};
 
       const isClienteFlow = audience === 'cliente' || Boolean(login);
@@ -47,27 +64,53 @@ export class AuthController {
           return res.status(400).json({ message: 'Login e senha são obrigatórios' });
         }
 
-        const service = new ClienteAuthService(req.tenantId);
-        const { result, code } = await service.login(loginValue, senhaValue);
+        const tenantsToTry = this.getClienteTenantCandidates(req.tenantId);
+        let firstAccessTenant: string | null = null;
 
-        if (!result && code === 'FIRST_ACCESS_REQUIRED') {
+        for (const tenant of tenantsToTry) {
+          try {
+            const service = new ClienteAuthService(tenant);
+            const { result, code } = await service.login(loginValue, senhaValue);
+
+            if (!result && code === 'FIRST_ACCESS_REQUIRED') {
+              firstAccessTenant = tenant;
+              continue;
+            }
+
+            if (!result) continue;
+
+            const clienteToken = service.generateClienteJwt({
+              titularId: result.titularId,
+              tenant,
+              email: result.email,
+            });
+
+            res.cookie('cliente_token', clienteToken, this.getClienteCookieOptions());
+            res.cookie('tenant', tenant, this.getClienteTenantCookieOptions());
+
+            return res.json(result);
+          } catch (error) {
+            this.logger.warn('Falha ao tentar login do cliente em tenant', {
+              tenant,
+              reason: (error as Error)?.message,
+            });
+          }
+        }
+
+        if (firstAccessTenant) {
           return res.status(428).json({
             message: 'Primeiro acesso necessário para definir uma senha.',
-            code,
+            code: 'FIRST_ACCESS_REQUIRED',
+            tenant: firstAccessTenant,
           });
         }
 
-        if (!result) return res.status(401).json({ message: 'Credenciais inválidas' });
+        return res.status(401).json({ message: 'Credenciais inválidas' });
+      }
 
-        const clienteToken = service.generateClienteJwt({
-          titularId: result.titularId,
-          tenant: req.tenantId,
-          email: result.email,
-        });
-
-        res.cookie('cliente_token', clienteToken, this.getClienteCookieOptions());
-
-        return res.json(result);
+      if (!req.tenantId) {
+        res.status(400).json({ message: 'Tenant unknown' });
+        return;
       }
 
       const emailValue = String(email ?? '').trim().toLowerCase();
