@@ -990,6 +990,40 @@ export class TitularService {
     });
   }
 
+  async baixarFotoPerfil(titularId: number): Promise<{ buffer: Buffer; mimetype: string }> {
+    const foto = await this.buscarFotoPerfil(titularId);
+    if (!foto) {
+      const err: any = new Error('Foto de perfil não encontrada.');
+      err.status = 404;
+      throw err;
+    }
+
+    const token = this.getFilesApiToken();
+    if (!token) {
+      throw new Error('Token da Files API não configurado para este tenant.');
+    }
+
+    const response = await fetch(foto.arquivoUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(
+        `Falha ao baixar foto do armazenamento externo: ${response.status} ${message}`,
+      );
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      mimetype: response.headers.get('content-type') || 'image/jpeg',
+    };
+  }
+
   private parseBase64Image(input: string) {
     return this.parseBase64ImageWithConstraints(
       input,

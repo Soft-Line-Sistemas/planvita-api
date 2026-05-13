@@ -507,6 +507,27 @@ export class TitularController {
     }
   }
 
+  async downloadFotoPerfilMe(req: TenantRequest & ClienteAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      const titularId = this.getTitularIdFromClienteRequest(req);
+      if (!titularId) return res.status(401).json({ message: 'Não autenticado' });
+
+      const service = new TitularService(req.tenantId);
+      const { buffer, mimetype } = await service.baixarFotoPerfil(titularId);
+
+      res.setHeader('Content-Type', mimetype);
+      res.setHeader('Cache-Control', 'private, max-age=60');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.send(buffer);
+    } catch (error: any) {
+      const status = error?.status ?? 500;
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      this.logger.error('Falha ao baixar foto de perfil do cliente', error);
+      res.status(status).json({ message });
+    }
+  }
+
   async getById(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
