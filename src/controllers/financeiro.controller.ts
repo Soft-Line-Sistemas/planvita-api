@@ -63,12 +63,20 @@ export class FinanceiroController {
       if (!titularId) {
         return res.status(401).json({ message: 'Não autenticado' });
       }
+      const historicoRaw = req.query?.historico;
+      const historicoValue = Array.isArray(historicoRaw) ? historicoRaw[0] : historicoRaw;
+      const historico =
+        String(historicoValue ?? '').toLowerCase() === '1' ||
+        String(historicoValue ?? '').toLowerCase() === 'true';
 
       const service = this.resolveService(req);
-      const result = await service.listarContasDoCliente(titularId);
+      const result = await service.listarContasDoCliente(titularId, {
+        incluirHistoricoPago: historico,
+      });
       this.logger.info('Contas financeiras do cliente listadas', {
         tenant: req.tenantId,
         titularId,
+        historico,
       });
       res.json(result);
     } catch (error) {

@@ -171,6 +171,13 @@ describe('FinanceiroService', () => {
     expect(prismaMock.contaReceber.findMany).toHaveBeenCalledWith({
       where: {
         clienteId: titularId,
+        OR: [
+          { status: { in: ['PENDENTE', 'VENCIDO', 'ATRASADO'] } },
+          {
+            status: { in: ['PAGO', 'RECEBIDO', 'CONFIRMADO', 'CANCELADO'] },
+            vencimento: { gte: expect.any(Date) },
+          },
+        ],
       },
       orderBy: [{ vencimento: 'desc' }, { id: 'desc' }],
       select: {

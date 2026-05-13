@@ -2,9 +2,24 @@ import { Prisma, getPrismaForTenant } from '../utils/prisma';
 import { CadastroTitularRequest } from '../types/titular';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { Buffer } from 'buffer';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { AsaasIntegrationService } from './asaas-integration.service';
 import Logger from '../utils/logger';
 import { TitularPricingService } from './titular-pricing.service';
+import {
+  AlignmentType,
+  Document,
+  HeadingLevel,
+  ImageRun,
+  Packer,
+  Paragraph,
+  TextRun,
+} from 'docx';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 type TitularType = Prisma.TitularGetPayload<{}>;
 
@@ -50,6 +65,15 @@ const FOTO_PERFIL_ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp'];
 const FOTO_PERFIL_MAX_BYTES = 5 * 1024 * 1024; // 5MB
 const DEFAULT_DIAS_SUSPENSAO = 90;
 const MAX_DEPENDENTES_POR_TITULAR = 8;
+const execFileAsync = promisify(execFile);
+const CONTRATO_TEMPLATE_CANDIDATES = [
+  process.env.CONTRATO_TEMPLATE_DOCX_PATH,
+  path.resolve(process.cwd(), '../frontend/public/docs/contrato.docx'),
+  path.resolve(process.cwd(), 'frontend/public/docs/contrato.docx'),
+  path.resolve(process.cwd(), 'public/docs/contrato.docx'),
+  path.resolve(process.cwd(), 'src/assets/contrato.docx'),
+  path.resolve(process.cwd(), '../dist/public/docs/contrato.docx'),
+].filter(Boolean) as string[];
 type AssinaturaDigitalType = {
   id: number;
   titularId: number;
@@ -68,6 +92,13 @@ export type FotoPerfilPayload = {
   imageBase64: string;
   filename?: string;
   mimeType?: 'image/png' | 'image/jpeg' | 'image/webp';
+};
+
+export type FotoPerfilResponse = {
+  id: number;
+  titularId: number;
+  arquivoUrl: string;
+  dataUpload: Date;
 };
 
 export class TitularService {
@@ -818,10 +849,65 @@ export class TitularService {
     };
   }
 
+  async baixarContratoComAssinaturas(
+    titularId: number,
+    format: 'docx' | 'pdf' = 'pdf',
+  ): Promise<{ buffer: Buffer; mimetype: string; filename: string }> {
+    const titular = await this.prisma.titular.findUnique({
+      where: { id: titularId },
+      select: { id: true, nome: true },
+    });
+    if (!titular) {
+      const err: any = new Error('Titular não encontrado.');
+      err.status = 404;
+      throw err;
+    }
+
+    const templatePath = this.resolveContratoTemplatePath();
+    const templateBuffer = fs.readFileSync(templatePath);
+    const assinaturaPageBuffer = await this.buildAssinaturasPageDocxBuffer(titularId);
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const DocxMerger = require('docx-merger');
+    const merger = new DocxMerger({ pageBreak: true }, [templateBuffer, assinaturaPageBuffer]);
+    const mergedBuffer = await new Promise<Buffer>((resolve) => {
+      merger.save('nodebuffer', (data: Buffer) => resolve(data));
+    });
+
+    const safeName = String(titular.nome || 'titular')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\w\s-]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .toLowerCase();
+
+    const assinaturas = await this.listarAssinaturas(titularId);
+    const hasAnyAssinatura = assinaturas.length > 0;
+    const sufixoStatus = hasAnyAssinatura ? 'assinado' : 'pendente-assinatura';
+    const filenameBase = `contrato-${safeName || 'cliente'}-${sufixoStatus}`;
+    if (format === 'docx') {
+      return {
+        buffer: mergedBuffer,
+        mimetype: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        filename: `${filenameBase}.docx`,
+      };
+    }
+
+    const basePdfBuffer = await this.convertDocxBufferToPdf(templateBuffer, `${filenameBase}-base`);
+    const assinaturasPdfBuffer = await this.buildAssinaturasPagePdfBuffer(titularId);
+    const pdfBuffer = await this.mergePdfBuffers([basePdfBuffer, assinaturasPdfBuffer]);
+    return {
+      buffer: pdfBuffer,
+      mimetype: 'application/pdf',
+      filename: `${filenameBase}.pdf`,
+    };
+  }
+
   async salvarFotoPerfil(
     titularId: number,
     payload: FotoPerfilPayload,
-  ): Promise<{ id: number; titularId: number; arquivoUrl: string; dataUpload: Date }> {
+  ): Promise<FotoPerfilResponse> {
     const titular = await this.prisma.titular.findUnique({
       where: { id: titularId },
       select: { id: true },
@@ -888,12 +974,254 @@ export class TitularService {
     });
   }
 
+  async buscarFotoPerfil(titularId: number): Promise<FotoPerfilResponse | null> {
+    return this.prisma.documento.findFirst({
+      where: {
+        titularId,
+        tipoDocumento: FOTO_PERFIL_TIPO_DOCUMENTO,
+      },
+      orderBy: { dataUpload: 'desc' },
+      select: {
+        id: true,
+        titularId: true,
+        arquivoUrl: true,
+        dataUpload: true,
+      },
+    });
+  }
+
   private parseBase64Image(input: string) {
     return this.parseBase64ImageWithConstraints(
       input,
       ASSINATURA_ALLOWED_MIME,
       ASSINATURA_MAX_BYTES,
     );
+  }
+
+  private resolveContratoTemplatePath(): string {
+    for (const candidate of CONTRATO_TEMPLATE_CANDIDATES) {
+      if (candidate && fs.existsSync(candidate)) return candidate;
+    }
+    throw new Error(
+      `Template de contrato .docx não encontrado. Configure CONTRATO_TEMPLATE_DOCX_PATH ou disponibilize o arquivo em um dos caminhos esperados.`,
+    );
+  }
+
+  private async buildAssinaturasPageDocxBuffer(titularId: number): Promise<Buffer> {
+    const assinaturas = await this.listarAssinaturas(titularId);
+    const mapByTipo = new Map<string, AssinaturaDigitalType>();
+    for (const assinatura of assinaturas) {
+      mapByTipo.set(assinatura.tipo, assinatura);
+    }
+
+    const sections = [
+      { tipo: 'TITULAR_ASSINATURA_1', titulo: 'Titular - Assinatura 1' },
+      { tipo: 'TITULAR_ASSINATURA_2', titulo: 'Titular - Assinatura 2' },
+      { tipo: 'CORRESPONSAVEL_ASSINATURA_1', titulo: 'Corresponsável financeiro - 1' },
+      { tipo: 'CORRESPONSAVEL_ASSINATURA_2', titulo: 'Corresponsável financeiro - 2' },
+    ] as const;
+
+    const children: Paragraph[] = [
+      new Paragraph({
+        heading: HeadingLevel.HEADING_2,
+        alignment: AlignmentType.LEFT,
+        children: [new TextRun({ text: 'Assinaturas', bold: true })],
+      }),
+      new Paragraph({ children: [new TextRun('')] }),
+    ];
+
+    for (const item of sections) {
+      const assinatura = mapByTipo.get(item.tipo);
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: item.titulo, bold: true, size: 24 })],
+        }),
+      );
+
+      if (assinatura) {
+        try {
+          const { buffer, mimetype } = await this.baixarAssinaturaDigital(titularId, assinatura.id);
+          const imageType = mimetype.includes('png') ? 'png' : 'jpg';
+          children.push(
+            new Paragraph({
+              children: [
+                new ImageRun({
+                  data: buffer,
+                  type: imageType,
+                  transformation: { width: 260, height: 90 },
+                }),
+              ],
+            }),
+          );
+        } catch (error) {
+          this.logger.warn('Falha ao carregar assinatura para contrato', {
+            titularId,
+            assinaturaId: assinatura.id,
+            tipo: assinatura.tipo,
+            error: (error as any)?.message,
+          });
+          children.push(new Paragraph({ children: [new TextRun('Pendente assinatura')] }));
+        }
+      } else {
+        children.push(new Paragraph({ children: [new TextRun('Pendente assinatura')] }));
+      }
+
+      if (assinatura?.createdAt) {
+        const dataAssinatura = this.formatDatePtBr(assinatura.createdAt);
+        children.push(
+          new Paragraph({
+            children: [new TextRun(`Assinado em ${dataAssinatura}`)],
+          }),
+        );
+      }
+      children.push(new Paragraph({ children: [new TextRun('')] }));
+    }
+
+    const doc = new Document({
+      sections: [
+        {
+          properties: {},
+          children,
+        },
+      ],
+    });
+
+    return Packer.toBuffer(doc);
+  }
+
+  private formatDatePtBr(value: Date | string): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = String(date.getFullYear());
+    return `${day}/${month}/${year}`;
+  }
+
+  private async convertDocxBufferToPdf(docxBuffer: Buffer, filenameBase: string): Promise<Buffer> {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'planvita-contrato-'));
+    const inputPath = path.join(tempDir, `${filenameBase}.docx`);
+    const outputPath = path.join(tempDir, `${filenameBase}.pdf`);
+
+    try {
+      fs.writeFileSync(inputPath, docxBuffer);
+
+      await execFileAsync('soffice', [
+        '--headless',
+        '--nologo',
+        '--nolockcheck',
+        '--convert-to',
+        'pdf:writer_pdf_Export',
+        '--outdir',
+        tempDir,
+        inputPath,
+      ]);
+
+      const generatedFiles = fs.readdirSync(tempDir).filter((file) => file.toLowerCase().endsWith('.pdf'));
+      const resolvedOutputPath = fs.existsSync(outputPath)
+        ? outputPath
+        : generatedFiles.length > 0
+          ? path.join(tempDir, generatedFiles[0])
+          : null;
+
+      if (!resolvedOutputPath) throw new Error('Conversão para PDF não gerou arquivo de saída.');
+
+      return fs.readFileSync(resolvedOutputPath);
+    } catch (error: any) {
+      throw new Error(`Falha ao converter contrato para PDF: ${error?.message || error}`);
+    } finally {
+      try {
+        if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+        if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
+        // noop
+      }
+    }
+  }
+
+  private async buildAssinaturasPagePdfBuffer(titularId: number): Promise<Buffer> {
+    const assinaturas = await this.listarAssinaturas(titularId);
+    const mapByTipo = new Map<string, AssinaturaDigitalType>();
+    for (const assinatura of assinaturas) mapByTipo.set(assinatura.tipo, assinatura);
+
+    const sections = [
+      { tipo: 'TITULAR_ASSINATURA_1', titulo: 'Titular - Assinatura 1' },
+      { tipo: 'TITULAR_ASSINATURA_2', titulo: 'Titular - Assinatura 2' },
+      { tipo: 'CORRESPONSAVEL_ASSINATURA_1', titulo: 'Corresponsavel financeiro - 1' },
+      { tipo: 'CORRESPONSAVEL_ASSINATURA_2', titulo: 'Corresponsavel financeiro - 2' },
+    ] as const;
+
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([595.28, 841.89]); // A4
+    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
+
+    let y = 800;
+    page.drawText('Assinaturas', {
+      x: 50,
+      y,
+      size: 16,
+      font: fontBold,
+      color: rgb(0, 0, 0),
+    });
+    y -= 35;
+
+    for (const item of sections) {
+      const assinatura = mapByTipo.get(item.tipo);
+      page.drawText(item.titulo, {
+        x: 50,
+        y,
+        size: 12,
+        font: fontBold,
+      });
+      y -= 20;
+
+      if (assinatura) {
+        try {
+          const { buffer, mimetype } = await this.baixarAssinaturaDigital(titularId, assinatura.id);
+          const image = mimetype.includes('png')
+            ? await pdf.embedPng(buffer)
+            : await pdf.embedJpg(buffer);
+          const targetWidth = 220;
+          const ratio = targetWidth / image.width;
+          const targetHeight = Math.min(image.height * ratio, 90);
+          page.drawImage(image, { x: 50, y: y - targetHeight + 5, width: targetWidth, height: targetHeight });
+          y -= 90;
+        } catch {
+          page.drawText('Pendente assinatura', { x: 50, y, size: 11, font });
+          y -= 20;
+        }
+      } else {
+        page.drawText('Pendente assinatura', { x: 50, y, size: 11, font });
+        y -= 20;
+      }
+
+      if (assinatura?.createdAt) {
+        const dataAssinatura = this.formatDatePtBr(assinatura.createdAt);
+        page.drawText(`Assinado em ${dataAssinatura}`, {
+          x: 50,
+          y,
+          size: 11,
+          font,
+        });
+        y -= 30;
+      } else {
+        y -= 15;
+      }
+    }
+
+    return Buffer.from(await pdf.save());
+  }
+
+  private async mergePdfBuffers(buffers: Buffer[]): Promise<Buffer> {
+    const mergedPdf = await PDFDocument.create();
+    for (const buf of buffers) {
+      const src = await PDFDocument.load(buf);
+      const copied = await mergedPdf.copyPages(src, src.getPageIndices());
+      for (const page of copied) mergedPdf.addPage(page);
+    }
+    return Buffer.from(await mergedPdf.save());
   }
 
   private parseBase64ImageWithConstraints(

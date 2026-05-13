@@ -550,7 +550,10 @@ export class FinanceiroService {
     ];
   }
 
-  async listarContasDoCliente(titularId: number): Promise<ClienteContaFinanceiraDTO[]> {
+  async listarContasDoCliente(
+    titularId: number,
+    options?: { incluirHistoricoPago?: boolean },
+  ): Promise<ClienteContaFinanceiraDTO[]> {
     try {
       await this.asaasIntegration.syncRecurringPaymentsForTitular(titularId, {
         maxPages: 3,
@@ -562,9 +565,24 @@ export class FinanceiroService {
       });
     }
 
+    const incluirHistoricoPago = options?.incluirHistoricoPago === true;
+    const limitePago = new Date();
+    limitePago.setFullYear(limitePago.getFullYear() - 1);
+
     const contas = await this.prisma.contaReceber.findMany({
       where: {
         clienteId: titularId,
+        ...(incluirHistoricoPago
+          ? {}
+          : {
+              OR: [
+                { status: { in: ['PENDENTE', 'VENCIDO', 'ATRASADO'] } },
+                {
+                  status: { in: ['PAGO', 'RECEBIDO', 'CONFIRMADO', 'CANCELADO'] },
+                  vencimento: { gte: limitePago },
+                },
+              ],
+            }),
       },
       orderBy: [{ vencimento: 'desc' }, { id: 'desc' }],
       select: {
