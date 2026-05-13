@@ -13,6 +13,7 @@ router.post('/me/foto', authenticateCliente, controller.uploadFotoPerfilMe.bind(
 router.delete('/me/foto', authenticateCliente, controller.deleteFotoPerfilMe.bind(controller));
 router.get('/me/assinaturas', authenticateCliente, controller.getAssinaturasMe.bind(controller));
 router.post('/me/assinaturas', authenticateCliente, controller.salvarAssinaturaMe.bind(controller));
+router.get('/me/contrato/arquivo', authenticateCliente, controller.downloadContratoMe.bind(controller));
 router.get(
   '/me/assinaturas/:assinaturaId/arquivo',
   authenticateCliente,
@@ -49,6 +50,12 @@ router.get(
   authenticate,
   authorize(['titular.view']),
   controller.downloadAssinatura.bind(controller),
+);
+router.get(
+  '/:id/contrato/arquivo',
+  authenticate,
+  authorize(['titular.view']),
+  controller.downloadContrato.bind(controller),
 );
 router.get('/:id', authenticate, authorize(['titular.view']), controller.getById.bind(controller));
 router.post('/', authenticate, authorize(['titular.create']), controller.create.bind(controller));

@@ -168,9 +168,11 @@ export class TitularController {
       const service = new TitularService(req.tenantId);
       const detalhe = await service.getById(titularId);
       if (!detalhe) return res.status(404).json({ message: 'Titular not found' });
+      const fotoPerfil = await service.buscarFotoPerfil(titularId);
 
       res.json({
         ...detalhe,
+        fotoPerfil,
         tenantSlug: req.tenantId,
       });
     } catch (error: any) {
@@ -389,6 +391,70 @@ export class TitularController {
       const status = error?.status ?? 500;
       const message = error instanceof Error ? error.message : 'Internal server error';
       this.logger.error('Falha ao baixar assinatura do cliente', error, { params: req.params });
+      res.status(status).json({ message });
+    }
+  }
+
+  async downloadContratoMe(req: TenantRequest & ClienteAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const titularId = this.getTitularIdFromClienteRequest(req);
+      if (!titularId) return res.status(401).json({ message: 'Não autenticado' });
+
+      const format = req.query.format === 'docx' ? 'docx' : 'pdf';
+      const service = new TitularService(req.tenantId);
+      const { buffer, mimetype, filename } = await service.baixarContratoComAssinaturas(
+        titularId,
+        format,
+      );
+
+      const mode = req.query.mode === 'inline' ? 'inline' : 'attachment';
+      res.setHeader('Content-Type', mimetype);
+      res.setHeader(
+        'Content-Disposition',
+        `${mode}; filename="${encodeURIComponent(filename)}"`,
+      );
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+      res.send(buffer);
+    } catch (error: any) {
+      const status = error?.status ?? 500;
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      this.logger.error('Falha ao baixar contrato do cliente', error, { params: req.params });
+      res.status(status).json({ message });
+    }
+  }
+
+  async downloadContrato(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const titularId = Number(req.params.id);
+      if (Number.isNaN(titularId)) {
+        return res.status(400).json({ message: 'Parâmetros inválidos' });
+      }
+
+      const format = req.query.format === 'docx' ? 'docx' : 'pdf';
+      const service = new TitularService(req.tenantId);
+      const { buffer, mimetype, filename } = await service.baixarContratoComAssinaturas(
+        titularId,
+        format,
+      );
+
+      const mode = req.query.mode === 'inline' ? 'inline' : 'attachment';
+      res.setHeader('Content-Type', mimetype);
+      res.setHeader(
+        'Content-Disposition',
+        `${mode}; filename="${encodeURIComponent(filename)}"`,
+      );
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+      res.send(buffer);
+    } catch (error: any) {
+      const status = error?.status ?? 500;
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      this.logger.error('Falha ao baixar contrato', error, { params: req.params });
       res.status(status).json({ message });
     }
   }
