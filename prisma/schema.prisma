@@ -140,6 +140,7 @@ model Titular {
   credential      TitularCredential?
   otps            TitularOtp[]
   tokens          TitularToken[]
+  parceriasResgates ParceriaVantagemResgate[]
 
   planoId        Int?
   plano          Plano?      @relation(fields: [planoId], references: [id]) // 🔹 Relação adicionada
@@ -281,6 +282,103 @@ model Plano {
   beneficios                   PlanoBeneficio[]
   tiposBeneficiarios           PlanoBeneficiarioTipo[]
   titulares                    Titular[]
+  parceriasVantagens           ParceriaVantagemPlano[]
+}
+
+model ParceriaCategoria {
+  id          Int      @id @default(autoincrement())
+  nome        String
+  slug        String   @unique
+  descricao   String?
+  icone       String?
+  ordem       Int      @default(0)
+  ativo       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  vantagens   ParceriaVantagem[]
+}
+
+model Parceiro {
+  id                Int      @id @default(autoincrement())
+  nome              String
+  slug              String   @unique
+  descricaoCurta    String?
+  descricaoCompleta String?
+  logoUrl           String?
+  bannerUrl         String?
+  siteUrl           String?
+  whatsapp          String?
+  telefone          String?
+  email             String?
+  endereco          String?
+  cidade            String?
+  uf                String?
+  ativo             Boolean  @default(true)
+  destaque          Boolean  @default(false)
+  ordem             Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  vantagens         ParceriaVantagem[]
+}
+
+model ParceriaVantagem {
+  id                  Int      @id @default(autoincrement())
+  parceiroId          Int
+  categoriaId         Int?
+  titulo              String
+  slug                String   @unique
+  descricaoCurta      String?
+  descricaoCompleta   String?
+  tipo                String
+  valorDesconto       Float?
+  codigoCupom         String?
+  linkResgate         String?
+  instrucoesResgate   String?
+  regrasUso           String?
+  validadeInicio      DateTime?
+  validadeFim         DateTime?
+  publico             String   @default("CLIENTES_ATIVOS")
+  status              String   @default("RASCUNHO")
+  destaque            Boolean  @default(false)
+  ordem               Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  parceiro            Parceiro @relation(fields: [parceiroId], references: [id])
+  categoria           ParceriaCategoria? @relation(fields: [categoriaId], references: [id])
+  planos              ParceriaVantagemPlano[]
+  resgates            ParceriaVantagemResgate[]
+
+  @@index([status, destaque, ordem])
+  @@index([categoriaId])
+  @@index([parceiroId])
+}
+
+model ParceriaVantagemPlano {
+  vantagemId Int
+  planoId    Int
+
+  vantagem   ParceriaVantagem @relation(fields: [vantagemId], references: [id], onDelete: Cascade)
+  plano      Plano            @relation(fields: [planoId], references: [id], onDelete: Cascade)
+
+  @@id([vantagemId, planoId])
+}
+
+model ParceriaVantagemResgate {
+  id          Int      @id @default(autoincrement())
+  vantagemId  Int
+  titularId   Int
+  canal       String?
+  status      String   @default("REGISTRADO")
+  createdAt   DateTime @default(now())
+
+  vantagem    ParceriaVantagem @relation(fields: [vantagemId], references: [id], onDelete: Cascade)
+  titular     Titular          @relation(fields: [titularId], references: [id], onDelete: Cascade)
+
+  @@index([titularId, createdAt])
+  @@index([vantagemId, createdAt])
 }
 
 // ----------------- BENEFICIÁRIOS -----------------
