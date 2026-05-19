@@ -32,6 +32,7 @@ import notificacaoRoutes from './routes/notificacao.routes';
 import notificacaoTemplateRoutes from './routes/notificacao-template.routes';
 import asaasRoutes from './routes/asaas.routes';
 import providerRoutes from './routes/provider.routes';
+import parceriasRoutes from './routes/parcerias.routes';
 
 dotenv.config({ quiet: true });
 
@@ -154,6 +155,7 @@ app.use(`/api/${API_VERSION}/financeiro`, financeiroRoutes);
 app.use(`/api/${API_VERSION}/providers`, providerRoutes);
 app.use(`/api/${API_VERSION}/notificacoes`, notificacaoRoutes);
 app.use(`/api/${API_VERSION}/notificacoes/templates`, notificacaoTemplateRoutes);
+app.use(`/api/${API_VERSION}/parcerias`, parceriasRoutes);
 
 // Handler error
 app.use(notFoundHandler);
