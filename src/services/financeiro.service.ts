@@ -569,34 +569,83 @@ export class FinanceiroService {
     const limitePago = new Date();
     limitePago.setFullYear(limitePago.getFullYear() - 1);
 
-    const contas = await this.prisma.contaReceber.findMany({
-      where: {
-        clienteId: titularId,
-        ...(incluirHistoricoPago
-          ? {}
-          : {
-              OR: [
-                { status: { in: ['PENDENTE', 'VENCIDO', 'ATRASADO'] } },
-                {
-                  status: { in: ['PAGO', 'RECEBIDO', 'CONFIRMADO', 'CANCELADO'] },
-                  vencimento: { gte: limitePago },
-                },
-              ],
-            }),
-      },
+    const whereClause: Prisma.ContaReceberWhereInput = {
+      clienteId: titularId,
+      ...(incluirHistoricoPago
+        ? {}
+        : {
+            OR: [
+              { status: { in: ['PENDENTE', 'VENCIDO', 'ATRASADO'] } },
+              {
+                status: { in: ['PAGO', 'RECEBIDO', 'CONFIRMADO', 'CANCELADO'] },
+                vencimento: { gte: limitePago },
+              },
+            ],
+          }),
+    };
+
+    const selectClause = {
+      id: true,
+      descricao: true,
+      valor: true,
+      vencimento: true,
+      status: true,
+      paymentUrl: true,
+      pixQrCode: true,
+      asaasPaymentId: true,
+      asaasSubscriptionId: true,
+    } as const;
+
+    let contas = await this.prisma.contaReceber.findMany({
+      where: whereClause,
       orderBy: [{ vencimento: 'desc' }, { id: 'desc' }],
-      select: {
-        id: true,
-        descricao: true,
-        valor: true,
-        vencimento: true,
-        status: true,
-        paymentUrl: true,
-        pixQrCode: true,
-        asaasPaymentId: true,
-        asaasSubscriptionId: true,
-      },
+      select: selectClause,
     });
+
+    // Evita status local defasado quando o Asaas já marcou a cobrança como recebida.
+    // Reconsulta apenas cobranças em aberto vinculadas ao Asaas.
+    const contasAbertasAsaas = contas
+      .filter(
+        (conta) =>
+          ['PENDENTE', 'VENCIDO', 'ATRASADO'].includes(
+            String(conta.status ?? '').toUpperCase(),
+          ) && Boolean(conta.asaasPaymentId || conta.asaasSubscriptionId),
+      )
+      .slice(0, 20);
+
+    if (contasAbertasAsaas.length > 0) {
+      const refreshResults = await Promise.allSettled(
+        contasAbertasAsaas.map((conta) =>
+          this.asaasIntegration.refreshPaymentStatus(conta.id),
+        ),
+      );
+
+      const houveMudanca = refreshResults.some(
+        (result) => result.status === 'fulfilled',
+      );
+
+      if (houveMudanca) {
+        contas = await this.prisma.contaReceber.findMany({
+          where: whereClause,
+          orderBy: [{ vencimento: 'desc' }, { id: 'desc' }],
+          select: selectClause,
+        });
+      } else {
+        const falhas = refreshResults.filter(
+          (result) => result.status === 'rejected',
+        );
+        if (falhas.length > 0) {
+          this.logger.warn(
+            'Reconsulta Asaas sem atualização de contas do cliente',
+            {
+              titularId,
+              tentativas: contasAbertasAsaas.length,
+              falhas: falhas.length,
+            },
+          );
+        }
+      }
+    }
 
     const asaasPaymentIds = contas
       .map((conta) => conta.asaasPaymentId)
