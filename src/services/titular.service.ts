@@ -68,11 +68,18 @@ const MAX_DEPENDENTES_POR_TITULAR = 8;
 const execFileAsync = promisify(execFile);
 const CONTRATO_TEMPLATE_CANDIDATES = [
   process.env.CONTRATO_TEMPLATE_DOCX_PATH,
+  path.resolve(process.cwd(), 'public/docs/contrato.docx'),
+  path.resolve(process.cwd(), 'docs/contrato.docx'),
+  path.resolve(process.cwd(), 'src/assets/contrato.docx'),
+  path.resolve(process.cwd(), 'dist/public/docs/contrato.docx'),
+  path.resolve(process.cwd(), 'dist/assets/contrato.docx'),
   path.resolve(process.cwd(), '../frontend/public/docs/contrato.docx'),
   path.resolve(process.cwd(), 'frontend/public/docs/contrato.docx'),
-  path.resolve(process.cwd(), 'public/docs/contrato.docx'),
-  path.resolve(process.cwd(), 'src/assets/contrato.docx'),
   path.resolve(process.cwd(), '../dist/public/docs/contrato.docx'),
+  path.resolve(__dirname, '../../public/docs/contrato.docx'),
+  path.resolve(__dirname, '../../docs/contrato.docx'),
+  path.resolve(__dirname, '../public/docs/contrato.docx'),
+  path.resolve(__dirname, '../assets/contrato.docx'),
 ].filter(Boolean) as string[];
 type AssinaturaDigitalType = {
   id: number;
@@ -865,11 +872,15 @@ export class TitularService {
 
     const templatePath = this.resolveContratoTemplatePath();
     const templateBuffer = fs.readFileSync(templatePath);
+    const fichaAdesaoBuffer = await this.buildFichaAdesaoPageDocxBuffer(titularId);
     const assinaturaPageBuffer = await this.buildAssinaturasPageDocxBuffer(titularId);
 
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const DocxMerger = require('docx-merger');
-    const merger = new DocxMerger({ pageBreak: true }, [templateBuffer, assinaturaPageBuffer]);
+    const merger = new DocxMerger(
+      { pageBreak: true },
+      [templateBuffer, fichaAdesaoBuffer, assinaturaPageBuffer],
+    );
     const mergedBuffer = await new Promise<Buffer>((resolve) => {
       merger.save('nodebuffer', (data: Buffer) => resolve(data));
     });
@@ -895,8 +906,16 @@ export class TitularService {
     }
 
     const basePdfBuffer = await this.convertDocxBufferToPdf(templateBuffer, `${filenameBase}-base`);
+    const fichaAdesaoPdfBuffer = await this.convertDocxBufferToPdf(
+      fichaAdesaoBuffer,
+      `${filenameBase}-ficha-adesao`,
+    );
     const assinaturasPdfBuffer = await this.buildAssinaturasPagePdfBuffer(titularId);
-    const pdfBuffer = await this.mergePdfBuffers([basePdfBuffer, assinaturasPdfBuffer]);
+    const pdfBuffer = await this.mergePdfBuffers([
+      basePdfBuffer,
+      fichaAdesaoPdfBuffer,
+      assinaturasPdfBuffer,
+    ]);
     return {
       buffer: pdfBuffer,
       mimetype: 'application/pdf',
@@ -1036,8 +1055,9 @@ export class TitularService {
     for (const candidate of CONTRATO_TEMPLATE_CANDIDATES) {
       if (candidate && fs.existsSync(candidate)) return candidate;
     }
+    const candidates = CONTRATO_TEMPLATE_CANDIDATES.join(' | ');
     throw new Error(
-      `Template de contrato .docx não encontrado. Configure CONTRATO_TEMPLATE_DOCX_PATH ou disponibilize o arquivo em um dos caminhos esperados.`,
+      `Template de contrato .docx não encontrado. Configure CONTRATO_TEMPLATE_DOCX_PATH ou disponibilize o arquivo em um dos caminhos esperados. Candidatos verificados: ${candidates}`,
     );
   }
 
@@ -1130,6 +1150,133 @@ export class TitularService {
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = String(date.getFullYear());
     return `${day}/${month}/${year}`;
+  }
+
+  private async buildFichaAdesaoPageDocxBuffer(titularId: number): Promise<Buffer> {
+    const titular = await this.prisma.titular.findUnique({
+      where: { id: titularId },
+      include: {
+        plano: true,
+        dependentes: true,
+        corresponsaveis: true,
+        vendedor: true,
+      },
+    });
+
+    if (!titular) {
+      const err: any = new Error('Titular não encontrado.');
+      err.status = 404;
+      throw err;
+    }
+
+    const corresponsavel = titular.corresponsaveis?.[0] ?? null;
+    const line = (label: string, value: string | number | null | undefined) =>
+      new Paragraph({
+        spacing: { after: 120 },
+        children: [
+          new TextRun({ text: `${label}: `, bold: true }),
+          new TextRun(String(value ?? 'Não informado')),
+        ],
+      });
+
+    const blockTitle = (text: string) =>
+      new Paragraph({
+        spacing: { before: 220, after: 120 },
+        children: [new TextRun({ text, bold: true, size: 24 })],
+      });
+
+    const children: Paragraph[] = [
+      new Paragraph({
+        heading: HeadingLevel.HEADING_2,
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun({ text: 'FICHA DE ADESAO', bold: true })],
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 280 },
+        children: [new TextRun({ text: 'Dados cadastrais e detalhamento da adesao ao plano', italics: true })],
+      }),
+
+      blockTitle('1. Titular'),
+      line('Nome', titular.nome),
+      line('CPF', titular.cpf),
+      line('RG', titular.rg),
+      line('Data de nascimento', this.formatDatePtBr(titular.dataNascimento)),
+      line('Email', titular.email),
+      line('Telefone', titular.telefone),
+      line('Profissao', titular.profissao),
+      line('Situacao conjugal', titular.situacaoConjugal),
+      line('Naturalidade', titular.naturalidade),
+
+      blockTitle('2. Endereco do titular'),
+      line('CEP', titular.cep),
+      line('Logradouro', titular.logradouro),
+      line('Numero', titular.numero),
+      line('Complemento', titular.complemento),
+      line('Bairro', titular.bairro),
+      line('Cidade/UF', [titular.cidade, titular.uf].filter(Boolean).join('/')),
+      line('Ponto de referencia', titular.pontoReferencia),
+
+      blockTitle('3. Plano contratado'),
+      line('Plano', titular.plano?.nome),
+      line('Valor mensal', titular.plano?.valorMensal != null ? `R$ ${titular.plano.valorMensal.toFixed(2)}` : null),
+      line('Carencia (dias)', titular.plano?.carenciaDias),
+      line('Vigencia (meses)', titular.plano?.vigenciaMeses),
+      line('Cobertura maxima', titular.plano?.coberturaMaxima),
+      line('Assistencia funeral', titular.plano?.assistenciaFuneral),
+      line('Auxilio cemiterio', titular.plano?.auxilioCemiterio),
+
+      blockTitle('4. Responsavel financeiro'),
+      line('Nome', corresponsavel?.nome),
+      line('Email', corresponsavel?.email),
+      line('Telefone', corresponsavel?.telefone),
+      line('Relacionamento', corresponsavel?.relacionamento),
+      line('RG', corresponsavel?.rg),
+
+      blockTitle(`5. Dependentes (${titular.dependentes?.length ?? 0})`),
+    ];
+
+    if (!titular.dependentes?.length) {
+      children.push(line('Lista', 'Nenhum dependente cadastrado'));
+    } else {
+      titular.dependentes.forEach((dep, index) => {
+        children.push(
+          new Paragraph({
+            spacing: { before: 140, after: 80 },
+            children: [new TextRun({ text: `${index + 1}. ${dep.nome}`, bold: true })],
+          }),
+        );
+        children.push(line('Parentesco', dep.tipoDependente));
+        children.push(line('Data de nascimento', this.formatDatePtBr(dep.dataNascimento)));
+      });
+    }
+
+    children.push(
+      blockTitle('6. Informacoes comerciais'),
+      line('Vendedor', titular.vendedor?.nome),
+      line('Data de contratacao', this.formatDatePtBr(titular.dataContratacao)),
+      line('Status do plano', titular.statusPlano),
+      new Paragraph({ children: [new TextRun('')] }),
+      new Paragraph({
+        spacing: { before: 280 },
+        children: [
+          new TextRun(
+            'Declaro que os dados acima refletem as informacoes apresentadas no detalhe do contrato e no cadastro do titular.',
+          ),
+        ],
+      }),
+    );
+
+    const doc = new Document({
+      sections: [
+        {
+          properties: {},
+          children,
+        },
+      ],
+    });
+
+    return Packer.toBuffer(doc);
   }
 
   private async convertDocxBufferToPdf(docxBuffer: Buffer, filenameBase: string): Promise<Buffer> {

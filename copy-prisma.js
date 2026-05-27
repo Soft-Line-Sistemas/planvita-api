@@ -43,6 +43,30 @@ const relationshipMapDest = path.join(
   'config',
   'family-relationship-map.json',
 );
+const contratoTemplateCandidates = [
+  path.join(__dirname, 'public', 'docs', 'contrato.docx'),
+  path.join(__dirname, 'docs', 'contrato.docx'),
+  path.join(__dirname, '..', 'frontend', 'public', 'docs', 'contrato.docx'),
+];
+const contratoTemplateDest = path.join(
+  __dirname,
+  'dist',
+  'public',
+  'docs',
+  'contrato.docx',
+);
+const fichaAdesaoTemplateCandidates = [
+  path.join(__dirname, 'public', 'docs', 'ficha-adesao.docx'),
+  path.join(__dirname, 'docs', 'ficha-adesao.docx'),
+  path.join(__dirname, '..', 'frontend', 'public', 'docs', 'ficha-adesao.docx'),
+];
+const fichaAdesaoTemplateDest = path.join(
+  __dirname,
+  'dist',
+  'public',
+  'docs',
+  'ficha-adesao.docx',
+);
 
 if (!srcDir) {
   console.error(
@@ -61,4 +85,26 @@ if (fs.existsSync(relationshipMapSrc)) {
   );
   copyRecursiveSync(relationshipMapSrc, relationshipMapDest);
   console.log('Family relationship map copied.');
+}
+
+const contratoTemplateSrc = contratoTemplateCandidates.find((candidate) =>
+  fs.existsSync(candidate),
+);
+if (contratoTemplateSrc) {
+  console.log(
+    `Copying contract template from ${contratoTemplateSrc} to ${contratoTemplateDest}...`,
+  );
+  copyRecursiveSync(contratoTemplateSrc, contratoTemplateDest);
+  console.log('Contract template copied.');
+}
+
+const fichaAdesaoTemplateSrc = fichaAdesaoTemplateCandidates.find((candidate) =>
+  fs.existsSync(candidate),
+);
+if (fichaAdesaoTemplateSrc) {
+  console.log(
+    `Copying membership form template from ${fichaAdesaoTemplateSrc} to ${fichaAdesaoTemplateDest}...`,
+  );
+  copyRecursiveSync(fichaAdesaoTemplateSrc, fichaAdesaoTemplateDest);
+  console.log('Membership form template copied.');
 }
