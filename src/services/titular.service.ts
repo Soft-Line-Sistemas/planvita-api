@@ -1287,16 +1287,38 @@ export class TitularService {
     try {
       fs.writeFileSync(inputPath, docxBuffer);
 
-      await execFileAsync('soffice', [
-        '--headless',
-        '--nologo',
-        '--nolockcheck',
-        '--convert-to',
-        'pdf:writer_pdf_Export',
-        '--outdir',
-        tempDir,
-        inputPath,
-      ]);
+      const binaries = [
+        process.env.LIBREOFFICE_BINARY,
+        'soffice',
+        'libreoffice',
+      ].filter(Boolean) as string[];
+      let converted = false;
+      for (const bin of binaries) {
+        try {
+          await execFileAsync(bin, [
+            '--headless',
+            '--nologo',
+            '--nolockcheck',
+            '--convert-to',
+            'pdf:writer_pdf_Export',
+            '--outdir',
+            tempDir,
+            inputPath,
+          ]);
+          converted = true;
+          break;
+        } catch (error: any) {
+          if (error?.code !== 'ENOENT') throw error;
+        }
+      }
+
+      if (!converted) {
+        const err: any = new Error(
+          'Conversao DOCX->PDF indisponivel: LibreOffice nao encontrado (soffice/libreoffice). Instale LibreOffice no servidor ou configure LIBREOFFICE_BINARY com o caminho do executavel.',
+        );
+        err.code = 'DOCX_PDF_BINARY_NOT_FOUND';
+        throw err;
+      }
 
       const generatedFiles = fs.readdirSync(tempDir).filter((file) => file.toLowerCase().endsWith('.pdf'));
       const resolvedOutputPath = fs.existsSync(outputPath)

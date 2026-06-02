@@ -341,9 +341,41 @@ export class PlanoService {
     });
   }
 
-  private elegivelPorIdade(plano: { idadeMaxima: number | null }, idades: number[]): boolean {
-    if (plano.idadeMaxima == null) return true;
-    return idades.every((i) => i <= (plano.idadeMaxima as number));
+  private selecionarPlanoPorMaiorIdade<T extends { idadeMaxima: number | null }>(
+    planos: T[],
+    maiorIdade: number,
+  ): T | null {
+    const faixas = planos
+      .filter((plano) => typeof plano.idadeMaxima === 'number' && Number.isFinite(plano.idadeMaxima))
+      .sort((a, b) => (a.idadeMaxima as number) - (b.idadeMaxima as number));
+    const planoSemLimite = planos.find((plano) => plano.idadeMaxima == null) ?? null;
+
+    if (faixas.length === 0) {
+      return planoSemLimite;
+    }
+
+    const menorFaixa = faixas[0];
+    const maiorFaixa = faixas[faixas.length - 1];
+
+    if (maiorIdade < (menorFaixa.idadeMaxima as number)) {
+      return menorFaixa;
+    }
+
+    if (maiorIdade > (maiorFaixa.idadeMaxima as number) && planoSemLimite) {
+      return planoSemLimite;
+    }
+
+    return (
+      faixas.reduce<T | null>((melhor, atual) => {
+        if ((atual.idadeMaxima as number) > maiorIdade) {
+          return melhor;
+        }
+        if (!melhor || (atual.idadeMaxima as number) > (melhor.idadeMaxima as number)) {
+          return atual;
+        }
+        return melhor;
+      }, null) ?? planoSemLimite
+    );
   }
 
   private elegivelPorComposicao(
@@ -369,6 +401,7 @@ export class PlanoService {
    */
   async sugerirPlano(participantes: ParticipanteInput[], retornarTodos = false) {
     const idades = this.normalizarIdades(participantes);
+    const maiorIdade = idades.length > 0 ? Math.max(...idades) : 0;
 
     const planosAtivos = await this.prisma.plano.findMany({
       where: { ativo: true },
@@ -418,11 +451,9 @@ export class PlanoService {
         String(normIdadeMax(p.idadeMaxima)),     // normaliza 999 -> null
       ].join('|');
 
-    // 1) Filtra por elegibilidade de idade
-    const elegiveis = planosAtivos.filter(
-      (pl) =>
-        this.elegivelPorIdade(pl, idades) &&
-        this.elegivelPorComposicao(pl, participantes),
+    // 1) Filtra por composicao familiar. A faixa etaria e resolvida na selecao final.
+    const elegiveis = planosAtivos.filter((pl) =>
+      this.elegivelPorComposicao(pl, participantes),
     );
 
     // 2) Deduplica por (nome|valorMensal|idadeMaxima-normalizada),
@@ -460,10 +491,23 @@ export class PlanoService {
 
     // 4) Ordenação final para retorno consistente
     dedup.sort(
-      (a, b) => (a.valorMensal - b.valorMensal) || a.nome.localeCompare(b.nome) || (a.id - b.id)
+      (a, b) => {
+        const idadeA = a.idadeMaxima ?? Number.POSITIVE_INFINITY;
+        const idadeB = b.idadeMaxima ?? Number.POSITIVE_INFINITY;
+        return (
+          idadeA - idadeB ||
+          a.valorMensal - b.valorMensal ||
+          a.nome.localeCompare(b.nome) ||
+          a.id - b.id
+        );
+      },
     );
 
-    return retornarTodos ? dedup : (dedup[0] ?? null);
+    if (retornarTodos) {
+      return dedup;
+    }
+
+    return this.selecionarPlanoPorMaiorIdade(dedup, maiorIdade);
   }
 
 
