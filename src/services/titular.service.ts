@@ -59,10 +59,10 @@ const ASSINATURA_TIPOS = [
   'CORRESPONSAVEL_ASSINATURA_2',
 ] as const;
 const ASSINATURA_ALLOWED_MIME = ['image/png', 'image/jpeg'];
-const ASSINATURA_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+const ASSINATURA_MAX_BYTES = 50 * 1024 * 1024; // 50MB
 const FOTO_PERFIL_TIPO_DOCUMENTO = 'FOTO_PERFIL';
 const FOTO_PERFIL_ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp'];
-const FOTO_PERFIL_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+const FOTO_PERFIL_MAX_BYTES = 50 * 1024 * 1024; // 50MB
 const DEFAULT_DIAS_SUSPENSAO = 90;
 const MAX_DEPENDENTES_POR_TITULAR = 8;
 const execFileAsync = promisify(execFile);
@@ -1455,7 +1455,7 @@ export class TitularService {
       throw Object.assign(new Error('Assinatura em base64 inválida.'), { status: 400 });
     }
     if (buffer.length > maxBytes) {
-      throw Object.assign(new Error('Arquivo de assinatura excede o limite de 5MB.'), { status: 400 });
+      throw Object.assign(new Error('Arquivo de assinatura excede o limite de 50MB.'), { status: 400 });
     }
 
     return { buffer, mimetype };
