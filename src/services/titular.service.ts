@@ -509,6 +509,7 @@ export class TitularService {
 
   async createFull(data: CadastroTitularRequest) {
     const { step1, step2, step3, dependentes, step5 } = data;
+    const dataContratacao = new Date();
 
     // --- Validações básicas ---
     if (!step1.email || !step1.cpf || !step1.situacaoConjugal || !step1.profissao) {
@@ -636,6 +637,7 @@ export class TitularService {
       dataNascimento: dep.dataNascimento
         ? new Date(dep.dataNascimento)
         : new Date(),
+      carenciaInicioEm: dataContratacao,
       excluirCobrancaAdicional: false,
     }));
     await this.validarLimiteBeneficiariosCadastro(dependentesData?.length ?? 0);
@@ -677,7 +679,7 @@ export class TitularService {
             rg,
             naturalidade,
             statusPlano: 'ATIVO',
-            dataContratacao: new Date(),
+            dataContratacao,
             cpf,
             cep: step2.cep,
             uf: step2.uf,
