@@ -213,6 +213,7 @@ model Dependente {
   nome           String
   dataNascimento DateTime
   tipoDependente String
+  carenciaInicioEm          DateTime?
   parentescoNormalizado    String?
   foraGradeFamiliar        Boolean @default(false)
   excluirCobrancaAdicional Boolean @default(false)

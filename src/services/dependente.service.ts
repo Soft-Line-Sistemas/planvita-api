@@ -56,9 +56,16 @@ export class DependenteService {
   }
 
   private normalizeCreateInput(data: DependenteCreateInput): DependenteCreateInput {
+    const carenciaInicioRaw = (data as any)?.carenciaInicioEm;
     return {
       ...data,
       dataNascimento: this.parseDataNascimento((data as any)?.dataNascimento),
+      carenciaInicioEm:
+        carenciaInicioRaw instanceof Date
+          ? carenciaInicioRaw
+          : typeof carenciaInicioRaw === 'string' && carenciaInicioRaw.trim()
+            ? this.parseDataNascimento(carenciaInicioRaw)
+            : new Date(),
     };
   }
 
