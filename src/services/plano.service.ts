@@ -354,28 +354,83 @@ export class PlanoService {
       return planoSemLimite;
     }
 
-    const menorFaixa = faixas[0];
-    const maiorFaixa = faixas[faixas.length - 1];
-
-    if (maiorIdade < (menorFaixa.idadeMaxima as number)) {
-      return menorFaixa;
-    }
-
-    if (maiorIdade > (maiorFaixa.idadeMaxima as number) && planoSemLimite) {
-      return planoSemLimite;
-    }
-
-    return (
-      faixas.reduce<T | null>((melhor, atual) => {
-        if ((atual.idadeMaxima as number) > maiorIdade) {
-          return melhor;
-        }
-        if (!melhor || (atual.idadeMaxima as number) > (melhor.idadeMaxima as number)) {
-          return atual;
-        }
-        return melhor;
-      }, null) ?? planoSemLimite
+    const faixaCompativel = faixas.find(
+      (plano) => maiorIdade <= (plano.idadeMaxima as number),
     );
+
+    if (faixaCompativel) {
+      return faixaCompativel;
+    }
+
+    return planoSemLimite;
+  }
+
+  private normalizarNomePlano(nome?: string | null): string {
+    return String(nome ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private isPlanoSocial(nome?: string | null): boolean {
+    const normalizado = this.normalizarNomePlano(nome);
+    return normalizado.includes('social');
+  }
+
+  private isPlanoEssencial(nome?: string | null): boolean {
+    const normalizado = this.normalizarNomePlano(nome);
+    return normalizado.includes('essencial');
+  }
+
+  private isElegivelSocialEssencial(participantes: ParticipanteInput[]): boolean {
+    if (!participantes.length) return false;
+
+    const parentescosPermitidos = new Set(['titular', 'conjuge', 'filho', 'neto']);
+    const idades = this.normalizarIdades(participantes);
+
+    if (idades.some((idade) => !Number.isFinite(idade) || idade > 55)) {
+      return false;
+    }
+
+    return participantes.every((participante) => {
+      const parentesco = canonicalizeRelationship(participante.parentesco);
+      return parentescosPermitidos.has(parentesco);
+    });
+  }
+
+  private selecionarPlanosCompativeisPorMaiorIdade<T extends { idadeMaxima: number | null; nome?: string | null }>(
+    planos: T[],
+    maiorIdade: number,
+    permitirSocialEssencial: boolean,
+  ): T[] {
+    const faixas = planos
+      .filter((plano) => typeof plano.idadeMaxima === 'number' && Number.isFinite(plano.idadeMaxima))
+      .sort((a, b) => (a.idadeMaxima as number) - (b.idadeMaxima as number));
+    const planoSemLimite = planos.filter((plano) => plano.idadeMaxima == null);
+    const faixaCompativel = faixas.find((plano) => maiorIdade <= (plano.idadeMaxima as number));
+    const idadeFaixa = faixaCompativel?.idadeMaxima ?? null;
+
+    let compativeis = idadeFaixa == null
+      ? planoSemLimite
+      : planos.filter((plano) => plano.idadeMaxima === idadeFaixa);
+
+    if (permitirSocialEssencial) {
+      const socialEssencial = planos.filter(
+        (plano) => this.isPlanoSocial(plano.nome) || this.isPlanoEssencial(plano.nome),
+      );
+      if (socialEssencial.length > 0) {
+        compativeis = socialEssencial;
+      }
+    }
+
+    if (!permitirSocialEssencial) {
+      compativeis = compativeis.filter((plano) => !this.isPlanoSocial(plano.nome));
+    }
+
+    return compativeis;
   }
 
   private elegivelPorComposicao(
@@ -399,7 +454,11 @@ export class PlanoService {
    * Retorna o melhor plano (ou todos) com base nas idades.
    * Agora inclui os BENEFÍCIOS já achatados no retorno.
    */
-  async sugerirPlano(participantes: ParticipanteInput[], retornarTodos = false) {
+  async sugerirPlano(
+    participantes: ParticipanteInput[],
+    retornarTodos = false,
+    ignorarComposicao = false,
+  ) {
     const idades = this.normalizarIdades(participantes);
     const maiorIdade = idades.length > 0 ? Math.max(...idades) : 0;
 
@@ -452,9 +511,9 @@ export class PlanoService {
       ].join('|');
 
     // 1) Filtra por composicao familiar. A faixa etaria e resolvida na selecao final.
-    const elegiveis = planosAtivos.filter((pl) =>
-      this.elegivelPorComposicao(pl, participantes),
-    );
+    const elegiveis = ignorarComposicao
+      ? planosAtivos
+      : planosAtivos.filter((pl) => this.elegivelPorComposicao(pl, participantes));
 
     // 2) Deduplica por (nome|valorMensal|idadeMaxima-normalizada),
     //    escolhendo a "melhor" cópia pelo score; empate por id DESC.
@@ -507,7 +566,39 @@ export class PlanoService {
       return dedup;
     }
 
-    return this.selecionarPlanoPorMaiorIdade(dedup, maiorIdade);
+    const permitirSocialEssencial = this.isElegivelSocialEssencial(participantes);
+    const compativeis = this.selecionarPlanosCompativeisPorMaiorIdade(
+      dedup,
+      maiorIdade,
+      permitirSocialEssencial,
+    );
+
+    return compativeis[0] ?? this.selecionarPlanoPorMaiorIdade(dedup, maiorIdade);
+  }
+
+  async listarPlanosCompativeis(participantes: ParticipanteInput[]) {
+    const todos = (await this.sugerirPlano(participantes, true)) as Array<{
+      id: number;
+      nome: string;
+      valorMensal: number;
+      idadeMaxima: number | null;
+      ativo: boolean;
+      beneficios: unknown[];
+      coberturas: unknown[];
+      beneficiarios: Array<{ id: number; nome: string }>;
+      assistenciaFuneral: number;
+      auxilioCemiterio: number | null;
+      taxaInclusaCemiterioPublico: boolean;
+    }>;
+    const idades = this.normalizarIdades(participantes);
+    const maiorIdade = idades.length > 0 ? Math.max(...idades) : 0;
+    const permitirSocialEssencial = this.isElegivelSocialEssencial(participantes);
+
+    return this.selecionarPlanosCompativeisPorMaiorIdade(
+      todos,
+      maiorIdade,
+      permitirSocialEssencial,
+    );
   }
 
 

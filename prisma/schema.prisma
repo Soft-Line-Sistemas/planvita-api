@@ -127,6 +127,9 @@ model Titular {
   complemento String?
   numero      String?
   pontoReferencia String?
+  formaPagamentoAdesao String?
+  servicosAdicionaisJson String?
+  valorTotalContrato Float?
 
   dependentes     Dependente[]
   corresponsaveis Corresponsavel[]

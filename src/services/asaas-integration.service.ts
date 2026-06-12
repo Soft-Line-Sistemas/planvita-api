@@ -13,6 +13,13 @@ type ContaReceberWithCliente = Prisma.ContaReceberGetPayload<{
     cliente: true;
   };
 }>;
+const STATUS_PLANO_PENDENTE_ASSINATURA = 'PENDENTE_ASSINATURA';
+const TIPOS_ASSINATURA_OBRIGATORIOS = [
+  'TITULAR_ASSINATURA_1',
+  'TITULAR_ASSINATURA_2',
+  'CORRESPONSAVEL_ASSINATURA_1',
+  'CORRESPONSAVEL_ASSINATURA_2',
+] as const;
 const COMISSAO_ADESAO_DELAY_MS =
   process.env.NODE_ENV === 'development'
     ? 60 * 60 * 1000
@@ -64,6 +71,34 @@ export class AsaasIntegrationService {
       normalized === 'RECEIVED_IN_CASH' ||
       normalized === 'CONFIRMED'
     );
+  }
+
+  private async atualizarStatusContratoAposPagamentoTx(tx: any, titularId: number) {
+    const titular = await tx.titular.findUnique({
+      where: { id: titularId },
+      select: { id: true, statusPlano: true },
+    });
+    if (!titular) return;
+
+    const statusAtual = String(titular.statusPlano ?? '').toUpperCase();
+    if (statusAtual === 'CANCELADO') return;
+
+    const assinaturas = await (tx as any).assinaturaDigital.findMany({
+      where: { titularId },
+      select: { tipo: true },
+    });
+
+    const assinouTudo = TIPOS_ASSINATURA_OBRIGATORIOS.every((tipo) =>
+      assinaturas.some((assinatura: { tipo: string }) => assinatura.tipo === tipo),
+    );
+
+    const proximoStatus = assinouTudo ? 'ATIVO' : STATUS_PLANO_PENDENTE_ASSINATURA;
+    if (proximoStatus === titular.statusPlano) return;
+
+    await tx.titular.update({
+      where: { id: titularId },
+      data: { statusPlano: proximoStatus },
+    });
   }
 
   private isErroCobrancaAsaasNaoPendente(error: any): boolean {
@@ -1583,17 +1618,7 @@ export class AsaasIntegrationService {
               dataVencimento: updatedConta.dataVencimento ?? updatedConta.vencimento,
             },
           });
-          await tx.titular.updateMany({
-            where: {
-              id: updatedConta.clienteId,
-              statusPlano: {
-                not: 'ATIVO',
-              },
-            },
-            data: {
-              statusPlano: 'ATIVO',
-            },
-          });
+          await this.atualizarStatusContratoAposPagamentoTx(tx, updatedConta.clienteId);
           await this.gerarComissaoPrimeiroPagamentoTx(tx, updatedConta.clienteId);
 
           if (!estavaConfirmado && updatedConta.cliente && paymentId) {

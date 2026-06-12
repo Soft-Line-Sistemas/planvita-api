@@ -125,14 +125,20 @@ export class PlanoController {
       const { participantes, retornarTodos } = req.body as {
         participantes: ParticipanteInput[];
         retornarTodos?: boolean;
+        ignorarComposicao?: boolean;
       };
+      const ignorarComposicao = Boolean((req.body as { ignorarComposicao?: boolean }).ignorarComposicao);
 
       if (!Array.isArray(participantes) || participantes.length === 0) {
         return res.status(400).json({ message: 'Informe a lista de participantes.' });
       }
 
       const service = new PlanoService(req.tenantId);
-      const resultado = await service.sugerirPlano(participantes, !!retornarTodos);
+      const resultado = await service.sugerirPlano(
+        participantes,
+        !!retornarTodos,
+        ignorarComposicao,
+      );
 
       if (!resultado || (Array.isArray(resultado) && resultado.length === 0)) {
         return res.status(404).json({ message: 'Nenhum plano elegível encontrado.' });
@@ -180,4 +186,3 @@ export class PlanoController {
     }
   }
 }
-

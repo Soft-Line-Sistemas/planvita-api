@@ -56,6 +56,7 @@ export interface CadastroTitularRequest {
   }[];
   step5?: {
     planoId?: number | null;
-    billingType?: 'PIX' | 'BOLETO' | 'CREDIT_CARD';
+    billingType?: 'PIX' | 'BOLETO' | 'CREDIT_CARD' | 'CARTAO';
   };
+  servicosAdicionais?: string[];
 }

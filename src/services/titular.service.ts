@@ -10,6 +10,8 @@ import { promisify } from 'util';
 import { AsaasIntegrationService } from './asaas-integration.service';
 import Logger from '../utils/logger';
 import { TitularPricingService } from './titular-pricing.service';
+import { PlanoService, ParticipanteInput } from './plano.service';
+import { canonicalizeRelationship } from './family-relationship.service';
 import {
   AlignmentType,
   Document,
@@ -65,6 +67,7 @@ const FOTO_PERFIL_ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp'];
 const FOTO_PERFIL_MAX_BYTES = 50 * 1024 * 1024; // 50MB
 const DEFAULT_DIAS_SUSPENSAO = 90;
 const MAX_DEPENDENTES_POR_TITULAR = 8;
+const STATUS_PLANO_PENDENTE_ASSINATURA = 'PENDENTE_ASSINATURA';
 const execFileAsync = promisify(execFile);
 const CONTRATO_TEMPLATE_CANDIDATES = [
   process.env.CONTRATO_TEMPLATE_DOCX_PATH,
@@ -112,6 +115,7 @@ export class TitularService {
   private prisma;
   private asaasIntegration: AsaasIntegrationService;
   private pricingService: TitularPricingService;
+  private planoService: PlanoService;
   private logger: Logger;
 
   constructor(private tenantId: string) {
@@ -122,6 +126,7 @@ export class TitularService {
     this.prisma = getPrismaForTenant(tenantId);
     this.asaasIntegration = new AsaasIntegrationService(tenantId);
     this.pricingService = new TitularPricingService(tenantId);
+    this.planoService = new PlanoService(tenantId);
     this.logger = new Logger({ service: 'TitularService', tenantId });
   }
 
@@ -311,7 +316,13 @@ export class TitularService {
 
     titulares.forEach((titular) => {
       const statusAtual = String(titular.statusPlano ?? '').toUpperCase();
-      if (!statusAtual || statusAtual === 'CANCELADO') return;
+      if (
+        !statusAtual ||
+        statusAtual === 'CANCELADO' ||
+        statusAtual === STATUS_PLANO_PENDENTE_ASSINATURA
+      ) {
+        return;
+      }
 
       const maiorAtraso = maiorAtrasoPorTitular.get(titular.id) ?? 0;
       const proximoStatus = maiorAtraso >= diasSuspensao ? 'SUSPENSO' : 'ATIVO';
@@ -527,12 +538,14 @@ export class TitularService {
       throw err;
     }
     const billingTypeRaw = String(step5?.billingType ?? 'PIX').toUpperCase();
+    const normalizedBillingType = billingTypeRaw === 'CARTAO' ? 'CREDIT_CARD' : billingTypeRaw;
     const allowedBillingTypes = ['PIX', 'BOLETO', 'CREDIT_CARD'] as const;
     const billingType = allowedBillingTypes.includes(
-      billingTypeRaw as (typeof allowedBillingTypes)[number],
+      normalizedBillingType as (typeof allowedBillingTypes)[number],
     )
-      ? (billingTypeRaw as 'PIX' | 'BOLETO' | 'CREDIT_CARD')
+      ? (normalizedBillingType as 'PIX' | 'BOLETO' | 'CREDIT_CARD')
       : 'PIX';
+    const servicosAdicionais = this.normalizarServicosAdicionais(data.servicosAdicionais);
 
     // Normaliza email e CPF
     const email = step1.email.trim().toLowerCase();
@@ -630,8 +643,23 @@ export class TitularService {
       }
     }
 
+    const corresponsavelDependenteData =
+      usarMesmosDados || canonicalizeRelationship(corresponsavelData.relacionamento) === 'titular'
+        ? null
+        : {
+            nome: corresponsavelData.nome,
+            tipoDependente: corresponsavelData.relacionamento || 'Outro',
+            dataNascimento: step3.dataNascimento
+              ? new Date(step3.dataNascimento)
+              : new Date(),
+            carenciaInicioEm: dataContratacao,
+            excluirCobrancaAdicional: false,
+          };
+
     // --- Monta dependentes ---
-    const dependentesData = dependentes?.map((dep) => ({
+    const dependentesData = [
+      ...(corresponsavelDependenteData ? [corresponsavelDependenteData] : []),
+      ...(dependentes?.map((dep) => ({
       nome: dep.nome,
       tipoDependente: dep.parentesco || 'Outro',
       dataNascimento: dep.dataNascimento
@@ -639,9 +667,43 @@ export class TitularService {
         : new Date(),
       carenciaInicioEm: dataContratacao,
       excluirCobrancaAdicional: false,
-    }));
+    })) ?? []),
+    ];
     await this.validarLimiteBeneficiariosCadastro(dependentesData?.length ?? 0);
     const consultorIdInformado = data.consultorId ? Number(data.consultorId) : null;
+    const participantesPlano: ParticipanteInput[] = [
+      {
+        dataNascimento: step1.dataNascimento,
+        parentesco: 'Titular',
+      },
+      ...(corresponsavelDependenteData
+        ? [
+            {
+              dataNascimento: step3.dataNascimento ?? null,
+              parentesco: corresponsavelData.relacionamento,
+            },
+          ]
+        : []),
+      ...(dependentes ?? []).map((dep) => ({
+        dataNascimento: dep.dataNascimento ?? null,
+        parentesco: dep.parentesco ?? 'Outro',
+      })),
+    ];
+    const planosCompativeis = await this.planoService.listarPlanosCompativeis(participantesPlano);
+    const planoCompativel = planosCompativeis.find((plano) => plano.id === planoIdSelecionado);
+    if (!planoCompativel) {
+      const err: any = new Error('Plano selecionado não é compatível com o perfil cadastrado.');
+      err.status = 400;
+      err.code = 'PLANO_INCOMPATIVEL';
+      err.meta = {
+        planoIdSelecionado,
+        planosCompativeis: planosCompativeis.map((plano) => ({
+          id: plano.id,
+          nome: plano.nome,
+        })),
+      };
+      throw err;
+    }
 
     try {
       // --- Criação transacional ---
@@ -678,7 +740,7 @@ export class TitularService {
             sexo,
             rg,
             naturalidade,
-            statusPlano: 'ATIVO',
+            statusPlano: STATUS_PLANO_PENDENTE_ASSINATURA,
             dataContratacao,
             cpf,
             cep: step2.cep,
@@ -689,6 +751,8 @@ export class TitularService {
             complemento: step2.complemento,
             numero: step2.numero,
             pontoReferencia: pontoReferenciaTitular,
+            formaPagamentoAdesao: billingType,
+            servicosAdicionaisJson: JSON.stringify(servicosAdicionais),
             plano: planoIdSelecionado
               ? {
                   connect: {
@@ -777,7 +841,7 @@ export class TitularService {
     const filename = `assinatura-${tipo.toLowerCase()}-${Date.now()}.png`;
     const uploadInfo = await this.uploadAssinaturaArquivo(buffer, mimetype, filename);
 
-    return (this.prisma as any).assinaturaDigital.upsert({
+    const assinatura = await (this.prisma as any).assinaturaDigital.upsert({
       where: {
         titularId_tipo: {
           titularId,
@@ -801,6 +865,9 @@ export class TitularService {
         size: uploadInfo.size,
       },
     });
+
+    await this.atualizarStatusContratoConformePagamentoEAssinaturas(titularId);
+    return assinatura;
   }
 
   async baixarAssinaturaDigital(
@@ -1158,10 +1225,24 @@ export class TitularService {
     const titular = await this.prisma.titular.findUnique({
       where: { id: titularId },
       include: {
-        plano: true,
+        plano: {
+          include: {
+            beneficios: {
+              include: {
+                beneficio: true,
+              },
+            },
+          },
+        },
         dependentes: true,
         corresponsaveis: true,
         vendedor: true,
+        pagamentos: {
+          orderBy: {
+            dataPagamento: 'desc',
+          },
+          take: 1,
+        },
       },
     });
 
@@ -1172,6 +1253,23 @@ export class TitularService {
     }
 
     const corresponsavel = titular.corresponsaveis?.[0] ?? null;
+    const servicosAdicionais = this.normalizarServicosAdicionaisFromJson(
+      titular.servicosAdicionaisJson,
+    );
+    const beneficiosInclusos = [
+      'Clube de Beneficios',
+      ...((titular.plano?.beneficios ?? []).map((item: any) => item.beneficio?.nome).filter(Boolean)),
+    ];
+    const beneficiosOpcionais = servicosAdicionais.includes('telemedicina')
+      ? ['Telemedicina']
+      : [];
+    const pagamentoMaisRecente = titular.pagamentos?.[0] ?? null;
+    const dependentesSemCorresponsavel = this.removerDependenteEspelhoDoCorresponsavel(
+      titular.dependentes ?? [],
+      corresponsavel,
+    );
+    const dependentesDaGrade = dependentesSemCorresponsavel.filter((dep) => !dep.foraGradeFamiliar);
+    const beneficiariosAdicionais = dependentesSemCorresponsavel.filter((dep) => dep.foraGradeFamiliar);
     const line = (label: string, value: string | number | null | undefined) =>
       new Paragraph({
         spacing: { after: 120 },
@@ -1235,13 +1333,13 @@ export class TitularService {
       line('Relacionamento', corresponsavel?.relacionamento),
       line('RG', corresponsavel?.rg),
 
-      blockTitle(`5. Dependentes (${titular.dependentes?.length ?? 0})`),
+      blockTitle(`5. Dependentes (${dependentesDaGrade.length})`),
     ];
 
-    if (!titular.dependentes?.length) {
+    if (!dependentesDaGrade.length) {
       children.push(line('Lista', 'Nenhum dependente cadastrado'));
     } else {
-      titular.dependentes.forEach((dep, index) => {
+      dependentesDaGrade.forEach((dep, index) => {
         children.push(
           new Paragraph({
             spacing: { before: 140, after: 80 },
@@ -1253,17 +1351,58 @@ export class TitularService {
       });
     }
 
+    children.push(blockTitle(`6. Beneficiarios adicionais (${beneficiariosAdicionais.length})`));
+    if (!beneficiariosAdicionais.length) {
+      children.push(line('Lista', 'Nenhum beneficiario adicional cadastrado'));
+    } else {
+      beneficiariosAdicionais.forEach((dep, index) => {
+        children.push(
+          new Paragraph({
+            spacing: { before: 140, after: 80 },
+            children: [new TextRun({ text: `${index + 1}. ${dep.nome}`, bold: true })],
+          }),
+        );
+        children.push(line('Parentesco', dep.tipoDependente));
+        children.push(line('Data de nascimento', this.formatDatePtBr(dep.dataNascimento)));
+        children.push(
+          line(
+            'Valor adicional mensal',
+            `R$ ${Number(dep.valorAdicionalMensal ?? 0).toFixed(2)}`,
+          ),
+        );
+      });
+    }
+
     children.push(
-      blockTitle('6. Informacoes comerciais'),
+      blockTitle('7. Informacoes comerciais'),
       line('Vendedor', titular.vendedor?.nome),
-      line('Data de contratacao', this.formatDatePtBr(titular.dataContratacao)),
+      line('Data da adesao', this.formatDatePtBr(titular.dataContratacao)),
+      line('Forma de pagamento', this.formatBillingType(titular.formaPagamentoAdesao)),
+      line(
+        'Beneficios inclusos',
+        beneficiosInclusos.length > 0 ? beneficiosInclusos.join(', ') : 'Nao informado',
+      ),
+      line(
+        'Beneficios opcionais contratados',
+        beneficiosOpcionais.length > 0 ? beneficiosOpcionais.join(', ') : 'Nenhum',
+      ),
+      line(
+        'Valor total',
+        titular.valorTotalContrato != null ? `R$ ${Number(titular.valorTotalContrato).toFixed(2)}` : null,
+      ),
+      line(
+        'Data do pagamento',
+        pagamentoMaisRecente?.dataPagamento
+          ? this.formatDatePtBr(pagamentoMaisRecente.dataPagamento)
+          : 'Nao confirmada',
+      ),
       line('Status do plano', titular.statusPlano),
       new Paragraph({ children: [new TextRun('')] }),
       new Paragraph({
         spacing: { before: 280 },
         children: [
           new TextRun(
-            'Declaro que os dados acima refletem as informacoes apresentadas no detalhe do contrato e no cadastro do titular.',
+            'As informacoes constantes nesta Ficha de Adesao foram fornecidas e confirmadas pelo contratante durante o processo de contratacao eletronica, estando validadas e vinculadas ao contrato assinado eletronicamente, conforme condicoes contratuais aceitas.',
           ),
         ],
       }),
@@ -1279,6 +1418,57 @@ export class TitularService {
     });
 
     return Packer.toBuffer(doc);
+  }
+
+  private normalizarServicosAdicionaisFromJson(raw?: string | null): string[] {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((item) => String(item ?? '').trim().toLowerCase()).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  private removerDependenteEspelhoDoCorresponsavel(
+    dependentes: Array<{
+      nome: string;
+      tipoDependente: string;
+      dataNascimento: Date;
+      foraGradeFamiliar: boolean;
+      valorAdicionalMensal: number;
+    }>,
+    corresponsavel: { nome?: string | null; relacionamento?: string | null } | null,
+  ) {
+    if (!corresponsavel?.nome) return dependentes;
+
+    let removido = false;
+    return dependentes.filter((dependente) => {
+      if (removido) return true;
+
+      const mesmoNome =
+        String(dependente.nome ?? '').trim().toLowerCase() ===
+        String(corresponsavel.nome ?? '').trim().toLowerCase();
+      const mesmoRelacionamento =
+        canonicalizeRelationship(dependente.tipoDependente) ===
+        canonicalizeRelationship(corresponsavel.relacionamento);
+
+      if (mesmoNome && mesmoRelacionamento) {
+        removido = true;
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  private formatBillingType(value?: string | null): string {
+    const normalized = String(value ?? '').toUpperCase();
+    if (normalized === 'PIX') return 'PIX';
+    if (normalized === 'BOLETO') return 'Boleto';
+    if (normalized === 'CREDIT_CARD') return 'Cartao';
+    return value ? String(value) : 'Nao informado';
   }
 
   private async convertDocxBufferToPdf(docxBuffer: Buffer, filenameBase: string): Promise<Buffer> {
@@ -1342,6 +1532,62 @@ export class TitularService {
       } catch {
         // noop
       }
+    }
+  }
+
+  private normalizarServicosAdicionais(raw: unknown): string[] {
+    if (!Array.isArray(raw)) return [];
+
+    const permitidos = new Set(['telemedicina']);
+    const normalizados = raw
+      .map((item) => String(item ?? '').trim().toLowerCase())
+      .filter((item, index, array) => item.length > 0 && array.indexOf(item) === index);
+
+    return normalizados.filter((item) => permitidos.has(item));
+  }
+
+  private async atualizarStatusContratoConformePagamentoEAssinaturas(titularId: number) {
+    const [titular, assinaturas, pagamentoConfirmado] = await Promise.all([
+      this.prisma.titular.findUnique({
+        where: { id: titularId },
+        select: { id: true, statusPlano: true },
+      }),
+      (this.prisma as any).assinaturaDigital.findMany({
+        where: { titularId },
+        select: { tipo: true },
+      }),
+      this.prisma.pagamento.findFirst({
+        where: {
+          titularId,
+          status: {
+            in: ['RECEBIDO', 'CONFIRMADO', 'PAGO'],
+          },
+        },
+        select: { id: true },
+        orderBy: { dataPagamento: 'desc' },
+      }),
+    ]);
+
+    if (!titular || String(titular.statusPlano ?? '').toUpperCase() === 'CANCELADO') {
+      return;
+    }
+
+    const todosTiposAssinados = ASSINATURA_TIPOS.every((tipo) =>
+      assinaturas.some((assinatura: { tipo: string }) => assinatura.tipo === tipo),
+    );
+
+    const proximoStatus =
+      pagamentoConfirmado && todosTiposAssinados
+        ? 'ATIVO'
+        : pagamentoConfirmado
+          ? STATUS_PLANO_PENDENTE_ASSINATURA
+          : titular.statusPlano;
+
+    if (proximoStatus && proximoStatus !== titular.statusPlano) {
+      await this.prisma.titular.update({
+        where: { id: titularId },
+        data: { statusPlano: proximoStatus },
+      });
     }
   }
 
