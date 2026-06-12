@@ -40,6 +40,9 @@ const mockAsaasIntegration = {
     inserted: 0,
     updated: 0,
   }),
+  refreshPaymentStatus: jest.fn().mockImplementation(async (contaId: number) => ({
+    id: contaId,
+  })),
   confirmPaymentForContaReceber: jest.fn().mockResolvedValue(undefined),
   revertPaymentForContaReceber: jest.fn().mockResolvedValue(undefined),
   deletePaymentForContaReceber: jest.fn().mockResolvedValue(undefined),

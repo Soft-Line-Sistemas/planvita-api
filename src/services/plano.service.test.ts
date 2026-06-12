@@ -33,9 +33,9 @@ describe('PlanoService.sugerirPlano', () => {
     );
 
     expect(resultado).toMatchObject({
-      id: 3,
-      nome: 'Bosque Plus',
-      idadeMaxima: 70,
+      id: 5,
+      nome: 'Bosque Senior',
+      idadeMaxima: 85,
     });
   });
 
@@ -91,5 +91,102 @@ describe('PlanoService.sugerirPlano', () => {
       { id: 3, idadeMaxima: 70 },
       { id: 4, idadeMaxima: null },
     ]);
+  });
+
+  it('permite ignorar composicao no cadastro para sempre sugerir plano', async () => {
+    mockFindMany.mockResolvedValue([
+      {
+        id: 1,
+        nome: 'Bosque Social',
+        valorMensal: 49.99,
+        idadeMaxima: 55,
+        ativo: true,
+        beneficios: [],
+        coberturas: [],
+        beneficiarios: [{ id: 1, nome: 'Titular' }, { id: 2, nome: 'Cônjuge' }],
+      },
+      {
+        id: 2,
+        nome: 'Bosque Premium',
+        valorMensal: 129.9,
+        idadeMaxima: null,
+        ativo: true,
+        beneficios: [],
+        coberturas: [],
+        beneficiarios: [{ id: 3, nome: 'Titular' }],
+      },
+    ]);
+
+    const service = new PlanoService('bosque');
+
+    const semIgnorarComposicao = await service.sugerirPlano(
+      [
+        { idade: 35, parentesco: 'Titular' },
+        { idade: 30, parentesco: 'Outro' },
+      ],
+      true,
+      false,
+    );
+    const ignorandoComposicao = await service.sugerirPlano(
+      [
+        { idade: 35, parentesco: 'Titular' },
+        { idade: 30, parentesco: 'Outro' },
+      ],
+      true,
+      true,
+    );
+
+    expect(semIgnorarComposicao).toEqual([]);
+    expect(ignorandoComposicao).toMatchObject([
+      { id: 1, nome: 'Bosque Social' },
+      { id: 2, nome: 'Bosque Premium' },
+    ]);
+  });
+
+  it('retorna Social e Essencial juntos quando todos os participantes permitidos têm até 55 anos', async () => {
+    mockFindMany.mockResolvedValue([
+      { id: 1, nome: 'Bosque Social', valorMensal: 49.99, idadeMaxima: 55, ativo: true, beneficios: [], coberturas: [], beneficiarios: [] },
+      { id: 2, nome: 'Bosque Essencial', valorMensal: 69.9, idadeMaxima: 60, ativo: true, beneficios: [], coberturas: [], beneficiarios: [] },
+      { id: 3, nome: 'Bosque Plus', valorMensal: 79.9, idadeMaxima: 70, ativo: true, beneficios: [], coberturas: [], beneficiarios: [] },
+    ]);
+
+    const service = new PlanoService('bosque');
+    const resultado = await service.sugerirPlano(
+      [
+        { idade: 40, parentesco: 'Titular' },
+        { idade: 38, parentesco: 'Cônjuge' },
+        { idade: 12, parentesco: 'Filho' },
+      ],
+      false,
+    );
+    const compativeis = await service.listarPlanosCompativeis([
+      { idade: 40, parentesco: 'Titular' },
+      { idade: 38, parentesco: 'Cônjuge' },
+      { idade: 12, parentesco: 'Filho' },
+    ]);
+
+    expect(resultado).toMatchObject({ id: 1, nome: 'Bosque Social' });
+    expect(compativeis).toMatchObject([
+      { id: 1, nome: 'Bosque Social' },
+      { id: 2, nome: 'Bosque Essencial' },
+    ]);
+  });
+
+  it('oculta Social quando existe participante acima de 55 anos', async () => {
+    mockFindMany.mockResolvedValue([
+      { id: 1, nome: 'Bosque Social', valorMensal: 49.99, idadeMaxima: 55, ativo: true, beneficios: [], coberturas: [], beneficiarios: [] },
+      { id: 2, nome: 'Bosque Essencial', valorMensal: 69.9, idadeMaxima: 60, ativo: true, beneficios: [], coberturas: [], beneficiarios: [] },
+      { id: 3, nome: 'Bosque Plus', valorMensal: 79.9, idadeMaxima: 70, ativo: true, beneficios: [], coberturas: [], beneficiarios: [] },
+    ]);
+
+    const service = new PlanoService('bosque');
+    const compativeis = await service.listarPlanosCompativeis([
+      { idade: 56, parentesco: 'Titular' },
+    ]);
+
+    expect(compativeis).toMatchObject([
+      { id: 2, nome: 'Bosque Essencial' },
+    ]);
+    expect(compativeis).toHaveLength(1);
   });
 });

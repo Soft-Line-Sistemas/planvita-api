@@ -33,6 +33,34 @@ export class TitularPricingService {
     return this.arredondarMoeda(valorRegra);
   }
 
+  private calcularIdade(dataNascimento?: Date | null): number | null {
+    if (!(dataNascimento instanceof Date) || Number.isNaN(dataNascimento.getTime())) {
+      return null;
+    }
+
+    const hoje = new Date();
+    let idade = hoje.getFullYear() - dataNascimento.getFullYear();
+    const deltaMes = hoje.getMonth() - dataNascimento.getMonth();
+    if (
+      deltaMes < 0 ||
+      (deltaMes === 0 && hoje.getDate() < dataNascimento.getDate())
+    ) {
+      idade -= 1;
+    }
+
+    return idade >= 0 ? idade : null;
+  }
+
+  private obterValorAdicionalPorFaixaEtaria(idade: number | null): number {
+    if (idade === null) {
+      return 9.9;
+    }
+    if (idade <= 60) return 9.9;
+    if (idade <= 70) return 19.9;
+    if (idade <= 80) return 29.9;
+    return 49;
+  }
+
   async recalcularDependente(dependenteId: number): Promise<void> {
     const dependente = await this.prisma.dependente.findUnique({
       where: { id: Number(dependenteId) },
@@ -61,7 +89,6 @@ export class TitularPricingService {
 
     if (!titular) return;
 
-    const valorAdicionalPadrao = await this.obterValorAdicionalPadrao();
     const beneficiariosPlano = titular.plano?.beneficiarios?.map((b: { nome: string }) => b.nome) ?? [];
 
     for (const dependente of titular.dependentes) {
@@ -72,9 +99,10 @@ export class TitularPricingService {
         dependente.tipoDependente,
         beneficiariosPlano,
       );
+      const idadeDependente = this.calcularIdade(dependente.dataNascimento);
       const valorAdicionalMensal =
         foraGradeFamiliar && !dependente.excluirCobrancaAdicional
-          ? valorAdicionalPadrao
+          ? this.obterValorAdicionalPorFaixaEtaria(idadeDependente)
           : 0;
 
       await this.prisma.dependente.update({
@@ -108,7 +136,20 @@ export class TitularPricingService {
       return acc + Number(dep.valorAdicionalMensal ?? 0);
     }, 0);
 
-    const valorTotalMensal = this.arredondarMoeda(valorPlano + valorAdicionais);
+    const telemedicinaContratada = this.normalizarServicosAdicionais(
+      titular.servicosAdicionaisJson,
+    ).includes('telemedicina');
+    const valorTelemedicina = telemedicinaContratada ? 19.9 : 0;
+    const valorTotalMensal = this.arredondarMoeda(
+      valorPlano + valorAdicionais + valorTelemedicina,
+    );
+
+    await this.prisma.titular.update({
+      where: { id: titular.id },
+      data: {
+        valorTotalContrato: valorTotalMensal,
+      },
+    });
 
     const contasAbertas = await this.prisma.contaReceber.findMany({
       where: {
@@ -139,5 +180,18 @@ export class TitularPricingService {
     }
 
     return valorTotalMensal;
+  }
+
+  private normalizarServicosAdicionais(raw?: string | null): string[] {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((item) => String(item ?? '').trim().toLowerCase())
+        .filter((item, index, array) => item.length > 0 && array.indexOf(item) === index);
+    } catch {
+      return [];
+    }
   }
 }
