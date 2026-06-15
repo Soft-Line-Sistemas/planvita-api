@@ -5,6 +5,18 @@ import {
   isRelationshipInGrade,
 } from './family-relationship.service';
 
+type FaixaTarifacaoDependente = {
+  idadeMaxima: number | null;
+  valor: number;
+};
+
+const MATRIZ_PROGRESSIVA_PADRAO: FaixaTarifacaoDependente[] = [
+  { idadeMaxima: 60, valor: 9.9 },
+  { idadeMaxima: 70, valor: 19.9 },
+  { idadeMaxima: 80, valor: 29.9 },
+  { idadeMaxima: null, valor: 49 },
+];
+
 export class TitularPricingService {
   private prisma;
   private asaasIntegration: AsaasIntegrationService;
@@ -22,15 +34,85 @@ export class TitularPricingService {
     return Math.round((valor + Number.EPSILON) * 100) / 100;
   }
 
-  private async obterValorAdicionalPadrao(): Promise<number> {
+  private normalizarMatrizTarifacao(
+    raw: unknown,
+  ): FaixaTarifacaoDependente[] | null {
+    if (!Array.isArray(raw)) return null;
+
+    const faixas = raw
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const registro = item as Record<string, unknown>;
+        const idadeMaximaRaw =
+          registro.idadeMaxima ?? registro.maxAge ?? registro.ageLimit ?? null;
+        const valorRaw = registro.valor ?? registro.value ?? registro.tarifa ?? null;
+        const valor = Number(valorRaw);
+
+        if (!Number.isFinite(valor) || valor < 0) return null;
+
+        if (idadeMaximaRaw === null || idadeMaximaRaw === undefined || idadeMaximaRaw === '') {
+          return {
+            idadeMaxima: null,
+            valor: this.arredondarMoeda(valor),
+          };
+        }
+
+        const idadeMaxima = Number(idadeMaximaRaw);
+        if (!Number.isInteger(idadeMaxima) || idadeMaxima < 0) return null;
+
+        return {
+          idadeMaxima,
+          valor: this.arredondarMoeda(valor),
+        };
+      })
+      .filter((item): item is FaixaTarifacaoDependente => item !== null)
+      .sort((a, b) => {
+        if (a.idadeMaxima === null) return 1;
+        if (b.idadeMaxima === null) return -1;
+        return a.idadeMaxima - b.idadeMaxima;
+      });
+
+    if (!faixas.length) return null;
+
+    const ultimaFaixa = faixas[faixas.length - 1];
+    if (ultimaFaixa.idadeMaxima !== null) {
+      faixas.push({
+        idadeMaxima: null,
+        valor: ultimaFaixa.valor,
+      });
+    }
+
+    return faixas;
+  }
+
+  private async obterMatrizTarifacaoDependente(): Promise<FaixaTarifacaoDependente[]> {
     const regras = await this.prisma.businessRules.findFirst({
       where: { tenantId: this.tenantId },
-      select: { valorAdicionalDependenteForaGrade: true },
+      select: {
+        valorAdicionalDependenteForaGrade: true,
+        valorAdicionalDependenteForaGradeFaixasJson: true,
+      },
     });
 
-    const valorRegra = Number(regras?.valorAdicionalDependenteForaGrade ?? 14.9);
-    if (!Number.isFinite(valorRegra) || valorRegra < 0) return 14.9;
-    return this.arredondarMoeda(valorRegra);
+    const matrizConfigurada = String(
+      regras?.valorAdicionalDependenteForaGradeFaixasJson ?? '',
+    ).trim();
+    if (matrizConfigurada) {
+      try {
+        const parsed = JSON.parse(matrizConfigurada);
+        const matriz = this.normalizarMatrizTarifacao(parsed);
+        if (matriz) return matriz;
+      } catch {
+        // Fallback para matriz padrão/legado abaixo.
+      }
+    }
+
+    const valorLegado = Number(regras?.valorAdicionalDependenteForaGrade ?? NaN);
+    if (Number.isFinite(valorLegado) && valorLegado >= 0) {
+      return [{ idadeMaxima: null, valor: this.arredondarMoeda(valorLegado) }];
+    }
+
+    return MATRIZ_PROGRESSIVA_PADRAO;
   }
 
   private calcularIdade(dataNascimento?: Date | null): number | null {
@@ -51,14 +133,17 @@ export class TitularPricingService {
     return idade >= 0 ? idade : null;
   }
 
-  private obterValorAdicionalPorFaixaEtaria(idade: number | null): number {
-    if (idade === null) {
-      return 9.9;
+  private obterValorAdicionalPorFaixaEtaria(
+    idade: number,
+    matriz: FaixaTarifacaoDependente[],
+  ): number {
+    for (const faixa of matriz) {
+      if (faixa.idadeMaxima === null || idade <= faixa.idadeMaxima) {
+        return faixa.valor;
+      }
     }
-    if (idade <= 60) return 9.9;
-    if (idade <= 70) return 19.9;
-    if (idade <= 80) return 29.9;
-    return 49;
+
+    return matriz[matriz.length - 1]?.valor ?? 0;
   }
 
   async recalcularDependente(dependenteId: number): Promise<void> {
@@ -90,6 +175,7 @@ export class TitularPricingService {
     if (!titular) return;
 
     const beneficiariosPlano = titular.plano?.beneficiarios?.map((b: { nome: string }) => b.nome) ?? [];
+    const matrizTarifacao = await this.obterMatrizTarifacaoDependente();
 
     for (const dependente of titular.dependentes) {
       const parentescoNormalizado = canonicalizeRelationship(
@@ -100,9 +186,27 @@ export class TitularPricingService {
         beneficiariosPlano,
       );
       const idadeDependente = this.calcularIdade(dependente.dataNascimento);
+
+      if (
+        foraGradeFamiliar &&
+        !dependente.excluirCobrancaAdicional &&
+        idadeDependente === null
+      ) {
+        const err: any = new Error(
+          `Dependente ${dependente.nome} está sem data de nascimento válida para tarifação progressiva.`,
+        );
+        err.status = 400;
+        err.code = 'DEPENDENTE_DATA_NASCIMENTO_INVALIDA';
+        err.meta = {
+          dependenteId: dependente.id,
+          titularId: titular.id,
+        };
+        throw err;
+      }
+
       const valorAdicionalMensal =
         foraGradeFamiliar && !dependente.excluirCobrancaAdicional
-          ? this.obterValorAdicionalPorFaixaEtaria(idadeDependente)
+          ? this.obterValorAdicionalPorFaixaEtaria(idadeDependente as number, matrizTarifacao)
           : 0;
 
       await this.prisma.dependente.update({

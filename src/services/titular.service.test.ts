@@ -15,6 +15,12 @@ jest.mock('./titular-pricing.service', () => ({
   TitularPricingService: jest.fn().mockImplementation(() => ({})),
 }));
 
+jest.mock('./plano.service', () => ({
+  PlanoService: jest.fn().mockImplementation(() => ({
+    listarPlanosCompativeis: jest.fn().mockResolvedValue([{ id: 1, nome: 'Plano Teste' }]),
+  })),
+}));
+
 describe('TitularService.createFull', () => {
   it('deve rejeitar cadastro quando planoId não for informado', async () => {
     const service = new TitularService('tenant-123');
@@ -102,6 +108,56 @@ describe('TitularService.createFull', () => {
     await expect(service.createFull(payload as any)).rejects.toMatchObject({
       status: 400,
       code: 'CPF_DUPLICADO_NO_CADASTRO',
+    });
+  });
+
+  it('deve rejeitar cadastro quando dependente tiver data de nascimento inválida', async () => {
+    const service = new TitularService('tenant-123');
+
+    const payload = {
+      step1: {
+        nomeCompleto: 'Cliente Teste',
+        cpf: '123.456.789-01',
+        dataNascimento: '1990-01-01',
+        sexo: 'Masculino',
+        naturalidade: 'São Paulo',
+        telefone: '11999999999',
+        whatsapp: '11999999999',
+        email: 'cliente3@teste.com',
+        situacaoConjugal: 'Solteiro',
+        profissao: 'Analista',
+      },
+      step2: {
+        cep: '01001000',
+        uf: 'SP',
+        cidade: 'São Paulo',
+        bairro: 'Centro',
+        logradouro: 'Rua A',
+        complemento: '',
+        numero: '10',
+        pontoReferencia: '',
+      },
+      step3: {
+        usarMesmosDados: true,
+      },
+      dependentes: [
+        {
+          nome: 'Dependente Sem Data Valida',
+          idade: 10,
+          dataNascimento: 'data-invalida',
+          parentesco: 'Sobrinho(a)',
+          telefone: '11999999999',
+          cpf: '98765432100',
+        },
+      ],
+      step5: {
+        planoId: 1,
+      },
+    };
+
+    await expect(service.createFull(payload as any)).rejects.toMatchObject({
+      status: 400,
+      code: 'DEPENDENTE_DATA_NASCIMENTO_INVALIDA',
     });
   });
 });
