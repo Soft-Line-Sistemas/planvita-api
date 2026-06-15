@@ -874,6 +874,7 @@ model BusinessRules {
   limiteBeneficiarios        Int?
   maximoBeneficiariosPorTipo Int?    // limite por tipo de beneficiário
   valorAdicionalDependenteForaGrade Float? @default(14.9)
+  valorAdicionalDependenteForaGradeFaixasJson String?
 
   // -------------------- Frota --------------------
   quilometragemMaxVeiculo    Int?

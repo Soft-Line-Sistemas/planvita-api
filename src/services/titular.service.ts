@@ -159,6 +159,39 @@ export class TitularService {
     }
   }
 
+  private invalidDateError(fieldLabel: string, code = 'DATA_NASCIMENTO_INVALIDA'): Error {
+    const err: any = new Error(
+      `${fieldLabel} inválida. Use formato YYYY-MM-DD ou ISO-8601 completo.`,
+    );
+    err.status = 400;
+    err.code = code;
+    return err;
+  }
+
+  private parseDataNascimentoObrigatoria(
+    value: unknown,
+    fieldLabel: string,
+    code = 'DATA_NASCIMENTO_INVALIDA',
+  ): Date {
+    if (value instanceof Date) {
+      if (Number.isNaN(value.getTime())) throw this.invalidDateError(fieldLabel, code);
+      return value;
+    }
+
+    if (typeof value !== 'string') throw this.invalidDateError(fieldLabel, code);
+
+    const normalized = value.trim();
+    if (!normalized) throw this.invalidDateError(fieldLabel, code);
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      return new Date(`${normalized}T00:00:00.000Z`);
+    }
+
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) throw this.invalidDateError(fieldLabel, code);
+    return parsed;
+  }
+
   private calcularIdade(dataNascimento: string | Date): number | null {
     let ano: number;
     let mes: number;
@@ -649,9 +682,11 @@ export class TitularService {
         : {
             nome: corresponsavelData.nome,
             tipoDependente: corresponsavelData.relacionamento || 'Outro',
-            dataNascimento: step3.dataNascimento
-              ? new Date(step3.dataNascimento)
-              : new Date(),
+            dataNascimento: this.parseDataNascimentoObrigatoria(
+              step3.dataNascimento,
+              'Data de nascimento do corresponsável dependente',
+              'CORRESPONSAVEL_DATA_NASCIMENTO_INVALIDA',
+            ),
             carenciaInicioEm: dataContratacao,
             excluirCobrancaAdicional: false,
           };
@@ -662,9 +697,11 @@ export class TitularService {
       ...(dependentes?.map((dep) => ({
       nome: dep.nome,
       tipoDependente: dep.parentesco || 'Outro',
-      dataNascimento: dep.dataNascimento
-        ? new Date(dep.dataNascimento)
-        : new Date(),
+      dataNascimento: this.parseDataNascimentoObrigatoria(
+        dep.dataNascimento,
+        `Data de nascimento do dependente ${dep.nome || ''}`.trim(),
+        'DEPENDENTE_DATA_NASCIMENTO_INVALIDA',
+      ),
       carenciaInicioEm: dataContratacao,
       excluirCobrancaAdicional: false,
     })) ?? []),
@@ -734,7 +771,11 @@ export class TitularService {
             nome: step1.nomeCompleto,
             email,
             telefone: step1.telefone,
-            dataNascimento: new Date(step1.dataNascimento),
+            dataNascimento: this.parseDataNascimentoObrigatoria(
+              step1.dataNascimento,
+              'Data de nascimento do titular',
+              'TITULAR_DATA_NASCIMENTO_INVALIDA',
+            ),
             situacaoConjugal,
             profissao,
             sexo,
