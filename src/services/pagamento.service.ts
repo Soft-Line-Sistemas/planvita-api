@@ -1,14 +1,26 @@
 import { getPrismaForTenant, Prisma } from '../utils/prisma';
 
 type PagamentoType = Prisma.PagamentoGetPayload<{}>;
+const pagamentoInclude = Prisma.validator<Prisma.PagamentoInclude>()({
+  titular: {
+    select: {
+      id: true,
+      nome: true,
+      email: true,
+      telefone: true,
+      cpf: true,
+      plano: {
+        select: {
+          id: true,
+          nome: true,
+        },
+      },
+    },
+  },
+});
+
 type PagamentoWithRelations = Prisma.PagamentoGetPayload<{
-  include: {
-    titular: {
-      include: {
-        plano: true;
-      };
-    };
-  };
+  include: typeof pagamentoInclude;
 }>;
 
 export class PagamentoService {
@@ -24,26 +36,14 @@ export class PagamentoService {
 
   async getAll(): Promise<PagamentoWithRelations[]> {
     return this.prisma.pagamento.findMany({
-      include: {
-        titular: {
-          include: {
-            plano: true,
-          },
-        },
-      },
+      include: pagamentoInclude,
     });
   }
 
   async getById(id: number): Promise<PagamentoWithRelations | null> {
     return this.prisma.pagamento.findUnique({
       where: { id: Number(id) },
-      include: {
-        titular: {
-          include: {
-            plano: true,
-          },
-        },
-      },
+      include: pagamentoInclude,
     });
   }
 
