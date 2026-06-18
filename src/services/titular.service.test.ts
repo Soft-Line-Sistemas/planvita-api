@@ -5,6 +5,9 @@ jest.mock('../utils/prisma', () => ({
     businessRules: { findFirst: jest.fn() },
     titular: { findFirst: jest.fn() },
   }),
+  Prisma: {
+    validator: () => (value: unknown) => value,
+  },
 }));
 
 jest.mock('./asaas-integration.service', () => ({
