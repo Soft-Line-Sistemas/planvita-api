@@ -7,12 +7,15 @@ const prismaMock = {
     create: jest.fn(),
     findMany: jest.fn(),
     update: jest.fn(),
+    findUnique: jest.fn(),
+    delete: jest.fn(),
   },
   contaReceber: {
     create: jest.fn(),
     findMany: jest.fn(),
     update: jest.fn(),
     findUnique: jest.fn(),
+    delete: jest.fn(),
   },
   pagamento: {
     create: jest.fn(),
@@ -23,10 +26,17 @@ const prismaMock = {
   },
   comissao: {
     updateMany: jest.fn(),
+    findFirst: jest.fn(),
+    create: jest.fn(),
   },
   financialAudit: {
     create: jest.fn(),
   },
+  titular: {
+    findMany: jest.fn(),
+    findUnique: jest.fn(),
+  },
+  $transaction: jest.fn(),
 };
 
 jest.mock('../utils/prisma', () => ({
@@ -47,6 +57,12 @@ const mockAsaasIntegration = {
   revertPaymentForContaReceber: jest.fn().mockResolvedValue(undefined),
   deletePaymentForContaReceber: jest.fn().mockResolvedValue(undefined),
   updatePaymentForContaReceber: jest.fn().mockResolvedValue(undefined),
+  isEnabled: jest.fn().mockReturnValue(true),
+  listSubscriptionsFromProvider: jest.fn().mockResolvedValue([]),
+  syncRecurringPaymentsFromProvider: jest
+    .fn()
+    .mockResolvedValue({ processed: 0, inserted: 0, updated: 0 }),
+  ensureMonthlySubscriptionForTitular: jest.fn().mockResolvedValue('sub_new_123'),
 };
 
 jest.mock('./asaas-integration.service', () => ({
@@ -397,5 +413,143 @@ describe('FinanceiroService', () => {
     });
     expect(result.status).toBe('CANCELADO');
     expect(prismaMock.financialAudit.create).toHaveBeenCalled();
+  });
+
+  it('should fallback paymentUrl and pixQrCode from pagamento history when conta is missing them', async () => {
+    const titularId = 55;
+    (prismaMock.contaReceber.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: 10,
+        descricao: 'Mensalidade',
+        valor: 120,
+        vencimento: new Date('2026-06-20T00:00:00.000Z'),
+        status: 'PENDENTE',
+        paymentUrl: null,
+        pixQrCode: null,
+        asaasPaymentId: 'pay_hist_1',
+        asaasSubscriptionId: 'sub_1',
+      },
+    ]);
+    (prismaMock.pagamento.findMany as jest.Mock).mockResolvedValue([
+      {
+        asaasPaymentId: 'pay_hist_1',
+        paymentUrl: 'https://asaas.com/i/pay_hist_1',
+        pixQrCode: '000201fallback',
+      },
+    ]);
+
+    const result = await service.listarContasDoCliente(titularId);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 10,
+        paymentUrl: 'https://asaas.com/i/pay_hist_1',
+        pixQrCode: '000201fallback',
+        tipo: 'Receber',
+      }),
+    ]);
+  });
+
+  it('should summarize recurring charges with dependente adicionais and provider references', async () => {
+    (prismaMock.titular.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: 1,
+        nome: 'Ana',
+        plano: { valorMensal: 100 },
+        dependentes: [{ valorAdicionalMensal: 9.9 }, { valorAdicionalMensal: 14.9 }],
+      },
+      {
+        id: 2,
+        nome: 'Bruno',
+        plano: { valorMensal: 80 },
+        dependentes: [],
+      },
+    ]);
+    (prismaMock.contaReceber.findMany as jest.Mock).mockResolvedValue([
+      {
+        clienteId: 1,
+        status: 'PENDENTE',
+        valor: 124.8,
+        dataVencimento: new Date('2026-07-10T00:00:00.000Z'),
+        vencimento: null,
+        asaasSubscriptionId: 'sub_local_1',
+        cliente: { id: 1, nome: 'Ana' },
+      },
+    ]);
+    (prismaMock.pagamento.findMany as jest.Mock).mockResolvedValue([
+      {
+        titularId: 1,
+        status: 'RECEBIDO',
+        dataPagamento: new Date('2026-06-05T00:00:00.000Z'),
+        asaasSubscriptionId: 'sub_local_1',
+        titular: { id: 1, nome: 'Ana' },
+      },
+      {
+        titularId: 2,
+        status: 'RECEBIDO',
+        dataPagamento: new Date('2026-05-05T00:00:00.000Z'),
+        asaasSubscriptionId: 'sub_provider_2',
+        titular: { id: 2, nome: 'Bruno' },
+      },
+    ]);
+    mockAsaasIntegration.listSubscriptionsFromProvider.mockResolvedValue([
+      { id: 'sub_provider_1', externalReference: 'titular-1' },
+      { id: 'sub_provider_2', externalReference: 'titular-2' },
+    ]);
+
+    const result = await service.listarRecorrencias();
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        titularId: 1,
+        clienteNome: 'Ana',
+        valorAtual: 124.8,
+        aberto: true,
+        totalPagas: 1,
+        asaasSubscriptionId: 'sub_local_1',
+        asaasSubscriptionIdLocal: 'sub_local_1',
+        asaasSubscriptionIdProvider: 'sub_provider_1',
+        temReferenciaLocal: true,
+        temReferenciaAsaas: true,
+      }),
+      expect.objectContaining({
+        titularId: 2,
+        clienteNome: 'Bruno',
+        valorAtual: 80,
+        aberto: false,
+        totalPagas: 1,
+        asaasSubscriptionId: 'sub_provider_2',
+        asaasSubscriptionIdProvider: 'sub_provider_2',
+        temReferenciaAsaas: true,
+      }),
+    ]);
+  });
+
+  it('should generate recurring billing using plano value plus beneficiarios adicionais', async () => {
+    const syncSpy = jest
+      .spyOn(service, 'sincronizarRecorrenciasAsaas')
+      .mockResolvedValue({ processed: 0, inserted: 0, updated: 0 });
+
+    (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+      id: 9,
+      nome: 'Cliente Recorrente',
+      plano: { valorMensal: 100 },
+      dependentes: [{ valorAdicionalMensal: 9.9 }, { valorAdicionalMensal: 10 }],
+    });
+
+    const result = await service.gerarRecorrenciaParaTitular(9, 'BOLETO');
+
+    expect(mockAsaasIntegration.ensureMonthlySubscriptionForTitular).toHaveBeenCalledWith({
+      titularId: 9,
+      valorMensal: 119.9,
+      descricao: 'Mensalidade Plano - Cliente Recorrente',
+      billingType: 'BOLETO',
+    });
+    expect(syncSpy).toHaveBeenCalled();
+    expect(result).toEqual({
+      titularId: 9,
+      asaasSubscriptionId: 'sub_new_123',
+      billingType: 'BOLETO',
+    });
   });
 });
