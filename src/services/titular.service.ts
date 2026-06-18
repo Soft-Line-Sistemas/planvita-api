@@ -37,7 +37,7 @@ const TITULAR_FULL_INCLUDE = {
   },
   pagamentos: true,
   vendedor: true,
-  // assinaturas: true,
+  assinaturas: { select: { tipo: true } },
 } as const;
 
 const TITULAR_LIST_INCLUDE = {

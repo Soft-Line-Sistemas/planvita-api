@@ -156,6 +156,9 @@ model Titular {
 
   // Método preferencial para notificações recorrentes (whatsapp | email)
   metodoNotificacaoRecorrente String? @default("email")
+
+  // Timestamp do primeiro pagamento confirmado pelo Asaas (carência conta a partir daqui)
+  pagamentoConfirmadoEm DateTime? @map("pagamento_confirmado_em")
 }
 
 // ----------------- AUTH CLIENTE -----------------
@@ -889,6 +892,12 @@ model BusinessRules {
   // -------------------- Financeiro --------------------
   notificarTaxaVencida       Boolean? // aviso de taxa vencida
   tipoAvisoTaxaVencida       String?  // detalhamento do tipo de aviso
+
+  // -------------------- Redirecionamento WhatsApp por Idade --------------------
+  redirecionamentoWhatsappAtivo    Boolean? @default(false)
+  redirecionamentoWhatsappNumero   String?
+  redirecionamentoWhatsappIdadeMin Int?     @default(18)
+  redirecionamentoWhatsappIdadeMax Int?     @default(65)
 
   ativo                      Boolean? @default(true)
   criadoEm                   DateTime @default(now())
