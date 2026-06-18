@@ -86,6 +86,7 @@ describe('RegrasService', () => {
   it('remove campos de WhatsApp ao criar regras em banco legado', async () => {
     (prismaMock.businessRules.create as jest.Mock).mockResolvedValue({
       tenantId: 'tenant-123',
+      diasSuspensao: 90,
     });
 
     await service.create({
@@ -102,6 +103,7 @@ describe('RegrasService', () => {
         tenantId: 'tenant-123',
         diasSuspensao: 90,
       },
+      select: expect.any(Object),
     });
   });
 
@@ -124,6 +126,7 @@ describe('RegrasService', () => {
         tenantId: 'tenant-123',
         diasSuspensao: 75,
       },
+      select: expect.any(Object),
     });
   });
 });
