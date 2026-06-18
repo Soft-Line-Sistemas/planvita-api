@@ -826,6 +826,11 @@ export class FinanceiroService {
     const conta = await this.prisma.contaPagar.findUnique({ where: { id } });
     if (!conta) throw new Error("Conta não encontrada");
 
+    await this.prisma.comissao.updateMany({
+      where: { contaPagarId: id },
+      data: { contaPagarId: null },
+    });
+
     await this.prisma.contaPagar.delete({ where: { id } });
     await this.logAudit('ContaPagar', id, 'DELETE', conta, userId);
   }

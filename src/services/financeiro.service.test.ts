@@ -415,6 +415,27 @@ describe('FinanceiroService', () => {
     expect(prismaMock.financialAudit.create).toHaveBeenCalled();
   });
 
+  it('should unlink comissao before deleting conta pagar', async () => {
+    (prismaMock.contaPagar.findUnique as jest.Mock).mockResolvedValue({
+      id: 7,
+      descricao: 'Comissão consultor',
+      status: 'PENDENTE',
+    });
+    (prismaMock.comissao.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+    (prismaMock.contaPagar.delete as jest.Mock).mockResolvedValue({ id: 7 });
+
+    await service.deletarContaPagar(7, 99);
+
+    expect(prismaMock.comissao.updateMany).toHaveBeenCalledWith({
+      where: { contaPagarId: 7 },
+      data: { contaPagarId: null },
+    });
+    expect(prismaMock.contaPagar.delete).toHaveBeenCalledWith({
+      where: { id: 7 },
+    });
+    expect(prismaMock.financialAudit.create).toHaveBeenCalled();
+  });
+
   it('should fallback paymentUrl and pixQrCode from pagamento history when conta is missing them', async () => {
     const titularId = 55;
     (prismaMock.contaReceber.findMany as jest.Mock).mockResolvedValue([
