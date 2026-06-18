@@ -46,6 +46,15 @@ export const config: AppConfig = {
         ? 'whatsapp'
         : 'email',
   },
+
+  whatsapp: {
+    sessionPath: getEnvVarOptional('WHATSAPP_SESSION_PATH'),
+    clientIdPrefix: getEnvVar('WHATSAPP_CLIENT_ID_PREFIX', 'planvita'),
+    defaultCountryCode: getEnvVar('WHATSAPP_DEFAULT_COUNTRY_CODE', '55'),
+    protocolTimeoutMs: getEnvVarAsNumber('WHATSAPP_PROTOCOL_TIMEOUT_MS', 180000),
+    readyTimeoutMs: getEnvVarAsNumber('WHATSAPP_READY_TIMEOUT_MS', 60000),
+    sendRetries: getEnvVarAsNumber('WHATSAPP_SEND_RETRIES', 1),
+  },
 };
 
 function getEnvVar(name: string, defaultValue?: string): string {

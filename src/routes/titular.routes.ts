@@ -61,6 +61,12 @@ router.get(
 router.get('/:id', authenticate, authorize(['titular.view']), controller.getById.bind(controller));
 router.post('/', authenticate, authorize(['titular.create']), controller.create.bind(controller));
 router.put('/:id', authenticate, authorize(['titular.update']), controller.update.bind(controller));
+router.post(
+  '/:id/sucessao-corresponsavel',
+  authenticate,
+  authorize(['titular.update']),
+  controller.promoverCorresponsavel.bind(controller),
+);
 router.delete('/:id', authenticate, authorize(['titular.delete']), controller.delete.bind(controller));
 
 router.post('/full', authenticate, authorize(['titular.create']), controller.createFull.bind(controller));

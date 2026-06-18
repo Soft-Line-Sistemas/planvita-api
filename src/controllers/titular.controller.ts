@@ -637,6 +637,28 @@ export class TitularController {
     }
   }
 
+  async promoverCorresponsavel(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const service = new TitularService(req.tenantId);
+      const { id } = req.params;
+      const result = await service.promoverCorresponsavelParaTitular(Number(id));
+      res.json(result);
+    } catch (error: any) {
+      if (error?.status) {
+        return res.status(error.status).json({
+          message: error.message ?? 'Erro ao promover corresponsável.',
+          ...(error.code ? { code: error.code } : {}),
+        });
+      }
+      this.logger.error('Failed to promote Corresponsavel to Titular', error, {
+        params: req.params,
+      });
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
   async delete(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });

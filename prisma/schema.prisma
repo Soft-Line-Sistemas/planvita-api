@@ -159,6 +159,9 @@ model Titular {
 
   // Timestamp do primeiro pagamento confirmado pelo Asaas (carência conta a partir daqui)
   pagamentoConfirmadoEm DateTime? @map("pagamento_confirmado_em")
+  sucessaoTitularidadeEm DateTime? @map("sucessao_titularidade_em")
+  titularAnteriorNome String? @map("titular_anterior_nome")
+  titularAnteriorCpf String? @map("titular_anterior_cpf")
 }
 
 // ----------------- AUTH CLIENTE -----------------
@@ -234,6 +237,8 @@ model Corresponsavel {
   nome           String
   email          String
   telefone       String?
+  cpf            String?
+  dataNascimento DateTime?
   relacionamento String
   sexo           String?
   rg             String?
@@ -684,6 +689,77 @@ model NotificationTemplate {
 
   // @@index([tenantId, canal])
   // @@index([tenantId, flow])
+}
+
+model WhatsappAutomationConfig {
+  id                  Int                       @id @default(autoincrement())
+  tenantId            String                    @unique
+  enabled             Boolean                   @default(true)
+  useFallbackProvider Boolean                   @default(true)
+  defaultCountryCode  String                    @default("55")
+  timezone            String                    @default("America/Bahia")
+  quietHoursStart     String?
+  quietHoursEnd       String?
+  sendOnWeekends      Boolean                   @default(false)
+  minIntervalMinutes  Int                       @default(240)
+  sessionPath         String?
+  clientId            String?
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  rules               WhatsappAutomationRule[]
+  dispatches          WhatsappAutomationDispatch[]
+
+  @@index([tenantId])
+}
+
+model WhatsappAutomationRule {
+  id             Int                      @id @default(autoincrement())
+  configId       Int
+  key            String                   @unique
+  title          String
+  flow           String
+  enabled        Boolean                  @default(true)
+  priority       Int                      @default(100)
+  triggerType    String                   @default("FLOW")
+  offsetDays     Int                      @default(0)
+  recurrenceDays Int?
+  sendTime       String                   @default("09:00")
+  template       String?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  config         WhatsappAutomationConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  dispatches     WhatsappAutomationDispatch[]
+
+  @@index([configId])
+  @@index([flow, enabled, priority])
+}
+
+model WhatsappAutomationDispatch {
+  id              Int                      @id @default(autoincrement())
+  tenantId        String
+  configId        Int?
+  ruleId          Int?
+  titularId       Int?
+  contaReceberId  Int?
+  recipient       String?
+  flow            String?
+  status          String                   @default("PENDING")
+  scheduledFor    DateTime?
+  attemptedAt     DateTime?
+  sentAt          DateTime?
+  errorMessage    String?
+  payloadPreview  String?
+  providerRef     String?
+  provider        String                   @default("OWN")
+  triggerMode     String                   @default("MANUAL")
+  fallbackUsed    Boolean                  @default(false)
+  createdAt       DateTime                 @default(now())
+  config          WhatsappAutomationConfig? @relation(fields: [configId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  rule            WhatsappAutomationRule?  @relation(fields: [ruleId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([tenantId, createdAt])
+  @@index([ruleId, status])
+  @@index([titularId, createdAt])
 }
 
 // ----------------- AUDITORIA FINANCEIRA -----------------
