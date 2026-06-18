@@ -91,6 +91,10 @@ export class ClienteAuthService {
     const titular = await this.findTitularByLogin(loginRaw);
     if (!titular) return { result: null };
 
+    if (!titular.pagamentoConfirmadoEm) {
+      return { result: null, code: 'PAYMENT_REQUIRED' };
+    }
+
     const credential = await (this.prisma as any).titularCredential.findUnique({
       where: { titularId: titular.id },
     });
@@ -140,6 +144,13 @@ export class ClienteAuthService {
       throw err;
     }
 
+    if (!titular.pagamentoConfirmadoEm) {
+      const err: any = new Error('Pagamento ainda não confirmado. Aguarde a confirmação do pagamento para criar sua senha.');
+      err.status = 402;
+      err.code = 'PAYMENT_REQUIRED';
+      throw err;
+    }
+
     await this.ensureCredential(titular.id);
     const linkToken = await this.createToken('FIRST_ACCESS_LINK', titular.id, 'FIRST_ACCESS');
     const channel = this.resolveChannel(titular, requestedChannelRaw);
@@ -150,15 +161,23 @@ export class ClienteAuthService {
   async startFirstAccessByTitularId(
     titularId: number,
     requestedChannelRaw?: unknown,
+    bypassPaymentCheck = false,
   ): Promise<AuthStartResult> {
     const titular = await this.prisma.titular.findUnique({
       where: { id: titularId },
-      select: { id: true, email: true, telefone: true, metodoNotificacaoRecorrente: true },
+      select: { id: true, email: true, telefone: true, metodoNotificacaoRecorrente: true, pagamentoConfirmadoEm: true },
     });
 
     if (!titular) {
       const err: any = new Error('Cliente não encontrado.');
       err.status = 404;
+      throw err;
+    }
+
+    if (!bypassPaymentCheck && !titular.pagamentoConfirmadoEm) {
+      const err: any = new Error('Pagamento ainda não confirmado. Aguarde a confirmação do pagamento para criar sua senha.');
+      err.status = 402;
+      err.code = 'PAYMENT_REQUIRED';
       throw err;
     }
 
@@ -251,6 +270,18 @@ export class ClienteAuthService {
     const token =
       (await this.consumeTokenByRawOrNull('VERIFY_FIRST_ACCESS', verificationTokenOrLinkToken)) ??
       (await this.consumeTokenByRaw('FIRST_ACCESS_LINK', verificationTokenOrLinkToken));
+
+    const titular = await this.prisma.titular.findUnique({
+      where: { id: token.titularId },
+      select: { pagamentoConfirmadoEm: true },
+    });
+
+    if (!titular?.pagamentoConfirmadoEm) {
+      const err: any = new Error('Pagamento ainda não confirmado. Aguarde a confirmação do pagamento para criar sua senha.');
+      err.status = 402;
+      err.code = 'PAYMENT_REQUIRED';
+      throw err;
+    }
 
     const senhaHash = await bcrypt.hash(password, 10);
     await this.ensureCredential(token.titularId);
@@ -349,7 +380,7 @@ export class ClienteAuthService {
     if (isEmail(login)) {
       return this.prisma.titular.findUnique({
         where: { email: login },
-        select: { id: true, nome: true, email: true, cpf: true, telefone: true, metodoNotificacaoRecorrente: true },
+        select: { id: true, nome: true, email: true, cpf: true, telefone: true, metodoNotificacaoRecorrente: true, pagamentoConfirmadoEm: true },
       });
     }
 
@@ -357,7 +388,7 @@ export class ClienteAuthService {
     if (cpf.length === 11) {
       return this.prisma.titular.findFirst({
         where: { cpf },
-        select: { id: true, nome: true, email: true, cpf: true, telefone: true, metodoNotificacaoRecorrente: true },
+        select: { id: true, nome: true, email: true, cpf: true, telefone: true, metodoNotificacaoRecorrente: true, pagamentoConfirmadoEm: true },
       });
     }
 

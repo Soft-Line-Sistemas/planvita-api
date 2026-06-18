@@ -60,6 +60,102 @@ export class AsaasIntegrationService {
     return this.enabled && !!this.client;
   }
 
+  async reenviarLinkCobrancaPendente(titularId: number): Promise<string | null> {
+    if (!this.client) return null;
+
+    const titular = await this.prisma.titular.findUnique({
+      where: { id: titularId },
+      select: {
+        id: true,
+        nome: true,
+        email: true,
+        cpf: true,
+        asaasCustomerId: true,
+        plano: { select: { valorMensal: true } },
+        contasReceber: {
+          where: { status: 'PENDENTE' },
+          orderBy: { vencimento: 'asc' },
+          take: 1,
+        },
+      },
+    });
+
+    if (!titular) return null;
+
+    const contaPendente = titular.contasReceber[0] ?? null;
+
+    if (contaPendente?.asaasPaymentId) {
+      try {
+        const existing = await this.client.getPaymentById(contaPendente.asaasPaymentId);
+        const url = (existing as any)?.invoiceUrl ?? (existing as any)?.bankSlipUrl ?? contaPendente.paymentUrl;
+        if (url) return url;
+      } catch {
+        // fall through to create new
+      }
+    }
+
+    const customerId = titular.asaasCustomerId ?? await this.findExistingCustomerOnAsaas({
+      externalReference: `titular-${this.tenantId}-${titularId}`,
+      cpfCnpj: titular.cpf ?? undefined,
+      email: titular.email ?? undefined,
+    });
+
+    if (!customerId) return null;
+
+    const valor = titular.plano?.valorMensal ?? contaPendente?.valor;
+    if (!valor) return null;
+
+    const vencimento = new Date();
+    vencimento.setDate(vencimento.getDate() + 3);
+    const dueDate = vencimento.toISOString().split('T')[0];
+
+    const payload: AsaasPaymentPayload = {
+      customer: customerId,
+      billingType: 'BOLETO',
+      value: valor,
+      dueDate,
+      description: `Adesão — ${titular.nome}`,
+      externalReference: `titular-adesao-reenvio-${this.tenantId}-${titularId}-${Date.now()}`,
+    };
+
+    try {
+      const created = await this.client.createPayment(payload);
+      const paymentUrl = (created as any)?.invoiceUrl ?? (created as any)?.bankSlipUrl ?? null;
+
+      if (paymentUrl && contaPendente) {
+        await this.prisma.contaReceber.update({
+          where: { id: contaPendente.id },
+          data: {
+            paymentUrl,
+            asaasPaymentId: (created as any)?.id ?? undefined,
+            vencimento,
+          },
+        });
+      } else if (paymentUrl) {
+        const valorTotal = contaPendente?.valor ?? valor;
+        await this.prisma.contaReceber.create({
+          data: {
+            clienteId: titularId,
+            descricao: `Adesão — ${titular.nome}`,
+            valor: valorTotal,
+            vencimento,
+            status: 'PENDENTE',
+            paymentUrl,
+            asaasPaymentId: (created as any)?.id ?? undefined,
+          },
+        });
+      }
+
+      return paymentUrl;
+    } catch (error: any) {
+      this.logger.warn('Falha ao criar nova cobrança de adesão no Asaas', {
+        titularId,
+        error: error?.message,
+      });
+      return null;
+    }
+  }
+
   private isStatusPagamentoConfirmado(status: string): boolean {
     return status === 'RECEBIDO' || status === 'CONFIRMADO';
   }
@@ -327,6 +423,153 @@ export class AsaasIntegrationService {
         telefonesProcessados.add(telefoneWhatsapp);
       }
     }
+  }
+
+  private buildPublicLink(path: string, token: string): string {
+    const base = (process.env.FRONTEND_BASE_URL || '').replace(/\/$/, '') || 'https://planvita.com.br';
+    const url = new URL(`${base}${path}`);
+    url.searchParams.set('token', token);
+    url.searchParams.set('tenant', this.tenantId);
+    return url.toString();
+  }
+
+  private async enviarLinkCriacaoSenha(payload: {
+    titularId: number;
+    nome: string;
+    email?: string | null;
+    telefone?: string | null;
+    nomeResponsavelFinanceiro?: string | null;
+    telefoneResponsavelFinanceiro?: string | null;
+    confirmedAt: Date;
+  }): Promise<void> {
+    const logId = `primeiro-pagamento-link-senha:${payload.titularId}`;
+    const jaEnviado = await this.prisma.notificationLog.findFirst({
+      where: { tenantId: this.tenantId, logId, status: 'enviado' },
+      select: { id: true },
+    });
+    if (jaEnviado) return;
+
+    const { ClienteAuthService } = await import('./cliente-auth.service');
+    const authService = new ClienteAuthService(this.tenantId);
+
+    let linkToken: string | undefined;
+    try {
+      const start = await authService.startFirstAccessByTitularId(payload.titularId, undefined, true);
+      linkToken = (start as any)?.dev?.token ?? undefined;
+    } catch (error: any) {
+      this.logger.warn('Falha ao gerar token de primeiro acesso para envio pós-pagamento', {
+        tenantId: this.tenantId,
+        titularId: payload.titularId,
+        error: error?.message,
+      });
+      return;
+    }
+
+    const link = linkToken
+      ? this.buildPublicLink('/cliente?modo=primeiro-acesso', linkToken)
+      : `${(process.env.FRONTEND_BASE_URL || '').replace(/\/$/, '') || 'https://planvita.com.br'}/cliente?modo=primeiro-acesso&tenant=${this.tenantId}`;
+
+    const mensagem =
+      `Olá, ${payload.nome}! Seu pagamento foi confirmado com sucesso. ` +
+      `Agora você pode criar sua senha e acessar o aplicativo. ` +
+      `Clique no link para criar sua senha: ${link}`;
+
+    const destinatarios: Array<{ canal: 'email' | 'whatsapp'; to: string; logSuffix: string }> = [];
+
+    if (payload.email) {
+      destinatarios.push({ canal: 'email', to: payload.email, logSuffix: ':email' });
+    }
+
+    const telefoneWhatsapp = this.normalizarTelefoneWhatsapp(payload.telefone);
+    if (telefoneWhatsapp) {
+      destinatarios.push({ canal: 'whatsapp', to: telefoneWhatsapp, logSuffix: ':whatsapp' });
+    }
+
+    const telefoneResponsavel = this.normalizarTelefoneWhatsapp(payload.telefoneResponsavelFinanceiro);
+    if (telefoneResponsavel && telefoneResponsavel !== telefoneWhatsapp) {
+      destinatarios.push({ canal: 'whatsapp', to: telefoneResponsavel, logSuffix: ':whatsapp:responsavel' });
+    }
+
+    for (const dest of destinatarios) {
+      const destLogId = `${logId}${dest.logSuffix}`;
+      const jaEnviadoDest = await this.prisma.notificationLog.findFirst({
+        where: { tenantId: this.tenantId, logId: destLogId, status: 'enviado' },
+        select: { id: true },
+      });
+      if (jaEnviadoDest) continue;
+
+      const response = await this.notificationClient.send({
+        to: dest.to,
+        channel: dest.canal,
+        subject: 'Pagamento confirmado — Crie sua senha de acesso',
+        message: mensagem,
+        metadata: { flow: 'primeiro-pagamento-link-senha', titularId: payload.titularId },
+      });
+
+      await this.prisma.notificationLog.create({
+        data: {
+          tenantId: this.tenantId,
+          logId: destLogId,
+          titularId: payload.titularId,
+          destinatario: dest.to,
+          canal: dest.canal,
+          status: response.success ? 'enviado' : 'falha',
+          motivo: response.error,
+        },
+      });
+    }
+
+    this.logger.info('Link de criação de senha enviado após confirmação de pagamento', {
+      tenantId: this.tenantId,
+      titularId: payload.titularId,
+    });
+  }
+
+  private async agendarNotificacaoContratoObrigatorio(payload: {
+    titularId: number;
+    nome: string;
+    email?: string | null;
+    telefone?: string | null;
+    nomeResponsavelFinanceiro?: string | null;
+    telefoneResponsavelFinanceiro?: string | null;
+    confirmedAt: Date;
+  }): Promise<void> {
+    // Registra no log de notificação um job de "contrato pendente" para ser disparado
+    // pelo sistema de notificações recorrentes em ~24h após o pagamento.
+    // A mensagem será enviada apenas via WhatsApp, sem bloquear o acesso.
+    const logId = `contrato-pendente-agendado:${payload.titularId}`;
+    const jaAgendado = await this.prisma.notificationLog.findFirst({
+      where: { tenantId: this.tenantId, logId, status: { in: ['enviado', 'agendado'] } },
+      select: { id: true },
+    });
+    if (jaAgendado) return;
+
+    const prazo24h = new Date(payload.confirmedAt.getTime() + 24 * 60 * 60 * 1000);
+
+    await this.prisma.notificationLog.create({
+      data: {
+        tenantId: this.tenantId,
+        logId,
+        titularId: payload.titularId,
+        canal: 'whatsapp',
+        status: 'agendado',
+        motivo: `Assinatura de contrato pendente — enviar após ${prazo24h.toISOString()}`,
+        payload: JSON.stringify({
+          flow: 'contrato-pendente',
+          titularId: payload.titularId,
+          nome: payload.nome,
+          telefone: this.normalizarTelefoneWhatsapp(payload.telefone),
+          telefoneResponsavel: this.normalizarTelefoneWhatsapp(payload.telefoneResponsavelFinanceiro),
+          enviarApos: prazo24h.toISOString(),
+        }),
+      },
+    });
+
+    this.logger.info('Notificação de contrato pendente agendada para 24h após pagamento', {
+      tenantId: this.tenantId,
+      titularId: payload.titularId,
+      enviarApos: prazo24h.toISOString(),
+    });
   }
 
   private arredondarMoeda(valor: number): number {
@@ -1502,6 +1745,15 @@ export class AsaasIntegrationService {
             paymentId: string;
           }
         | null = null;
+      let primeiroPagamentoConfirmado: {
+        titularId: number;
+        nome: string;
+        email?: string | null;
+        telefone?: string | null;
+        nomeResponsavelFinanceiro?: string | null;
+        telefoneResponsavelFinanceiro?: string | null;
+        confirmedAt: Date;
+      } | null = null;
 
       if (paymentId) {
         conta = (await tx.contaReceber.findUnique({
@@ -1648,6 +1900,37 @@ export class AsaasIntegrationService {
               paymentUrl: updatedConta.paymentUrl,
               paymentId,
             };
+
+            // Grava timestamp do primeiro pagamento confirmado (carência + liberação de senha)
+            const titularAtual = await tx.titular.findUnique({
+              where: { id: updatedConta.clienteId },
+              select: { pagamentoConfirmadoEm: true },
+            });
+
+            if (!titularAtual?.pagamentoConfirmadoEm) {
+              const confirmedAt = new Date();
+              await tx.titular.update({
+                where: { id: updatedConta.clienteId },
+                data: { pagamentoConfirmadoEm: confirmedAt },
+              });
+
+              // Atualiza carência dos dependentes para o momento do pagamento
+              // (antes era a dataContratacao, que precede o pagamento)
+              await (tx as any).dependente.updateMany({
+                where: { titularId: updatedConta.clienteId },
+                data: { carenciaInicioEm: confirmedAt },
+              });
+
+              primeiroPagamentoConfirmado = {
+                titularId: updatedConta.clienteId,
+                nome: updatedConta.cliente.nome,
+                email: updatedConta.cliente.email,
+                telefone: updatedConta.cliente.telefone,
+                nomeResponsavelFinanceiro: responsavelFinanceiro?.nome,
+                telefoneResponsavelFinanceiro: responsavelFinanceiro?.telefone,
+                confirmedAt,
+              };
+            }
           }
           // Mantém a conta recorrente no financeiro para histórico completo
           // (faturas pagas também devem aparecer na listagem do cliente).
@@ -1697,7 +1980,7 @@ export class AsaasIntegrationService {
           subscriptionId,
         });
 
-        return { contaReceberId: conta.id, status, notificacaoConfirmacao };
+        return { contaReceberId: conta.id, status, notificacaoConfirmacao, primeiroPagamentoConfirmado };
       }
 
       this.logger.warn('Webhook Asaas recebido sem conta vinculada', {
@@ -1707,7 +1990,7 @@ export class AsaasIntegrationService {
         event: event.event,
       });
 
-      return { contaReceberId: null, status, notificacaoConfirmacao: null };
+      return { contaReceberId: null, status, notificacaoConfirmacao: null, primeiroPagamentoConfirmado: null };
     });
 
     if (result.notificacaoConfirmacao) {
@@ -1718,6 +2001,26 @@ export class AsaasIntegrationService {
           tenantId: this.tenantId,
           titularId: result.notificacaoConfirmacao.titularId,
           paymentId: result.notificacaoConfirmacao.paymentId,
+        });
+      }
+    }
+
+    if (result.primeiroPagamentoConfirmado) {
+      try {
+        await this.enviarLinkCriacaoSenha(result.primeiroPagamentoConfirmado);
+      } catch (error: any) {
+        this.logger.error('Falha ao enviar link de criação de senha após pagamento', error, {
+          tenantId: this.tenantId,
+          titularId: result.primeiroPagamentoConfirmado.titularId,
+        });
+      }
+
+      try {
+        await this.agendarNotificacaoContratoObrigatorio(result.primeiroPagamentoConfirmado);
+      } catch (error: any) {
+        this.logger.error('Falha ao agendar notificação de contrato pendente', error, {
+          tenantId: this.tenantId,
+          titularId: result.primeiroPagamentoConfirmado.titularId,
         });
       }
     }

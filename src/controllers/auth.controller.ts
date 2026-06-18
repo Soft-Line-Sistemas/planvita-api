@@ -72,6 +72,13 @@ export class AuthController {
             const service = new ClienteAuthService(tenant);
             const { result, code } = await service.login(loginValue, senhaValue);
 
+            if (!result && code === 'PAYMENT_REQUIRED') {
+              return res.status(402).json({
+                message: 'Pagamento ainda não confirmado. Aguarde a confirmação do pagamento para acessar o aplicativo.',
+                code: 'PAYMENT_REQUIRED',
+              });
+            }
+
             if (!result && code === 'FIRST_ACCESS_REQUIRED') {
               firstAccessTenant = tenant;
               continue;
@@ -216,7 +223,7 @@ export class AuthController {
           return res.status(403).json({ message: 'Ação permitida apenas para admin/consultor autenticado.' });
         }
 
-        const start = await auth.startFirstAccessByTitularId(Number(titularId), channel);
+        const start = await auth.startFirstAccessByTitularId(Number(titularId), channel, true);
         return res.json({ message: 'Enviamos um código para primeiro acesso.', start });
       }
 
@@ -391,5 +398,125 @@ export class AuthController {
       maxAge: -1,
     });
     res.json({ message: 'Logout realizado com sucesso' });
+  }
+
+  async reenviarLinkPagamento(req: TenantRequest, res: Response) {
+    try {
+      const { login } = req.body ?? {};
+      if (!login) return res.status(400).json({ message: 'Login (CPF ou e-mail) é obrigatório.' });
+
+      const tenantsToTry = this.getClienteTenantCandidates(req.tenantId);
+
+      for (const tenant of tenantsToTry) {
+        try {
+          const { getPrismaForTenant } = await import('../utils/prisma');
+          const prisma = getPrismaForTenant(tenant);
+
+          const loginValue = String(login).trim().toLowerCase();
+          const isCpf = /^\d{11}$/.test(loginValue.replace(/\D/g, ''));
+
+          const where = isCpf
+            ? { cpf: loginValue.replace(/\D/g, '') }
+            : { email: loginValue };
+
+          const titular = await prisma.titular.findFirst({
+            where,
+            select: {
+              id: true,
+              nome: true,
+              email: true,
+              telefone: true,
+              cpf: true,
+              pagamentoConfirmadoEm: true,
+              plano: { select: { valorMensal: true } },
+              contasReceber: {
+                where: { status: 'PENDENTE' },
+                orderBy: { vencimento: 'asc' },
+                take: 1,
+                select: { paymentUrl: true, pixQrCode: true, asaasPaymentId: true, vencimento: true, valor: true },
+              },
+            },
+          });
+
+          if (!titular) continue;
+
+          if (titular.pagamentoConfirmadoEm) {
+            return res.status(409).json({
+              message: 'Pagamento já confirmado para este cadastro.',
+              code: 'PAYMENT_ALREADY_CONFIRMED',
+            });
+          }
+
+          const contaPendente = titular.contasReceber[0] ?? null;
+          let paymentUrl: string | null = contaPendente?.paymentUrl ?? null;
+
+          if (!paymentUrl) {
+            const { AsaasIntegrationService } = await import('../services/asaas-integration.service');
+            const asaas = new AsaasIntegrationService(tenant);
+            if (asaas.isEnabled()) {
+              paymentUrl = await asaas.reenviarLinkCobrancaPendente(titular.id) ?? null;
+            }
+          }
+
+          const masked = (v: string | null | undefined): string | null => {
+            if (!v) return null;
+            if (v.includes('@')) {
+              const [u, d] = v.split('@');
+              return `${u.slice(0, 2)}***@${d}`;
+            }
+            return `****${v.slice(-4)}`;
+          };
+
+          return res.json({
+            nome: titular.nome,
+            emailMasked: masked(titular.email),
+            telefoneMasked: masked(titular.telefone),
+            paymentUrl,
+            vencimento: contaPendente?.vencimento ?? null,
+            valor: contaPendente?.valor ?? titular.plano?.valorMensal ?? null,
+          });
+        } catch (innerError: any) {
+          this.logger.warn('Falha ao tentar reenviar link de pagamento em tenant', {
+            tenant,
+            error: innerError?.message,
+          });
+        }
+      }
+
+      return res.status(404).json({ message: 'Cadastro não encontrado.' });
+    } catch (error) {
+      this.logger.error('Erro ao reenviar link de pagamento', error);
+      res.status(500).json({ message: 'Erro interno no servidor' });
+    }
+  }
+
+  async reenviarLinkContrato(req: TenantRequest & ClienteAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const titularId = Number((req as any)?.cliente?.titularId);
+      if (!titularId || Number.isNaN(titularId)) {
+        return res.status(401).json({ message: 'Não autenticado' });
+      }
+
+      const { channel } = req.body ?? {};
+      const channelValue = String(channel ?? '').trim().toLowerCase();
+      if (channelValue !== 'email' && channelValue !== 'whatsapp') {
+        return res.status(400).json({ message: 'Canal inválido. Use "email" ou "whatsapp".' });
+      }
+
+      const auth = new ClienteAuthService(req.tenantId);
+      const start = await auth.startFirstAccessByTitularId(titularId, channelValue, true);
+
+      res.json({
+        message: `Link de acesso ao contrato enviado via ${channelValue}.`,
+        channel: start.channel,
+        destinationMasked: start.destinationMasked,
+      });
+    } catch (error: any) {
+      const status = error?.status ?? 500;
+      const message = error?.message ?? 'Erro ao reenviar link de contrato.';
+      res.status(status).json({ message });
+    }
   }
 }
