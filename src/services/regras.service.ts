@@ -89,15 +89,19 @@ export class RegrasService {
   }
 
   async create(data: BusinessRulesType) {
-    return this.prisma.businessRules.create({
+    const rule = await this.prisma.businessRules.create({
       data: this.sanitizeWriteData(data),
+      select: BUSINESS_RULES_LEGACY_SELECT,
     });
+    return this.withWhatsappDefaults(rule);
   }
 
   async update(tenantId: string, data: BusinessRulesType) {
-    return this.prisma.businessRules.update({
+    const rule = await this.prisma.businessRules.update({
       where: { tenantId },
       data: this.sanitizeWriteData(data),
+      select: BUSINESS_RULES_LEGACY_SELECT,
     });
+    return this.withWhatsappDefaults(rule);
   }
 }
