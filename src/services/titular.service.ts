@@ -25,33 +25,149 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 type TitularType = Prisma.TitularGetPayload<{}>;
 
-const TITULAR_FULL_INCLUDE = {
-  dependentes: true,
-  corresponsaveis: true,
+const TITULAR_BASE_SCALARS = {
+  id: true,
+  nome: true,
+  email: true,
+  telefone: true,
+  cpf: true,
+  dataNascimento: true,
+  situacaoConjugal: true,
+  profissao: true,
+  sexo: true,
+  rg: true,
+  naturalidade: true,
+  statusPlano: true,
+  dataContratacao: true,
+  cep: true,
+  uf: true,
+  cidade: true,
+  bairro: true,
+  logradouro: true,
+  numero: true,
+  complemento: true,
+  pontoReferencia: true,
+} as const;
+
+const TITULAR_FULL_SELECT = Prisma.validator<Prisma.TitularSelect>()({
+  ...TITULAR_BASE_SCALARS,
+  dependentes: {
+    select: {
+      id: true,
+      nome: true,
+      dataNascimento: true,
+      carenciaInicioEm: true,
+      tipoDependente: true,
+      parentescoNormalizado: true,
+      foraGradeFamiliar: true,
+      excluirCobrancaAdicional: true,
+      valorAdicionalMensal: true,
+    },
+  },
+  corresponsaveis: {
+    select: {
+      id: true,
+      nome: true,
+      email: true,
+      telefone: true,
+      relacionamento: true,
+      situacaoConjugal: true,
+      profissao: true,
+      sexo: true,
+      naturalidade: true,
+      cep: true,
+      uf: true,
+      cidade: true,
+      bairro: true,
+      logradouro: true,
+      numero: true,
+      complemento: true,
+      pontoReferencia: true,
+    },
+  },
   plano: {
-    include: {
+    select: {
+      id: true,
+      nome: true,
+      valorMensal: true,
+      carenciaDias: true,
+      vigenciaMeses: true,
       coberturas: true,
       beneficios: true,
       beneficiarios: true,
     },
   },
   pagamentos: true,
-  vendedor: true,
+  vendedor: {
+    select: {
+      id: true,
+      nome: true,
+    },
+  },
   assinaturas: { select: { tipo: true } },
-} as const;
+});
 
-const TITULAR_LIST_INCLUDE = {
-  plano: true,
-  dependentes: true,
-  // assinaturas: true,
-} as const;
+const TITULAR_LIST_SELECT = Prisma.validator<Prisma.TitularSelect>()({
+  ...TITULAR_BASE_SCALARS,
+  plano: {
+    select: {
+      id: true,
+      nome: true,
+      valorMensal: true,
+      carenciaDias: true,
+      vigenciaMeses: true,
+      coberturas: true,
+      beneficios: true,
+      beneficiarios: true,
+    },
+  },
+  dependentes: {
+    select: {
+      id: true,
+      nome: true,
+      dataNascimento: true,
+      carenciaInicioEm: true,
+      tipoDependente: true,
+      parentescoNormalizado: true,
+      foraGradeFamiliar: true,
+      excluirCobrancaAdicional: true,
+      valorAdicionalMensal: true,
+    },
+  },
+});
 
-const TITULAR_EXPORT_INCLUDE = {
-  plano: true,
-  dependentes: true,
-  corresponsaveis: true,
-  vendedor: true,
-} as const;
+const TITULAR_EXPORT_SELECT = Prisma.validator<Prisma.TitularSelect>()({
+  ...TITULAR_BASE_SCALARS,
+  plano: {
+    select: {
+      id: true,
+      nome: true,
+    },
+  },
+  dependentes: {
+    select: {
+      id: true,
+      nome: true,
+      dataNascimento: true,
+      tipoDependente: true,
+    },
+  },
+  corresponsaveis: {
+    select: {
+      id: true,
+      nome: true,
+      email: true,
+      telefone: true,
+      relacionamento: true,
+    },
+  },
+  vendedor: {
+    select: {
+      id: true,
+      nome: true,
+    },
+  },
+});
 
 const FILES_API_BASE_URL = process.env.FILES_API_URL;
 const ASSINATURA_TIPOS = [
@@ -475,7 +591,7 @@ export class TitularService {
         where,
         skip: (page - 1) * limit,
         take: limit,
-        include: TITULAR_LIST_INCLUDE as any,
+        select: TITULAR_LIST_SELECT,
         orderBy: { nome: "asc" },
       }),
       this.prisma.titular.count({ where }),
@@ -490,7 +606,7 @@ export class TitularService {
       where,
       skip: (page - 1) * limit,
       take: limit,
-      include: TITULAR_LIST_INCLUDE as any,
+      select: TITULAR_LIST_SELECT,
       orderBy: { nome: "asc" },
     });
 
@@ -530,7 +646,7 @@ export class TitularService {
 
     return this.prisma.titular.findMany({
       where,
-      include: TITULAR_EXPORT_INCLUDE as any,
+      select: TITULAR_EXPORT_SELECT,
       orderBy: { nome: 'asc' },
     });
   }
@@ -539,7 +655,7 @@ export class TitularService {
     await this.sincronizarStatusPlanoPorSuspensao([Number(id)]);
     return this.prisma.titular.findUnique({
       where: { id: Number(id) },
-      include: TITULAR_FULL_INCLUDE as any,
+      select: TITULAR_FULL_SELECT,
     });
   }
 
