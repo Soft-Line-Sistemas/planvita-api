@@ -1,5 +1,6 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
 import { TitularPricingService } from './titular-pricing.service';
+import { canonicalizeRelationship } from './family-relationship.service';
 
 type DependenteType = Prisma.DependenteGetPayload<{}>;
 type DependenteCreateInput = Prisma.DependenteUncheckedCreateInput;
@@ -112,20 +113,48 @@ export class DependenteService {
         ? MAX_DEPENDENTES_POR_TITULAR
         : Math.min(limiteConfigurado, MAX_DEPENDENTES_POR_TITULAR);
 
-    const totalAtual = await this.prisma.dependente.count({
-      where: {
-        titularId,
-        ...(ignorarDependenteId ? { id: { not: ignorarDependenteId } } : {}),
-      },
-    });
+    const [totalAtual, titular] = await Promise.all([
+      this.prisma.dependente.count({
+        where: {
+          titularId,
+          ...(ignorarDependenteId ? { id: { not: ignorarDependenteId } } : {}),
+        },
+      }),
+      this.prisma.titular.findUnique({
+        where: { id: titularId },
+        select: {
+          nome: true,
+          cpf: true,
+          corresponsaveis: {
+            orderBy: { id: 'asc' },
+            select: {
+              nome: true,
+              cpf: true,
+              relacionamento: true,
+            },
+          },
+        },
+      }),
+    ]);
 
-    if (totalAtual + novosDependentes > limite) {
+    const corresponsavel = titular?.corresponsaveis?.[0] ?? null;
+    const titularCpf = String(titular?.cpf ?? '').replace(/\D/g, '');
+    const corresponsavelCpf = String(corresponsavel?.cpf ?? '').replace(/\D/g, '');
+    const corresponsavelMesmoTitular =
+      (titularCpf && corresponsavelCpf && titularCpf === corresponsavelCpf) ||
+      canonicalizeRelationship(corresponsavel?.relacionamento) === 'titular' ||
+      (String(titular?.nome ?? '').trim().toLowerCase() &&
+        String(titular?.nome ?? '').trim().toLowerCase() ===
+          String(corresponsavel?.nome ?? '').trim().toLowerCase());
+    const vagasConsumidasCorresponsavel = corresponsavel && !corresponsavelMesmoTitular ? 1 : 0;
+
+    if (totalAtual + vagasConsumidasCorresponsavel + novosDependentes > limite) {
       const err: any = new Error(`Limite de beneficiários (${limite}) atingido.`);
       err.status = 400;
       err.code = 'LIMITE_BENEFICIARIOS_EXCEDIDO';
       err.meta = {
         limiteBeneficiarios: limite,
-        totalDependentes: totalAtual,
+        totalDependentes: totalAtual + vagasConsumidasCorresponsavel,
       };
       throw err;
     }

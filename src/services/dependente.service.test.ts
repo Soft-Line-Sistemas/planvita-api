@@ -10,6 +10,9 @@ const prismaMock = {
     update: jest.fn(),
     delete: jest.fn(),
   },
+  titular: {
+    findUnique: jest.fn(),
+  },
 };
 
 const pricingServiceMock = {
@@ -31,6 +34,11 @@ describe('DependenteService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+      nome: 'Titular Teste',
+      cpf: '12345678901',
+      corresponsaveis: [],
+    });
     service = new DependenteService('tenant-123');
   });
 
@@ -102,6 +110,42 @@ describe('DependenteService', () => {
       service.create({
         titularId: 3,
         nome: 'Excedente',
+        tipoDependente: 'Filho(a)',
+        dataNascimento: '2018-01-01',
+      } as any),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'LIMITE_BENEFICIARIOS_EXCEDIDO',
+      meta: expect.objectContaining({
+        limiteBeneficiarios: 2,
+        totalDependentes: 2,
+      }),
+    });
+
+    expect(prismaMock.dependente.create).not.toHaveBeenCalled();
+  });
+
+  it('bloqueia criação quando o corresponsável já consome uma vaga da grade', async () => {
+    (prismaMock.businessRules.findFirst as jest.Mock).mockResolvedValue({
+      limiteBeneficiarios: 2,
+    });
+    (prismaMock.dependente.count as jest.Mock).mockResolvedValue(1);
+    (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+      nome: 'Titular Teste',
+      cpf: '12345678901',
+      corresponsaveis: [
+        {
+          nome: 'Corresponsável Teste',
+          cpf: '22233344455',
+          relacionamento: 'Cônjuge',
+        },
+      ],
+    });
+
+    await expect(
+      service.create({
+        titularId: 3,
+        nome: 'Excedente Com Corresponsável',
         tipoDependente: 'Filho(a)',
         dataNascimento: '2018-01-01',
       } as any),

@@ -3,6 +3,7 @@ import Logger from '../utils/logger';
 import { NotificationApiClient, NotificationChannel } from '../utils/notificationClient';
 import { getPrismaForTenant, Prisma } from '../utils/prisma';
 import { NotificacaoTemplateService } from './notificacao-template.service';
+import { WhatsappNotificationService } from './whatsapp-notification.service';
 
 type BusinessRulesModel = Prisma.BusinessRulesGetPayload<{}>;
 
@@ -95,11 +96,39 @@ export interface ResultadoDisparo {
   logId?: string;
 }
 
+export interface WhatsappQueueItem {
+  queuePosition: number | null;
+  titularId: number;
+  nome: string;
+  recipient: string | null;
+  flow: NotificationFlowType;
+  ruleTitle: string;
+  status: 'QUEUED' | 'SKIPPED';
+  expectedAt: Date | null;
+  delayedByMinutes: number;
+  blockedReason?: string;
+  totalPendente: number;
+  quantidadeCobrancas: number;
+}
+
+export interface WhatsappQueuePreview {
+  summary: {
+    flow: NotificationFlowType;
+    triggerMode: 'AUTOMATIC' | 'MANUAL_PREVIEW';
+    queued: number;
+    skipped: number;
+    baseTime: Date;
+    minIntervalMinutes: number;
+  };
+  items: WhatsappQueueItem[];
+}
+
 export class NotificacaoRecorrenteService {
   private prisma;
   private logger: Logger;
   private apiClient: NotificationApiClient;
   private templateService: NotificacaoTemplateService;
+  private whatsappService: WhatsappNotificationService;
   private regrasNegocio: BusinessRulesModel | null = null;
 
   constructor(private tenantId: string) {
@@ -111,6 +140,7 @@ export class NotificacaoRecorrenteService {
     this.logger = new Logger({ service: 'NotificacaoRecorrenteService', tenantId });
     this.apiClient = new NotificationApiClient(tenantId);
     this.templateService = new NotificacaoTemplateService(tenantId);
+    this.whatsappService = new WhatsappNotificationService(tenantId);
   }
 
   async getPainel(tipo: NotificationFlowType = 'pendencia-periodica'): Promise<PainelNotificacao> {
@@ -257,6 +287,7 @@ export class NotificacaoRecorrenteService {
 
     const contas = await this.buscarPendencias(tipo);
     const destinatarios = this.mapearDestinatarios(contas, agendamento.metodoPreferencial);
+    const triggerMode = force ? 'MANUAL' : 'AUTOMATIC';
 
     let enviados = 0;
     let ignorados = 0;
@@ -335,7 +366,18 @@ export class NotificacaoRecorrenteService {
         tipo,
         destinatario.metodo === 'email' ? templateEmail || undefined : templateWhatsapp || undefined,
       );
-      const resultado = await this.apiClient.send(payload);
+      const resultado =
+        destinatario.metodo === 'whatsapp'
+          ? await this.whatsappService.sendViaOwnConnectionOrFallback({
+              flow: tipo,
+              recipient: contato,
+              message: payload.message,
+              triggerMode,
+              titularId: destinatario.titularId,
+              contaReceberId: destinatario.cobrancas[0]?.contaId,
+              legacyPayload: payload,
+            })
+          : await this.apiClient.send(payload);
 
       if (resultado.success) {
         enviados += 1;
@@ -352,7 +394,13 @@ export class NotificacaoRecorrenteService {
           destinatario: contato,
           canal: destinatario.metodo,
           status: 'enviado',
-          payload: payloadBase,
+          payload: this.buildLogPayload(tipo, referencias, destinatario, {
+            providerResponse: resultado,
+            dispatchMode:
+              destinatario.metodo === 'whatsapp'
+                ? (resultado as any).triggerMode ?? triggerMode
+                : triggerMode,
+          }),
         });
       } else if (resultado.skipped) {
         ignorados += 1;
@@ -373,6 +421,10 @@ export class NotificacaoRecorrenteService {
           motivo: resultado.error ?? 'disparo ignorado',
           payload: this.buildLogPayload(tipo, referencias, destinatario, {
             providerResponse: resultado,
+            dispatchMode:
+              destinatario.metodo === 'whatsapp'
+                ? (resultado as any).triggerMode ?? 'FALLBACK'
+                : triggerMode,
           }),
         });
       } else {
@@ -394,6 +446,10 @@ export class NotificacaoRecorrenteService {
           motivo: resultado.error ?? 'erro ao enviar',
           payload: this.buildLogPayload(tipo, referencias, destinatario, {
             providerResponse: resultado,
+            dispatchMode:
+              destinatario.metodo === 'whatsapp'
+                ? (resultado as any).triggerMode ?? triggerMode
+                : triggerMode,
           }),
         });
       }
@@ -468,6 +524,157 @@ export class NotificacaoRecorrenteService {
   ) {
     if (!registros.length) return;
     await this.prisma.notificationLog.createMany({ data: registros });
+  }
+
+  async getWhatsappQueue(
+    tipo: NotificationFlowType = 'pendencia-periodica',
+  ): Promise<WhatsappQueuePreview> {
+    const agendamento = await this.ensureAgendamento();
+    const contas = await this.buscarPendencias(tipo);
+    const destinatarios = this.mapearDestinatarios(contas, agendamento.metodoPreferencial);
+    const whatsappConfig = await this.prisma.whatsappAutomationConfig.findFirst({
+      where: { tenantId: this.tenantId },
+      include: { rules: true },
+    });
+
+    const minIntervalMinutes = Math.max(
+      1,
+      Number(whatsappConfig?.minIntervalMinutes || 240),
+    );
+    const baseTime =
+      tipo === 'pendencia-periodica' && agendamento.ativo
+        ? new Date(agendamento.proximaExecucao)
+        : new Date();
+    const triggerMode =
+      tipo === 'pendencia-periodica' && agendamento.ativo
+        ? 'AUTOMATIC'
+        : 'MANUAL_PREVIEW';
+    const ruleTitle =
+      whatsappConfig?.rules?.find((rule: any) => rule.flow === tipo)?.title ||
+      this.resolveAssuntoPadrao(tipo);
+
+    const latestSentByRecipient = new Map<string, Date>();
+    const recentDispatches = await this.prisma.whatsappAutomationDispatch.findMany({
+      where: {
+        tenantId: this.tenantId,
+        status: 'SENT',
+        sentAt: { not: null },
+      },
+      orderBy: { sentAt: 'desc' },
+      take: 500,
+      select: {
+        recipient: true,
+        sentAt: true,
+      },
+    });
+
+    for (const dispatch of recentDispatches) {
+      if (!dispatch.recipient || !dispatch.sentAt) continue;
+      if (!latestSentByRecipient.has(dispatch.recipient)) {
+        latestSentByRecipient.set(dispatch.recipient, dispatch.sentAt);
+      }
+    }
+
+    let nextExpectedAt = new Date(baseTime);
+    let queuePosition = 0;
+
+    const items = destinatarios
+      .filter((destinatario) => destinatario.metodo === 'whatsapp')
+      .map((destinatario) => {
+        const recipient = destinatario.telefone;
+        const normalizedRecipient = recipient
+          ? recipient.replace(/\D/g, '')
+          : null;
+
+        if (destinatario.bloqueado) {
+          return {
+            queuePosition: null,
+            titularId: destinatario.titularId,
+            nome: destinatario.nome,
+            recipient: normalizedRecipient,
+            flow: tipo,
+            ruleTitle,
+            status: 'SKIPPED' as const,
+            expectedAt: null,
+            delayedByMinutes: 0,
+            blockedReason: 'Cliente bloqueado para notificações',
+            totalPendente: destinatario.totalPendente,
+            quantidadeCobrancas: destinatario.quantidadeCobrancas,
+          };
+        }
+
+        if (!normalizedRecipient) {
+          return {
+            queuePosition: null,
+            titularId: destinatario.titularId,
+            nome: destinatario.nome,
+            recipient: null,
+            flow: tipo,
+            ruleTitle,
+            status: 'SKIPPED' as const,
+            expectedAt: null,
+            delayedByMinutes: 0,
+            blockedReason: 'Cliente sem telefone válido',
+            totalPendente: destinatario.totalPendente,
+            quantidadeCobrancas: destinatario.quantidadeCobrancas,
+          };
+        }
+
+        const latestSentAt = latestSentByRecipient.get(normalizedRecipient);
+        let candidateAt = new Date(nextExpectedAt);
+        let blockedReason: string | undefined;
+
+        if (
+          triggerMode === 'AUTOMATIC' &&
+          latestSentAt &&
+          latestSentAt.getTime() + minIntervalMinutes * 60 * 1000 > candidateAt.getTime()
+        ) {
+          candidateAt = new Date(
+            latestSentAt.getTime() + minIntervalMinutes * 60 * 1000,
+          );
+          blockedReason = 'Ajustado por intervalo mínimo entre envios';
+        }
+
+        queuePosition += 1;
+        const delayedByMinutes = Math.max(
+          0,
+          Math.round((candidateAt.getTime() - baseTime.getTime()) / 60000),
+        );
+        nextExpectedAt = new Date(candidateAt.getTime() + 60 * 1000);
+
+        return {
+          queuePosition,
+          titularId: destinatario.titularId,
+          nome: destinatario.nome,
+          recipient: normalizedRecipient,
+          flow: tipo,
+          ruleTitle,
+          status: 'QUEUED' as const,
+          expectedAt: candidateAt,
+          delayedByMinutes,
+          blockedReason,
+          totalPendente: destinatario.totalPendente,
+          quantidadeCobrancas: destinatario.quantidadeCobrancas,
+        };
+      })
+      .sort((a, b) => {
+        if (a.status !== b.status) {
+          return a.status === 'QUEUED' ? -1 : 1;
+        }
+        return (a.queuePosition ?? Number.MAX_SAFE_INTEGER) - (b.queuePosition ?? Number.MAX_SAFE_INTEGER);
+      });
+
+    return {
+      summary: {
+        flow: tipo,
+        triggerMode,
+        queued: items.filter((item) => item.status === 'QUEUED').length,
+        skipped: items.filter((item) => item.status === 'SKIPPED').length,
+        baseTime,
+        minIntervalMinutes,
+      },
+      items,
+    };
   }
 
   private buildDefaultEmailHtml({

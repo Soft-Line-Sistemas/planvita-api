@@ -70,6 +70,8 @@ const TITULAR_FULL_SELECT = Prisma.validator<Prisma.TitularSelect>()({
       nome: true,
       email: true,
       telefone: true,
+      cpf: true,
+      dataNascimento: true,
       relacionamento: true,
       situacaoConjugal: true,
       profissao: true,
@@ -158,6 +160,8 @@ const TITULAR_EXPORT_SELECT = Prisma.validator<Prisma.TitularSelect>()({
       nome: true,
       email: true,
       telefone: true,
+      cpf: true,
+      dataNascimento: true,
       relacionamento: true,
     },
   },
@@ -257,19 +261,19 @@ export class TitularService {
     return Math.min(limiteConfigurado, MAX_DEPENDENTES_POR_TITULAR);
   }
 
-  private async validarLimiteBeneficiariosCadastro(quantidadeDependentes: number) {
+  private async validarLimiteBeneficiariosCadastro(totalBeneficiariosGrade: number) {
     const limite = await this.obterLimiteBeneficiarios();
     if (!limite) return;
 
-    if (quantidadeDependentes > limite) {
+    if (totalBeneficiariosGrade > limite) {
       const err: any = new Error(
-        `Quantidade de dependentes (${quantidadeDependentes}) excede o limite configurado (${limite}).`,
+        `Quantidade de beneficiários na grade (${totalBeneficiariosGrade}) excede o limite configurado (${limite}).`,
       );
       err.status = 400;
       err.code = 'LIMITE_BENEFICIARIOS_EXCEDIDO';
       err.meta = {
         limiteBeneficiarios: limite,
-        totalDependentes: quantidadeDependentes,
+        totalDependentes: totalBeneficiariosGrade,
       };
       throw err;
     }
@@ -411,6 +415,183 @@ export class TitularService {
     err.code = 'CPF_DUPLICADO_NO_CADASTRO';
     err.meta = { duplicados };
     throw err;
+  }
+
+  private normalizeCpf(value?: string | null): string {
+    return String(value ?? '').replace(/\D/g, '');
+  }
+
+  private sameIsoDate(a?: string | Date | null, b?: string | Date | null): boolean {
+    const normalize = (value?: string | Date | null) => {
+      if (!value) return '';
+      if (value instanceof Date) {
+        if (Number.isNaN(value.getTime())) return '';
+        return value.toISOString().slice(0, 10);
+      }
+      const trimmed = String(value).trim();
+      const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (match) return match[1];
+      const parsed = new Date(trimmed);
+      if (Number.isNaN(parsed.getTime())) return '';
+      return parsed.toISOString().slice(0, 10);
+    };
+
+    const left = normalize(a);
+    const right = normalize(b);
+    return Boolean(left && right && left === right);
+  }
+
+  private isCorresponsavelMesmoDoTitular(args: {
+    titularNome?: string | null;
+    titularCpf?: string | null;
+    corresponsavelNome?: string | null;
+    corresponsavelCpf?: string | null;
+    relacionamento?: string | null;
+  }): boolean {
+    const titularCpf = this.normalizeCpf(args.titularCpf);
+    const corresponsavelCpf = this.normalizeCpf(args.corresponsavelCpf);
+    if (titularCpf && corresponsavelCpf) {
+      return titularCpf === corresponsavelCpf;
+    }
+
+    const relacionamento = canonicalizeRelationship(args.relacionamento);
+    if (relacionamento === 'titular') return true;
+
+    const titularNome = String(args.titularNome ?? '').trim().toLowerCase();
+    const corresponsavelNome = String(args.corresponsavelNome ?? '').trim().toLowerCase();
+    return Boolean(titularNome && corresponsavelNome && titularNome === corresponsavelNome);
+  }
+
+  private deduplicarDependentesContraCorresponsavel(
+    dependentes: CadastroTitularRequest['dependentes'],
+    corresponsavel?: {
+      nome?: string | null;
+      cpf?: string | null;
+      dataNascimento?: string | Date | null;
+      relacionamento?: string | null;
+    } | null,
+  ): CadastroTitularRequest['dependentes'] {
+    if (!Array.isArray(dependentes) || dependentes.length === 0 || !corresponsavel) {
+      return Array.isArray(dependentes) ? dependentes : [];
+    }
+
+    const corresponsavelCpf = this.normalizeCpf(corresponsavel.cpf);
+    let corresponsavelJaConsumido = false;
+
+    return dependentes.filter((dependente) => {
+      if (corresponsavelJaConsumido) return true;
+
+      const dependenteCpf = this.normalizeCpf(dependente?.cpf);
+      const mesmoCpf =
+        Boolean(corresponsavelCpf) &&
+        Boolean(dependenteCpf) &&
+        corresponsavelCpf === dependenteCpf;
+      const mesmoNome =
+        String(dependente?.nome ?? '').trim().toLowerCase() ===
+        String(corresponsavel.nome ?? '').trim().toLowerCase();
+      const mesmaDataNascimento = this.sameIsoDate(
+        dependente?.dataNascimento,
+        corresponsavel.dataNascimento,
+      );
+      const mesmoRelacionamento =
+        canonicalizeRelationship(dependente?.parentesco) ===
+        canonicalizeRelationship(corresponsavel.relacionamento);
+
+      if (mesmoCpf || (mesmoNome && mesmaDataNascimento && mesmoRelacionamento)) {
+        corresponsavelJaConsumido = true;
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  private montarDependenteVirtualDoCorresponsavel(
+    corresponsavel?: {
+      id?: number;
+      nome?: string | null;
+      cpf?: string | null;
+      relacionamento?: string | null;
+      dataNascimento?: Date | string | null;
+    } | null,
+    carenciaInicioEm?: Date | string | null,
+  ) {
+    if (!corresponsavel?.nome || !corresponsavel?.dataNascimento) return null;
+
+    return {
+      id: `corresponsavel-${corresponsavel.id ?? 'virtual'}`,
+      nome: corresponsavel.nome,
+      cpf: (corresponsavel as any).cpf ?? null,
+      dataNascimento:
+        corresponsavel.dataNascimento instanceof Date
+          ? corresponsavel.dataNascimento
+          : new Date(corresponsavel.dataNascimento),
+      carenciaInicioEm: carenciaInicioEm ? new Date(carenciaInicioEm) : null,
+      tipoDependente: corresponsavel.relacionamento ?? 'Corresponsável',
+      parentescoNormalizado: canonicalizeRelationship(corresponsavel.relacionamento),
+      foraGradeFamiliar: false,
+      excluirCobrancaAdicional: false,
+      valorAdicionalMensal: 0,
+      _virtualCorresponsavel: true,
+    };
+  }
+
+  private comporGradeFamiliarComCorresponsavel<T extends {
+    nome?: string | null;
+    dataContratacao?: Date | null;
+    dependentes?: Array<{
+      id?: number | string;
+      nome: string;
+      cpf?: string | null;
+      tipoDependente: string;
+      dataNascimento: Date;
+      carenciaInicioEm?: Date | null;
+      parentescoNormalizado?: string | null;
+      foraGradeFamiliar: boolean;
+      excluirCobrancaAdicional?: boolean;
+      valorAdicionalMensal: number;
+    }>;
+    corresponsaveis?: Array<{
+      id?: number;
+      nome?: string | null;
+      cpf?: string | null;
+      dataNascimento?: Date | null;
+      relacionamento?: string | null;
+    }>;
+    cpf?: string | null;
+  }>(titular: T): T {
+    const corresponsavel = Array.isArray(titular.corresponsaveis)
+      ? titular.corresponsaveis[0]
+      : null;
+
+    if (
+      !corresponsavel ||
+      this.isCorresponsavelMesmoDoTitular({
+        titularNome: titular.nome,
+        titularCpf: titular.cpf,
+        corresponsavelNome: corresponsavel.nome,
+        corresponsavelCpf: corresponsavel.cpf,
+        relacionamento: corresponsavel.relacionamento,
+      })
+    ) {
+      return titular;
+    }
+
+    const dependentesSemEspelho = this.removerDependenteEspelhoDoCorresponsavel(
+      titular.dependentes ?? [],
+      corresponsavel,
+    );
+    const dependenteVirtual = this.montarDependenteVirtualDoCorresponsavel(
+      corresponsavel,
+      titular.dataContratacao ?? null,
+    );
+
+    return {
+      ...titular,
+      dependentes: dependenteVirtual
+        ? [dependenteVirtual, ...dependentesSemEspelho]
+        : dependentesSemEspelho,
+    };
   }
 
   private calcularDiasAtraso(vencimento: Date): number {
@@ -611,7 +792,7 @@ export class TitularService {
     });
 
     return {
-      data,
+      data: data.map((titular: any) => this.comporGradeFamiliarComCorresponsavel(titular)),
       total,
       page,
       totalPages: Math.ceil(total / limit),
@@ -644,19 +825,21 @@ export class TitularService {
       where.plano = { nome: plano };
     }
 
-    return this.prisma.titular.findMany({
+    const titulares = await this.prisma.titular.findMany({
       where,
       select: TITULAR_EXPORT_SELECT,
       orderBy: { nome: 'asc' },
     });
+    return titulares.map((titular: any) => this.comporGradeFamiliarComCorresponsavel(titular));
   }
 
   async getById(id: number) {
     await this.sincronizarStatusPlanoPorSuspensao([Number(id)]);
-    return this.prisma.titular.findUnique({
+    const titular = await this.prisma.titular.findUnique({
       where: { id: Number(id) },
       select: TITULAR_FULL_SELECT,
     });
+    return titular ? this.comporGradeFamiliarComCorresponsavel(titular as any) : titular;
   }
 
   async create(data: TitularType): Promise<TitularType> {
@@ -713,24 +896,6 @@ export class TitularService {
       );
     }
 
-    this.validarCpfUnicoNoCadastro(data);
-
-    // --- Verifica duplicidade ---
-    const existente = await this.prisma.titular.findFirst({
-      where: {
-        OR: [{ email }, { cpf }],
-      },
-      select: { id: true, email: true, cpf: true },
-    });
-
-    if (existente) {
-      const err: any = new Error('Já existe um titular cadastrado com este e-mail ou CPF.');
-      err.status = 409;
-      err.code = 'TITULAR_DUPLICADO';
-      err.meta = existente;
-      throw err;
-    }
-
     // --- Monta dados do corresponsável ---
     const usarMesmosDados = step3.usarMesmosDados;
     this.validarMaioridadeCorresponsavel(
@@ -738,11 +903,18 @@ export class TitularService {
       step1.dataNascimento,
       step3.dataNascimento,
     );
+    const dataNascimentoTitular = this.parseDataNascimentoObrigatoria(
+      step1.dataNascimento,
+      'Data de nascimento do titular',
+      'TITULAR_DATA_NASCIMENTO_INVALIDA',
+    );
     const corresponsavelData = usarMesmosDados
       ? {
           nome: step1.nomeCompleto,
           email: email,
           telefone: step1.telefone,
+          cpf,
+          dataNascimento: dataNascimentoTitular,
           relacionamento: 'Titular',
           situacaoConjugal,
           profissao,
@@ -762,6 +934,12 @@ export class TitularService {
           nome: step3.nomeCompleto || 'Sem nome',
           email: (step3.email || '').trim().toLowerCase(),
           telefone: step3.telefone,
+          cpf: this.normalizeCpf(step3.cpf),
+          dataNascimento: this.parseDataNascimentoObrigatoria(
+            step3.dataNascimento,
+            'Data de nascimento do corresponsável',
+            'CORRESPONSAVEL_DATA_NASCIMENTO_INVALIDA',
+          ),
           relacionamento: step3.parentesco || 'Outro',
           situacaoConjugal: String(step3.situacaoConjugal ?? '').trim(),
           profissao: String(step3.profissao ?? '').trim(),
@@ -789,28 +967,40 @@ export class TitularService {
         err.status = 400;
         err.code = 'CORRESPONSAVEL_CAMPOS_OBRIGATORIOS';
         throw err;
-      }
+        }
     }
 
-    const corresponsavelDependenteData =
-      usarMesmosDados || canonicalizeRelationship(corresponsavelData.relacionamento) === 'titular'
-        ? null
-        : {
-            nome: corresponsavelData.nome,
-            tipoDependente: corresponsavelData.relacionamento || 'Outro',
-            dataNascimento: this.parseDataNascimentoObrigatoria(
-              step3.dataNascimento,
-              'Data de nascimento do corresponsável dependente',
-              'CORRESPONSAVEL_DATA_NASCIMENTO_INVALIDA',
-            ),
-            carenciaInicioEm: dataContratacao,
-            excluirCobrancaAdicional: false,
-          };
+    const corresponsavelContaNaGrade = !this.isCorresponsavelMesmoDoTitular({
+      titularNome: step1.nomeCompleto,
+      titularCpf: cpf,
+      corresponsavelNome: corresponsavelData.nome,
+      corresponsavelCpf: corresponsavelData.cpf,
+      relacionamento: corresponsavelData.relacionamento,
+    });
+    const dependentesNormalizados = corresponsavelContaNaGrade
+      ? this.deduplicarDependentesContraCorresponsavel(dependentes, corresponsavelData)
+      : dependentes ?? [];
+    this.validarCpfUnicoNoCadastro({ ...data, dependentes: dependentesNormalizados });
+
+    // --- Verifica duplicidade ---
+    const existente = await this.prisma.titular.findFirst({
+      where: {
+        OR: [{ email }, { cpf }],
+      },
+      select: { id: true, email: true, cpf: true },
+    });
+
+    if (existente) {
+      const err: any = new Error('Já existe um titular cadastrado com este e-mail ou CPF.');
+      err.status = 409;
+      err.code = 'TITULAR_DUPLICADO';
+      err.meta = existente;
+      throw err;
+    }
 
     // --- Monta dependentes ---
     const dependentesData = [
-      ...(corresponsavelDependenteData ? [corresponsavelDependenteData] : []),
-      ...(dependentes?.map((dep) => ({
+      ...(dependentesNormalizados?.map((dep) => ({
       nome: dep.nome,
       tipoDependente: dep.parentesco || 'Outro',
       dataNascimento: this.parseDataNascimentoObrigatoria(
@@ -822,22 +1012,27 @@ export class TitularService {
       excluirCobrancaAdicional: false,
     })) ?? []),
     ];
-    await this.validarLimiteBeneficiariosCadastro(dependentesData?.length ?? 0);
+    await this.validarLimiteBeneficiariosCadastro(
+      (dependentesData?.length ?? 0) + (corresponsavelContaNaGrade ? 1 : 0),
+    );
     const consultorIdInformado = data.consultorId ? Number(data.consultorId) : null;
     const participantesPlano: ParticipanteInput[] = [
       {
         dataNascimento: step1.dataNascimento,
         parentesco: 'Titular',
       },
-      ...(corresponsavelDependenteData
+      ...(corresponsavelContaNaGrade
         ? [
             {
-              dataNascimento: step3.dataNascimento ?? null,
+              dataNascimento:
+                corresponsavelData.dataNascimento instanceof Date
+                  ? corresponsavelData.dataNascimento.toISOString().slice(0, 10)
+                  : null,
               parentesco: corresponsavelData.relacionamento,
             },
           ]
         : []),
-      ...(dependentes ?? []).map((dep) => ({
+      ...(dependentesNormalizados ?? []).map((dep) => ({
         dataNascimento: dep.dataNascimento ?? null,
         parentesco: dep.parentesco ?? 'Outro',
       })),
@@ -887,11 +1082,7 @@ export class TitularService {
             nome: step1.nomeCompleto,
             email,
             telefone: step1.telefone,
-            dataNascimento: this.parseDataNascimentoObrigatoria(
-              step1.dataNascimento,
-              'Data de nascimento do titular',
-              'TITULAR_DATA_NASCIMENTO_INVALIDA',
-            ),
+            dataNascimento: dataNascimentoTitular,
             situacaoConjugal,
             profissao,
             sexo,
@@ -964,6 +1155,90 @@ export class TitularService {
     await this.pricingService.recalcularDependentesDoTitular(titular.id);
     void this.syncCustomerAsaasSafe(titular.id);
     return titular;
+  }
+
+  async promoverCorresponsavelParaTitular(id: number) {
+    const titularId = Number(id);
+    const titularAtual = await this.prisma.titular.findUnique({
+      where: { id: titularId },
+      include: {
+        corresponsaveis: {
+          orderBy: { id: 'asc' },
+        },
+        dependentes: true,
+      },
+    });
+
+    if (!titularAtual) {
+      const err: any = new Error('Titular não encontrado.');
+      err.status = 404;
+      throw err;
+    }
+
+    const corresponsavel = titularAtual.corresponsaveis?.[0] ?? null;
+    if (!corresponsavel) {
+      const err: any = new Error('Titular não possui corresponsável para sucessão.');
+      err.status = 400;
+      err.code = 'CORRESPONSAVEL_INEXISTENTE';
+      throw err;
+    }
+
+    if (!corresponsavel.cpf || !corresponsavel.dataNascimento) {
+      const err: any = new Error(
+        'Corresponsável sem CPF ou data de nascimento. Atualize o cadastro antes da sucessão.',
+      );
+      err.status = 400;
+      err.code = 'CORRESPONSAVEL_DADOS_INSUFICIENTES';
+      throw err;
+    }
+
+    const titular = await this.prisma.$transaction(async (tx) => {
+      const dataNascimentoCorresponsavel = corresponsavel.dataNascimento as Date;
+
+      await tx.dependente.deleteMany({
+        where: {
+          titularId,
+          nome: corresponsavel.nome,
+          tipoDependente: corresponsavel.relacionamento,
+        },
+      });
+
+      const atualizado = await tx.titular.update({
+        where: { id: titularId },
+        data: {
+          nome: corresponsavel.nome,
+          email: corresponsavel.email,
+          telefone: corresponsavel.telefone,
+          cpf: corresponsavel.cpf,
+          dataNascimento: dataNascimentoCorresponsavel,
+          situacaoConjugal: corresponsavel.situacaoConjugal,
+          profissao: corresponsavel.profissao,
+          sexo: corresponsavel.sexo,
+          rg: corresponsavel.rg,
+          naturalidade: corresponsavel.naturalidade,
+          cep: corresponsavel.cep,
+          uf: corresponsavel.uf,
+          cidade: corresponsavel.cidade,
+          bairro: corresponsavel.bairro,
+          logradouro: corresponsavel.logradouro,
+          complemento: corresponsavel.complemento,
+          numero: corresponsavel.numero,
+          pontoReferencia: corresponsavel.pontoReferencia,
+          sucessaoTitularidadeEm: new Date(),
+          titularAnteriorNome: titularAtual.nome,
+          titularAnteriorCpf: titularAtual.cpf,
+        },
+      });
+
+      await tx.corresponsavel.delete({
+        where: { id: corresponsavel.id },
+      });
+
+      return atualizado;
+    });
+
+    void this.syncCustomerAsaasSafe(titular.id);
+    return this.getById(titular.id);
   }
 
   async delete(id: number): Promise<TitularType> {
@@ -1421,12 +1696,14 @@ export class TitularService {
       ? ['Telemedicina']
       : [];
     const pagamentoMaisRecente = titular.pagamentos?.[0] ?? null;
-    const dependentesSemCorresponsavel = this.removerDependenteEspelhoDoCorresponsavel(
-      titular.dependentes ?? [],
-      corresponsavel,
+    const titularComGrade = this.comporGradeFamiliarComCorresponsavel(titular as any);
+    const dependentesGrade = titularComGrade.dependentes ?? [];
+    const dependentesDaGrade = dependentesGrade.filter(
+      (dep: any) => !dep.foraGradeFamiliar,
     );
-    const dependentesDaGrade = dependentesSemCorresponsavel.filter((dep) => !dep.foraGradeFamiliar);
-    const beneficiariosAdicionais = dependentesSemCorresponsavel.filter((dep) => dep.foraGradeFamiliar);
+    const beneficiariosAdicionais = dependentesGrade.filter(
+      (dep: any) => dep.foraGradeFamiliar,
+    );
     const line = (label: string, value: string | number | null | undefined) =>
       new Paragraph({
         spacing: { after: 120 },
@@ -1496,7 +1773,7 @@ export class TitularService {
     if (!dependentesDaGrade.length) {
       children.push(line('Lista', 'Nenhum dependente cadastrado'));
     } else {
-      dependentesDaGrade.forEach((dep, index) => {
+      dependentesDaGrade.forEach((dep: any, index: number) => {
         children.push(
           new Paragraph({
             spacing: { before: 140, after: 80 },
@@ -1512,7 +1789,7 @@ export class TitularService {
     if (!beneficiariosAdicionais.length) {
       children.push(line('Lista', 'Nenhum beneficiario adicional cadastrado'));
     } else {
-      beneficiariosAdicionais.forEach((dep, index) => {
+      beneficiariosAdicionais.forEach((dep: any, index: number) => {
         children.push(
           new Paragraph({
             spacing: { before: 140, after: 80 },

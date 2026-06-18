@@ -56,6 +56,15 @@ export interface NotificationConfig {
   defaultMethod: 'whatsapp' | 'email';
 }
 
+export interface WhatsappConfig {
+  sessionPath?: string;
+  clientIdPrefix: string;
+  defaultCountryCode: string;
+  protocolTimeoutMs: number;
+  readyTimeoutMs: number;
+  sendRetries: number;
+}
+
 export interface AppConfig {
   database?: DatabaseConfig;
   server: ServerConfig;
@@ -66,6 +75,7 @@ export interface AppConfig {
   logFile: string;
   encryptionKey: string;
   notification: NotificationConfig;
+  whatsapp: WhatsappConfig;
 }
 
 export interface HealthCheckResult {

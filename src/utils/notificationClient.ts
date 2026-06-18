@@ -19,6 +19,9 @@ export interface NotificationSendResult {
   skipped?: boolean;
   status?: number;
   error?: string;
+  provider?: string;
+  fallbackUsed?: boolean;
+  referenceId?: string;
 }
 
 export class NotificationApiClient {
@@ -108,7 +111,11 @@ export class NotificationApiClient {
         };
       }
 
-      return { success: true, status: response.status };
+      return {
+        success: true,
+        status: response.status,
+        provider: 'LEGACY_API',
+      };
     } catch (error: any) {
       this.logger.error('Failed to call notification provider', error);
       return { success: false, error: error?.message ?? 'Unexpected error' };
