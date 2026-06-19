@@ -86,6 +86,88 @@ describe('TitularService', () => {
   });
 
   describe('createFull', () => {
+    it('deve rejeitar cadastro quando faltarem campos obrigatórios do titular', async () => {
+      const service = new TitularService('tenant-123');
+
+      const payload = {
+        step1: {
+          nomeCompleto: 'Cliente Teste',
+          cpf: '',
+          dataNascimento: '1990-01-01',
+          sexo: 'Masculino',
+          naturalidade: 'São Paulo',
+          telefone: '11999999999',
+          whatsapp: '11999999999',
+          email: '',
+          situacaoConjugal: '',
+          profissao: '',
+        },
+        step2: {
+          cep: '01001000',
+          uf: 'SP',
+          cidade: 'São Paulo',
+          bairro: 'Centro',
+          logradouro: 'Rua A',
+          complemento: '',
+          numero: '10',
+          pontoReferencia: '',
+        },
+        step3: {
+          usarMesmosDados: true,
+        },
+        dependentes: [],
+        step5: {
+          planoId: 1,
+        },
+      };
+
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        status: 400,
+        message: 'Email, CPF, situação conjugal e profissão são obrigatórios',
+      });
+    });
+
+    it('deve rejeitar cadastro quando faltarem sexo e naturalidade do titular', async () => {
+      const service = new TitularService('tenant-123');
+
+      const payload = {
+        step1: {
+          nomeCompleto: 'Cliente Teste',
+          cpf: '12345678901',
+          dataNascimento: '1990-01-01',
+          sexo: '',
+          naturalidade: '',
+          telefone: '11999999999',
+          whatsapp: '11999999999',
+          email: 'cliente-campos@teste.com',
+          situacaoConjugal: 'Solteiro',
+          profissao: 'Analista',
+        },
+        step2: {
+          cep: '01001000',
+          uf: 'SP',
+          cidade: 'São Paulo',
+          bairro: 'Centro',
+          logradouro: 'Rua A',
+          complemento: '',
+          numero: '10',
+          pontoReferencia: '',
+        },
+        step3: {
+          usarMesmosDados: true,
+        },
+        dependentes: [],
+        step5: {
+          planoId: 1,
+        },
+      };
+
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        status: 400,
+        message: 'Sexo, Naturalidade, Situação conjugal e Profissão são obrigatórios',
+      });
+    });
+
     it('deve rejeitar cadastro quando planoId não for informado', async () => {
       const service = new TitularService('tenant-123');
 
@@ -290,6 +372,126 @@ describe('TitularService', () => {
       await expect(service.createFull(payload as any)).rejects.toMatchObject({
         status: 400,
         code: 'LIMITE_BENEFICIARIOS_EXCEDIDO',
+      });
+    });
+
+    it('deve rejeitar cadastro quando corresponsável for menor de idade', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-06-18T12:00:00.000Z'));
+      const service = new TitularService('tenant-123');
+
+      const payload = {
+        step1: {
+          nomeCompleto: 'Cliente Teste',
+          cpf: '12345678901',
+          dataNascimento: '1990-01-01',
+          sexo: 'Masculino',
+          naturalidade: 'São Paulo',
+          telefone: '11999999999',
+          whatsapp: '11999999999',
+          email: 'cliente6@teste.com',
+          situacaoConjugal: 'Solteiro',
+          profissao: 'Analista',
+        },
+        step2: {
+          cep: '01001000',
+          uf: 'SP',
+          cidade: 'São Paulo',
+          bairro: 'Centro',
+          logradouro: 'Rua A',
+          complemento: '',
+          numero: '10',
+          pontoReferencia: '',
+        },
+        step3: {
+          usarMesmosDados: false,
+          nomeCompleto: 'Corresponsavel Menor',
+          cpf: '22233344455',
+          dataNascimento: '2010-06-19',
+          sexo: 'Feminino',
+          naturalidade: 'Salvador',
+          parentesco: 'Cônjuge',
+          email: 'resp-menor@teste.com',
+          telefone: '71999999999',
+          situacaoConjugal: 'Solteiro',
+          profissao: 'Estudante',
+          cep: '40000000',
+          uf: 'BA',
+          cidade: 'Salvador',
+          bairro: 'Centro',
+          logradouro: 'Rua B',
+          numero: '20',
+          pontoReferencia: '',
+        },
+        dependentes: [],
+        step5: {
+          planoId: 1,
+        },
+      };
+
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        status: 400,
+        code: 'CORRESPONSAVEL_MENOR_IDADE',
+        meta: { idadeMinima: 18, idadeInformada: 15 },
+      });
+
+      jest.useRealTimers();
+    });
+
+    it('deve rejeitar cadastro quando faltarem campos obrigatórios do corresponsável', async () => {
+      const service = new TitularService('tenant-123');
+
+      const payload = {
+        step1: {
+          nomeCompleto: 'Cliente Teste',
+          cpf: '12345678901',
+          dataNascimento: '1990-01-01',
+          sexo: 'Masculino',
+          naturalidade: 'São Paulo',
+          telefone: '11999999999',
+          whatsapp: '11999999999',
+          email: 'cliente7@teste.com',
+          situacaoConjugal: 'Solteiro',
+          profissao: 'Analista',
+        },
+        step2: {
+          cep: '01001000',
+          uf: 'SP',
+          cidade: 'São Paulo',
+          bairro: 'Centro',
+          logradouro: 'Rua A',
+          complemento: '',
+          numero: '10',
+          pontoReferencia: '',
+        },
+        step3: {
+          usarMesmosDados: false,
+          nomeCompleto: 'Corresponsavel Teste',
+          cpf: '22233344455',
+          dataNascimento: '1992-02-02',
+          sexo: '',
+          naturalidade: '',
+          parentesco: 'Cônjuge',
+          email: 'resp-incompleto@teste.com',
+          telefone: '71999999999',
+          situacaoConjugal: '',
+          profissao: '',
+          cep: '40000000',
+          uf: 'BA',
+          cidade: 'Salvador',
+          bairro: 'Centro',
+          logradouro: 'Rua B',
+          numero: '20',
+          pontoReferencia: '',
+        },
+        dependentes: [],
+        step5: {
+          planoId: 1,
+        },
+      };
+
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        status: 400,
+        code: 'CORRESPONSAVEL_CAMPOS_OBRIGATORIOS',
       });
     });
 

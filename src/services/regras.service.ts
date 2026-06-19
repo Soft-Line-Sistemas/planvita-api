@@ -30,6 +30,10 @@ const BUSINESS_RULES_LEGACY_SELECT = Prisma.validator<Prisma.BusinessRulesSelect
   limiteTempoUsoSepultamento: true,
   notificarTaxaVencida: true,
   tipoAvisoTaxaVencida: true,
+  redirecionamentoWhatsappAtivo: true,
+  redirecionamentoWhatsappNumero: true,
+  redirecionamentoWhatsappIdadeMin: true,
+  redirecionamentoWhatsappIdadeMax: true,
   ativo: true,
   criadoEm: true,
   atualizadoEm: true,
@@ -54,23 +58,11 @@ export class RegrasService {
     if (!rule) return rule;
     return {
       ...rule,
-      redirecionamentoWhatsappAtivo: false,
-      redirecionamentoWhatsappNumero: null,
-      redirecionamentoWhatsappIdadeMin: 18,
-      redirecionamentoWhatsappIdadeMax: 65,
+      redirecionamentoWhatsappAtivo: rule.redirecionamentoWhatsappAtivo ?? false,
+      redirecionamentoWhatsappNumero: rule.redirecionamentoWhatsappNumero ?? null,
+      redirecionamentoWhatsappIdadeMin: rule.redirecionamentoWhatsappIdadeMin ?? 18,
+      redirecionamentoWhatsappIdadeMax: rule.redirecionamentoWhatsappIdadeMax ?? 65,
     };
-  }
-
-  private sanitizeWriteData<T extends BusinessRulesType | Partial<BusinessRulesType>>(data: T): T {
-    const {
-      redirecionamentoWhatsappAtivo: _ativo,
-      redirecionamentoWhatsappNumero: _numero,
-      redirecionamentoWhatsappIdadeMin: _idadeMin,
-      redirecionamentoWhatsappIdadeMax: _idadeMax,
-      ...legacyData
-    } = (data ?? {}) as Record<string, unknown>;
-
-    return legacyData as T;
   }
 
   async getAll() {
@@ -90,7 +82,7 @@ export class RegrasService {
 
   async create(data: BusinessRulesType) {
     const rule = await this.prisma.businessRules.create({
-      data: this.sanitizeWriteData(data),
+      data,
       select: BUSINESS_RULES_LEGACY_SELECT,
     });
     return this.withWhatsappDefaults(rule);
@@ -99,7 +91,7 @@ export class RegrasService {
   async update(tenantId: string, data: BusinessRulesType) {
     const rule = await this.prisma.businessRules.update({
       where: { tenantId },
-      data: this.sanitizeWriteData(data),
+      data,
       select: BUSINESS_RULES_LEGACY_SELECT,
     });
     return this.withWhatsappDefaults(rule);
