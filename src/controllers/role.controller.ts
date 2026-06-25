@@ -11,6 +11,17 @@ export interface TenantRequest extends Request {
 export class RoleController {
   private logger = new Logger({ service: 'RoleController' });
 
+  private respondFromError(res: Response, error: unknown) {
+    const candidate = error as { status?: number; code?: string; message?: string };
+    if (candidate?.status) {
+      return res.status(candidate.status).json({ message: candidate.message ?? 'Request failed' });
+    }
+    if (candidate?.code === 'P2025') {
+      return res.status(404).json({ message: 'Role not found' });
+    }
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+
   async getAll(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
@@ -128,8 +139,7 @@ export class RoleController {
         params: req.params,
         body: req.body,
       });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 }
-

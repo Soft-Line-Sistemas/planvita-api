@@ -11,6 +11,17 @@ export interface TenantRequest extends Request {
 export class PlanoController {
   private logger = new Logger({ service: 'PlanoController' });
 
+  private respondFromError(res: Response, error: unknown) {
+    const candidate = error as { status?: number; code?: string; message?: string };
+    if (candidate?.status) {
+      return res.status(candidate.status).json({ message: candidate.message ?? 'Request failed' });
+    }
+    if (candidate?.code === 'P2025') {
+      return res.status(404).json({ message: 'Plano not found' });
+    }
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+
   async getAll(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
@@ -43,9 +54,14 @@ export class PlanoController {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
-      const service = new PlanoService(req.tenantId);
       const { id } = req.params;
-      const result = await service.getById(Number(id));
+      const planoId = Number(id);
+      if (!Number.isInteger(planoId) || planoId <= 0) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
+      const service = new PlanoService(req.tenantId);
+      const result = await service.getById(planoId);
 
       if (!result) {
         this.logger.warn(`Plano not found for id: ${id}`, { tenant: req.tenantId });
@@ -72,7 +88,7 @@ export class PlanoController {
       res.status(201).json(result);
     } catch (error) {
       this.logger.error('Failed to create Plano', error, { body: req.body });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 
@@ -92,7 +108,7 @@ export class PlanoController {
       res.json(result);
     } catch (error) {
       this.logger.error(`Failed to update Plano`, error, { params: req.params, body: req.body });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 
@@ -108,7 +124,7 @@ export class PlanoController {
       res.status(204).send();
     } catch (error) {
       this.logger.error(`Failed to delete Plano`, error, { params: req.params });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 
@@ -146,7 +162,7 @@ export class PlanoController {
 
       // resultado já contém beneficios achatados prontos para o front
       this.logger.info('sugerir executed successfully', { tenant: req.tenantId });
-      res.json(resultado);
+      res.json(Array.isArray(resultado) ? resultado : [resultado]);
     } catch (error) {
       this.logger.error('Failed to suggest Plano', error, { body: req.body });
       res.status(500).json({ message: 'Internal server error' });

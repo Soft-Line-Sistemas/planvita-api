@@ -14,40 +14,84 @@ export interface WhatsappDispatchResult extends NotificationSendResult {
 
 const DEFAULT_RULES = [
   {
+    key: 'LEMBRETE_3_DIAS_ANTES',
+    title: 'Lembrete 3 dias antes',
+    flow: 'lembrete-3-dias-antes',
+    priority: 10,
+    triggerType: 'PRE_DUE',
+    offsetDays: -3,
+  },
+  {
+    key: 'COBRANCA_NO_VENCIMENTO',
+    title: 'Cobrança no vencimento',
+    flow: 'cobranca-no-vencimento',
+    priority: 20,
+    triggerType: 'DUE',
+    offsetDays: 0,
+  },
+  {
+    key: 'ATRASO_1_DIA',
+    title: 'Atraso 1 dia',
+    flow: 'atraso-1-dia',
+    priority: 30,
+    triggerType: 'LATE',
+    offsetDays: 1,
+  },
+  {
+    key: 'ATRASO_7_DIAS',
+    title: 'Atraso 7 dias',
+    flow: 'atraso-7-dias',
+    priority: 40,
+    triggerType: 'LATE',
+    offsetDays: 7,
+  },
+  {
     key: 'PENDENCIA_PERIODICA',
     title: 'Pendência periódica',
     flow: 'pendencia-periodica',
-    priority: 10,
+    priority: 50,
+    triggerType: 'FLOW',
+    offsetDays: 0,
   },
   {
     key: 'AVISO_VENCIMENTO',
     title: 'Aviso de vencimento',
     flow: 'aviso-vencimento',
-    priority: 20,
+    priority: 60,
+    triggerType: 'FLOW',
+    offsetDays: 0,
   },
   {
     key: 'AVISO_PENDENCIA',
     title: 'Aviso de pendência',
     flow: 'aviso-pendencia',
-    priority: 30,
+    priority: 70,
+    triggerType: 'FLOW',
+    offsetDays: 0,
   },
   {
     key: 'SUSPENSAO_PREVENTIVA',
     title: 'Suspensão preventiva',
     flow: 'suspensao-preventiva',
-    priority: 40,
+    priority: 80,
+    triggerType: 'FLOW',
+    offsetDays: 0,
   },
   {
     key: 'SUSPENSAO',
     title: 'Suspensão',
     flow: 'suspensao',
-    priority: 50,
+    priority: 90,
+    triggerType: 'FLOW',
+    offsetDays: 0,
   },
   {
     key: 'POS_SUSPENSAO',
     title: 'Pós-suspensão',
     flow: 'pos-suspensao',
-    priority: 60,
+    priority: 100,
+    triggerType: 'FLOW',
+    offsetDays: 0,
   },
 ] as const;
 
@@ -68,6 +112,18 @@ export class WhatsappNotificationService {
     return getWhatsappClientForTenant(this.tenantId);
   }
 
+  private mapRuleToCreate(configId: number, rule: (typeof DEFAULT_RULES)[number]) {
+    return {
+      configId,
+      key: `${this.tenantId.toLowerCase()}_${rule.key}`,
+      title: rule.title,
+      flow: rule.flow,
+      priority: rule.priority,
+      triggerType: rule.triggerType,
+      offsetDays: rule.offsetDays,
+    };
+  }
+
   private async ensureSeed(): Promise<WhatsappAutomationConfigModel> {
     const existing = await this.prisma.whatsappAutomationConfig.findFirst({
       where: { tenantId: this.tenantId },
@@ -75,16 +131,16 @@ export class WhatsappNotificationService {
     });
 
     if (existing) {
-      if (!existing.rules.length) {
+      const existingKeys = new Set(
+        existing.rules.map((rule: any) => String(rule.key).toUpperCase()),
+      );
+      const missingRules = DEFAULT_RULES.filter(
+        (rule) => !existingKeys.has(`${this.tenantId.toLowerCase()}_${rule.key}`.toUpperCase()),
+      );
+
+      if (missingRules.length) {
         await this.prisma.whatsappAutomationRule.createMany({
-          data: DEFAULT_RULES.map((rule) => ({
-            configId: existing.id,
-            key: `${this.tenantId.toLowerCase()}_${rule.key}`,
-            title: rule.title,
-            flow: rule.flow,
-            priority: rule.priority,
-            triggerType: 'FLOW',
-          })),
+          data: missingRules.map((rule) => this.mapRuleToCreate(existing.id, rule)),
         });
       }
 
@@ -109,7 +165,8 @@ export class WhatsappNotificationService {
             title: rule.title,
             flow: rule.flow,
             priority: rule.priority,
-            triggerType: 'FLOW',
+            triggerType: rule.triggerType,
+            offsetDays: rule.offsetDays,
           })),
         },
       },

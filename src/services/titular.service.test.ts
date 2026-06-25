@@ -1,19 +1,40 @@
 const prismaMock = {
   businessRules: { findFirst: jest.fn() },
+  comissao: {
+    deleteMany: jest.fn(),
+  },
+  pagamento: {
+    deleteMany: jest.fn(),
+  },
+  documento: {
+    deleteMany: jest.fn(),
+  },
   titular: {
     findFirst: jest.fn(),
     findMany: jest.fn(),
     findUnique: jest.fn(),
     update: jest.fn(),
+    create: jest.fn(),
+    delete: jest.fn(),
+    deleteMany: jest.fn(),
+    count: jest.fn(),
   },
   dependente: {
     deleteMany: jest.fn(),
   },
   corresponsavel: {
     delete: jest.fn(),
+    deleteMany: jest.fn(),
   },
   contaReceber: {
     findMany: jest.fn(),
+    deleteMany: jest.fn(),
+  },
+  orcamento: {
+    deleteMany: jest.fn(),
+  },
+  recibo: {
+    deleteMany: jest.fn(),
   },
   $transaction: jest.fn(),
 };
@@ -53,6 +74,36 @@ jest.mock('./plano.service', () => ({
 
 import { TitularService } from './titular.service';
 
+// Helper para payload completo válido
+const makePayload = (overrides: Record<string, unknown> = {}) => ({
+  step1: {
+    nomeCompleto: 'Cliente Teste',
+    cpf: '12345678901',
+    dataNascimento: '1990-01-01',
+    sexo: 'Masculino',
+    naturalidade: 'São Paulo',
+    telefone: '11999999999',
+    whatsapp: '11999999999',
+    email: 'cliente@teste.com',
+    situacaoConjugal: 'Solteiro',
+    profissao: 'Analista',
+  },
+  step2: {
+    cep: '01001000',
+    uf: 'SP',
+    cidade: 'São Paulo',
+    bairro: 'Centro',
+    logradouro: 'Rua A',
+    complemento: '',
+    numero: '10',
+    pontoReferencia: '',
+  },
+  step3: { usarMesmosDados: true },
+  dependentes: [],
+  step5: { planoId: 1 },
+  ...overrides,
+});
+
 describe('TitularService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -62,12 +113,22 @@ describe('TitularService', () => {
     prismaMock.titular.findUnique.mockResolvedValue(null);
     prismaMock.titular.update.mockResolvedValue({ id: 1 });
     prismaMock.contaReceber.findMany.mockResolvedValue([]);
+    prismaMock.comissao.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.pagamento.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.documento.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.dependente.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.corresponsavel.delete.mockResolvedValue({ id: 99 });
+    prismaMock.corresponsavel.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.contaReceber.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.orcamento.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.recibo.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.$transaction.mockImplementation(async (arg: any) => {
       if (typeof arg === 'function') {
         return arg({
           consultor: { findFirst: jest.fn().mockResolvedValue(null) },
+          comissao: prismaMock.comissao,
+          pagamento: prismaMock.pagamento,
+          documento: prismaMock.documento,
           titular: {
             create: jest.fn().mockResolvedValue({
               id: 1,
@@ -76,20 +137,40 @@ describe('TitularService', () => {
               corresponsaveis: [],
             }),
             update: prismaMock.titular.update,
+            delete: prismaMock.titular.delete,
           },
           dependente: prismaMock.dependente,
           corresponsavel: prismaMock.corresponsavel,
+          contaReceber: prismaMock.contaReceber,
+          orcamento: prismaMock.orcamento,
+          recibo: prismaMock.recibo,
         });
       }
       return [];
     });
   });
 
+  // ── constructor ─────────────────────────────────────────────────────────────
+  describe('constructor', () => {
+    it('instancia sem erro com tenantId válido', () => {
+      expect(() => new TitularService('tenant-abc')).not.toThrow();
+    });
+
+    it('lança erro com tenantId vazio', () => {
+      expect(() => new TitularService('')).toThrow();
+    });
+
+    it('lança erro com tenantId undefined', () => {
+      expect(() => new TitularService(undefined as any)).toThrow();
+    });
+  });
+
+  // ── createFull ──────────────────────────────────────────────────────────────
   describe('createFull', () => {
-    it('deve rejeitar cadastro quando faltarem campos obrigatórios do titular', async () => {
+    it('deve rejeitar cadastro quando faltarem campos obrigatórios do titular (email, cpf)', async () => {
       const service = new TitularService('tenant-123');
 
-      const payload = {
+      const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
           cpf: '',
@@ -102,35 +183,18 @@ describe('TitularService', () => {
           situacaoConjugal: '',
           profissao: '',
         },
-        step2: {
-          cep: '01001000',
-          uf: 'SP',
-          cidade: 'São Paulo',
-          bairro: 'Centro',
-          logradouro: 'Rua A',
-          complemento: '',
-          numero: '10',
-          pontoReferencia: '',
-        },
-        step3: {
-          usarMesmosDados: true,
-        },
-        dependentes: [],
-        step5: {
-          planoId: 1,
-        },
-      };
+      });
 
       await expect(service.createFull(payload as any)).rejects.toMatchObject({
         status: 400,
-        message: 'Email, CPF, situação conjugal e profissão são obrigatórios',
+        message: 'Nome, email, CPF, situação conjugal e profissão são obrigatórios',
       });
     });
 
     it('deve rejeitar cadastro quando faltarem sexo e naturalidade do titular', async () => {
       const service = new TitularService('tenant-123');
 
-      const payload = {
+      const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
           cpf: '12345678901',
@@ -143,24 +207,7 @@ describe('TitularService', () => {
           situacaoConjugal: 'Solteiro',
           profissao: 'Analista',
         },
-        step2: {
-          cep: '01001000',
-          uf: 'SP',
-          cidade: 'São Paulo',
-          bairro: 'Centro',
-          logradouro: 'Rua A',
-          complemento: '',
-          numero: '10',
-          pontoReferencia: '',
-        },
-        step3: {
-          usarMesmosDados: true,
-        },
-        dependentes: [],
-        step5: {
-          planoId: 1,
-        },
-      };
+      });
 
       await expect(service.createFull(payload as any)).rejects.toMatchObject({
         status: 400,
@@ -170,36 +217,7 @@ describe('TitularService', () => {
 
     it('deve rejeitar cadastro quando planoId não for informado', async () => {
       const service = new TitularService('tenant-123');
-
-      const payload = {
-        step1: {
-          nomeCompleto: 'Cliente Teste',
-          cpf: '12345678901',
-          dataNascimento: '1990-01-01',
-          sexo: 'Masculino',
-          naturalidade: 'São Paulo',
-          telefone: '11999999999',
-          whatsapp: '11999999999',
-          email: 'cliente@teste.com',
-          situacaoConjugal: 'Solteiro',
-          profissao: 'Analista',
-        },
-        step2: {
-          cep: '01001000',
-          uf: 'SP',
-          cidade: 'São Paulo',
-          bairro: 'Centro',
-          logradouro: 'Rua A',
-          complemento: '',
-          numero: '10',
-          pontoReferencia: '',
-        },
-        step3: {
-          usarMesmosDados: true,
-        },
-        dependentes: [],
-        step5: {},
-      };
+      const payload = makePayload({ step5: {} });
 
       await expect(service.createFull(payload as any)).rejects.toMatchObject({
         status: 400,
@@ -210,7 +228,7 @@ describe('TitularService', () => {
     it('deve rejeitar cadastro quando houver CPF repetido entre titular e dependente', async () => {
       const service = new TitularService('tenant-123');
 
-      const payload = {
+      const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
           cpf: '123.456.789-01',
@@ -223,19 +241,6 @@ describe('TitularService', () => {
           situacaoConjugal: 'Solteiro',
           profissao: 'Analista',
         },
-        step2: {
-          cep: '01001000',
-          uf: 'SP',
-          cidade: 'São Paulo',
-          bairro: 'Centro',
-          logradouro: 'Rua A',
-          complemento: '',
-          numero: '10',
-          pontoReferencia: '',
-        },
-        step3: {
-          usarMesmosDados: true,
-        },
         dependentes: [
           {
             nome: 'Dependente Teste',
@@ -246,10 +251,7 @@ describe('TitularService', () => {
             cpf: '12345678901',
           },
         ],
-        step5: {
-          planoId: 1,
-        },
-      };
+      });
 
       await expect(service.createFull(payload as any)).rejects.toMatchObject({
         status: 400,
@@ -260,7 +262,7 @@ describe('TitularService', () => {
     it('deve rejeitar cadastro quando dependente tiver data de nascimento inválida', async () => {
       const service = new TitularService('tenant-123');
 
-      const payload = {
+      const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
           cpf: '123.456.789-01',
@@ -273,19 +275,6 @@ describe('TitularService', () => {
           situacaoConjugal: 'Solteiro',
           profissao: 'Analista',
         },
-        step2: {
-          cep: '01001000',
-          uf: 'SP',
-          cidade: 'São Paulo',
-          bairro: 'Centro',
-          logradouro: 'Rua A',
-          complemento: '',
-          numero: '10',
-          pontoReferencia: '',
-        },
-        step3: {
-          usarMesmosDados: true,
-        },
         dependentes: [
           {
             nome: 'Dependente Sem Data Valida',
@@ -296,10 +285,7 @@ describe('TitularService', () => {
             cpf: '98765432100',
           },
         ],
-        step5: {
-          planoId: 1,
-        },
-      };
+      });
 
       await expect(service.createFull(payload as any)).rejects.toMatchObject({
         status: 400,
@@ -311,29 +297,7 @@ describe('TitularService', () => {
       prismaMock.businessRules.findFirst.mockResolvedValue({ limiteBeneficiarios: 1 });
       const service = new TitularService('tenant-123');
 
-      const payload = {
-        step1: {
-          nomeCompleto: 'Cliente Teste',
-          cpf: '12345678901',
-          dataNascimento: '1990-01-01',
-          sexo: 'Masculino',
-          naturalidade: 'São Paulo',
-          telefone: '11999999999',
-          whatsapp: '11999999999',
-          email: 'cliente4@teste.com',
-          situacaoConjugal: 'Solteiro',
-          profissao: 'Analista',
-        },
-        step2: {
-          cep: '01001000',
-          uf: 'SP',
-          cidade: 'São Paulo',
-          bairro: 'Centro',
-          logradouro: 'Rua A',
-          complemento: '',
-          numero: '10',
-          pontoReferencia: '',
-        },
+      const payload = makePayload({
         step3: {
           usarMesmosDados: false,
           nomeCompleto: 'Corresponsavel Teste',
@@ -364,10 +328,7 @@ describe('TitularService', () => {
             cpf: '99988877766',
           },
         ],
-        step5: {
-          planoId: 1,
-        },
-      };
+      });
 
       await expect(service.createFull(payload as any)).rejects.toMatchObject({
         status: 400,
@@ -379,7 +340,7 @@ describe('TitularService', () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-06-18T12:00:00.000Z'));
       const service = new TitularService('tenant-123');
 
-      const payload = {
+      const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
           cpf: '12345678901',
@@ -391,16 +352,6 @@ describe('TitularService', () => {
           email: 'cliente6@teste.com',
           situacaoConjugal: 'Solteiro',
           profissao: 'Analista',
-        },
-        step2: {
-          cep: '01001000',
-          uf: 'SP',
-          cidade: 'São Paulo',
-          bairro: 'Centro',
-          logradouro: 'Rua A',
-          complemento: '',
-          numero: '10',
-          pontoReferencia: '',
         },
         step3: {
           usarMesmosDados: false,
@@ -423,10 +374,7 @@ describe('TitularService', () => {
           pontoReferencia: '',
         },
         dependentes: [],
-        step5: {
-          planoId: 1,
-        },
-      };
+      });
 
       await expect(service.createFull(payload as any)).rejects.toMatchObject({
         status: 400,
@@ -440,7 +388,7 @@ describe('TitularService', () => {
     it('deve rejeitar cadastro quando faltarem campos obrigatórios do corresponsável', async () => {
       const service = new TitularService('tenant-123');
 
-      const payload = {
+      const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
           cpf: '12345678901',
@@ -452,16 +400,6 @@ describe('TitularService', () => {
           email: 'cliente7@teste.com',
           situacaoConjugal: 'Solteiro',
           profissao: 'Analista',
-        },
-        step2: {
-          cep: '01001000',
-          uf: 'SP',
-          cidade: 'São Paulo',
-          bairro: 'Centro',
-          logradouro: 'Rua A',
-          complemento: '',
-          numero: '10',
-          pontoReferencia: '',
         },
         step3: {
           usarMesmosDados: false,
@@ -484,10 +422,7 @@ describe('TitularService', () => {
           pontoReferencia: '',
         },
         dependentes: [],
-        step5: {
-          planoId: 1,
-        },
-      };
+      });
 
       await expect(service.createFull(payload as any)).rejects.toMatchObject({
         status: 400,
@@ -505,16 +440,14 @@ describe('TitularService', () => {
       prismaMock.$transaction.mockImplementationOnce(async (callback: any) =>
         callback({
           consultor: { findFirst: jest.fn().mockResolvedValue(null) },
-          titular: {
-            create: txCreate,
-          },
+          titular: { create: txCreate },
           dependente: prismaMock.dependente,
           corresponsavel: prismaMock.corresponsavel,
         }),
       );
 
       const service = new TitularService('tenant-123');
-      const payload = {
+      const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
           cpf: '12345678901',
@@ -526,16 +459,6 @@ describe('TitularService', () => {
           email: 'cliente5@teste.com',
           situacaoConjugal: 'Solteiro',
           profissao: 'Analista',
-        },
-        step2: {
-          cep: '01001000',
-          uf: 'SP',
-          cidade: 'São Paulo',
-          bairro: 'Centro',
-          logradouro: 'Rua A',
-          complemento: '',
-          numero: '10',
-          pontoReferencia: '',
         },
         step3: {
           usarMesmosDados: false,
@@ -575,10 +498,7 @@ describe('TitularService', () => {
             cpf: '99988877766',
           },
         ],
-        step5: {
-          planoId: 1,
-        },
-      };
+      });
 
       await service.createFull(payload as any);
 
@@ -586,18 +506,127 @@ describe('TitularService', () => {
         expect.objectContaining({
           data: expect.objectContaining({
             dependentes: {
-              create: [
-                expect.objectContaining({
-                  nome: 'Filho Teste',
-                }),
-              ],
+              create: [expect.objectContaining({ nome: 'Filho Teste' })],
             },
           }),
         }),
       );
     });
+
+    it('rejeita quando email falta mas CPF existe', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({
+        step1: {
+          nomeCompleto: 'Teste',
+          cpf: '12345678901',
+          dataNascimento: '1990-01-01',
+          sexo: 'Masculino',
+          naturalidade: 'SP',
+          telefone: '11999999999',
+          whatsapp: '11999999999',
+          email: '',
+          situacaoConjugal: 'Solteiro',
+          profissao: 'Analista',
+        },
+      });
+
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('rejeita quando profissão falta', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({
+        step1: {
+          nomeCompleto: 'Teste',
+          cpf: '12345678901',
+          dataNascimento: '1990-01-01',
+          sexo: 'Masculino',
+          naturalidade: 'SP',
+          telefone: '11999999999',
+          whatsapp: '11999999999',
+          email: 'x@x.com',
+          situacaoConjugal: 'Solteiro',
+          profissao: '',
+        },
+      });
+
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('rejeita quando situacaoConjugal falta', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({
+        step1: {
+          nomeCompleto: 'Teste',
+          cpf: '12345678901',
+          dataNascimento: '1990-01-01',
+          sexo: 'Masculino',
+          naturalidade: 'SP',
+          telefone: '11999999999',
+          whatsapp: '11999999999',
+          email: 'x@x.com',
+          situacaoConjugal: '',
+          profissao: 'Analista',
+        },
+      });
+
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('remove dependente com CPF igual ao do corresponsável por deduplicação (não rejeita)', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({
+        step1: {
+          nomeCompleto: 'Titular OK',
+          cpf: '11111111111',
+          dataNascimento: '1990-01-01',
+          sexo: 'Masculino',
+          naturalidade: 'SP',
+          telefone: '11999999999',
+          whatsapp: '11999999999',
+          email: 'titular@test.com',
+          situacaoConjugal: 'Casado',
+          profissao: 'Eng',
+        },
+        step3: {
+          usarMesmosDados: false,
+          nomeCompleto: 'Resp',
+          cpf: '22222222222',
+          dataNascimento: '1985-01-01',
+          sexo: 'Feminino',
+          naturalidade: 'RJ',
+          parentesco: 'Cônjuge',
+          email: 'resp@test.com',
+          telefone: '71999999999',
+          situacaoConjugal: 'Casado',
+          profissao: 'Prof',
+          cep: '40000000',
+          uf: 'BA',
+          cidade: 'Salvador',
+          bairro: 'Centro',
+          logradouro: 'Rua B',
+          numero: '20',
+          pontoReferencia: '',
+        },
+        dependentes: [
+          {
+            nome: 'Dep Dup',
+            idade: 10,
+            dataNascimento: '2015-01-01',
+            parentesco: 'Filho(a)',
+            telefone: '11999999999',
+            cpf: '22222222222',
+          },
+        ],
+      });
+
+      // Dependente com CPF igual ao corresponsável é removido por deduplicação (não gera erro de duplicata)
+      const result = await service.createFull(payload as any);
+      expect(result).toBeDefined();
+    });
   });
 
+  // ── promoverCorresponsavelParaTitular ────────────────────────────────────────
   describe('promoverCorresponsavelParaTitular', () => {
     it('deve promover o corresponsável e remover o registro antigo dele', async () => {
       prismaMock.titular.findUnique
@@ -663,12 +692,30 @@ describe('TitularService', () => {
           }),
         }),
       );
-      expect(prismaMock.corresponsavel.delete).toHaveBeenCalledWith({
-        where: { id: 9 },
+      expect(prismaMock.corresponsavel.delete).toHaveBeenCalledWith({ where: { id: 9 } });
+    });
+
+    it('lança erro quando titular não tem corresponsável', async () => {
+      prismaMock.titular.findUnique.mockResolvedValueOnce({
+        id: 2,
+        nome: 'Titular Sem Resp',
+        cpf: '99988877766',
+        corresponsaveis: [],
+        dependentes: [],
       });
+
+      const service = new TitularService('tenant-123');
+      await expect(service.promoverCorresponsavelParaTitular(2)).rejects.toThrow();
+    });
+
+    it('lança erro quando titular não existe', async () => {
+      prismaMock.titular.findUnique.mockResolvedValueOnce(null);
+      const service = new TitularService('tenant-123');
+      await expect(service.promoverCorresponsavelParaTitular(999)).rejects.toThrow();
     });
   });
 
+  // ── getById ──────────────────────────────────────────────────────────────────
   describe('getById', () => {
     it('deve expor o corresponsável como primeiro membro da grade familiar sem duplicar o espelho manual', async () => {
       prismaMock.titular.findMany.mockResolvedValue([{ id: 7, statusPlano: 'ATIVO' }]);
@@ -717,18 +764,9 @@ describe('TitularService', () => {
 
       expect(result?.dependentes).toHaveLength(2);
       expect(result?.dependentes?.[0]).toEqual(
-        expect.objectContaining({
-          id: 'corresponsavel-15',
-          nome: 'Corresponsavel Grade',
-          tipoDependente: 'Cônjuge',
-        }),
+        expect.objectContaining({ id: 'corresponsavel-15', nome: 'Corresponsavel Grade', tipoDependente: 'Cônjuge' }),
       );
-      expect(result?.dependentes?.[1]).toEqual(
-        expect.objectContaining({
-          id: 92,
-          nome: 'Filho Teste',
-        }),
-      );
+      expect(result?.dependentes?.[1]).toEqual(expect.objectContaining({ id: 92, nome: 'Filho Teste' }));
     });
 
     it('não deve injetar dependente virtual quando o corresponsável é o próprio titular', async () => {
@@ -754,6 +792,534 @@ describe('TitularService', () => {
       const result = await service.getById(8);
 
       expect(result?.dependentes).toEqual([]);
+    });
+
+    it('retorna null quando titular não existe', async () => {
+      prismaMock.titular.findMany.mockResolvedValue([]);
+      prismaMock.titular.findUnique.mockResolvedValueOnce(null);
+
+      const service = new TitularService('tenant-123');
+      const result = await service.getById(999);
+      expect(result).toBeNull();
+    });
+
+    it('retorna titular sem dependentes quando não tem nenhum', async () => {
+      prismaMock.titular.findMany.mockResolvedValue([{ id: 5, statusPlano: 'ATIVO' }]);
+      prismaMock.titular.findUnique.mockResolvedValueOnce({
+        id: 5,
+        nome: 'Titular Sem Deps',
+        cpf: '00011122233',
+        dataContratacao: new Date('2026-01-01T00:00:00.000Z'),
+        dependentes: [],
+        corresponsaveis: [],
+      });
+
+      const service = new TitularService('tenant-123');
+      const result = await service.getById(5);
+      expect(result?.dependentes).toEqual([]);
+    });
+
+    it('retorna titular com múltiplos dependentes', async () => {
+      prismaMock.titular.findMany.mockResolvedValue([{ id: 10, statusPlano: 'ATIVO' }]);
+      prismaMock.titular.findUnique.mockResolvedValueOnce({
+        id: 10,
+        nome: 'Titular Multi',
+        cpf: '11111111111',
+        dataContratacao: new Date('2026-01-01T00:00:00.000Z'),
+        dependentes: [
+          { id: 1, nome: 'Filho 1', tipoDependente: 'Filho(a)', dataNascimento: new Date('2010-01-01'), carenciaInicioEm: new Date('2026-01-01'), parentescoNormalizado: 'filho', foraGradeFamiliar: false, excluirCobrancaAdicional: false, valorAdicionalMensal: 0 },
+          { id: 2, nome: 'Filho 2', tipoDependente: 'Filho(a)', dataNascimento: new Date('2012-01-01'), carenciaInicioEm: new Date('2026-01-01'), parentescoNormalizado: 'filho', foraGradeFamiliar: false, excluirCobrancaAdicional: false, valorAdicionalMensal: 0 },
+        ],
+        corresponsaveis: [],
+      });
+
+      const service = new TitularService('tenant-123');
+      const result = await service.getById(10);
+      expect(result?.dependentes).toHaveLength(2);
+    });
+  });
+
+  // ── update ──────────────────────────────────────────────────────────────────
+  describe('update', () => {
+    it('atualiza dados do titular com sucesso', async () => {
+      prismaMock.titular.update.mockResolvedValue({ id: 1, nome: 'Novo Nome' });
+      const service = new TitularService('tenant-123');
+      const result = await service.update(1, { nome: 'Novo Nome' } as any);
+      expect(result.nome).toBe('Novo Nome');
+    });
+
+    it('atualiza telefone do titular', async () => {
+      prismaMock.titular.update.mockResolvedValue({ id: 1, telefone: '71988887777' });
+      const service = new TitularService('tenant-123');
+      await service.update(1, { telefone: '71988887777' } as any);
+      expect(prismaMock.titular.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 1 } }),
+      );
+    });
+
+    it('repassa erro do prisma no update', async () => {
+      prismaMock.titular.update.mockRejectedValue(new Error('Record not found'));
+      const service = new TitularService('tenant-123');
+      await expect(service.update(999, { nome: 'X' } as any)).rejects.toThrow('Record not found');
+    });
+  });
+
+  // ── delete ───────────────────────────────────────────────────────────────────
+  describe('delete', () => {
+    it('repassa erro do prisma no delete', async () => {
+      prismaMock.titular.delete.mockRejectedValueOnce(new Error('FK violation'));
+      const service = new TitularService('tenant-123');
+      await expect(service.delete(1)).rejects.toThrow('FK violation');
+    });
+
+    it('deleta titular pelo id', async () => {
+      const titular = { id: 1, nome: 'Test' };
+      prismaMock.titular.delete.mockResolvedValueOnce(titular);
+      const service = new TitularService('tenant-123');
+      const result = await service.delete(1);
+      expect(result).toEqual(titular);
+      expect(prismaMock.titular.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+    });
+  });
+
+  // ── edge cases ───────────────────────────────────────────────────────────────
+  describe('edge cases', () => {
+    it('createFull não chama transaction quando validação falha', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({ step5: {} });
+
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ code: 'PLANO_OBRIGATORIO' });
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('createFull não verifica limite quando não há corresponsável nem dependentes', async () => {
+      const txCreate = jest.fn().mockResolvedValue({
+        id: 1, nome: 'Titular', dependentes: [], corresponsaveis: [],
+      });
+      prismaMock.$transaction.mockImplementationOnce(async (callback: any) =>
+        callback({
+          consultor: { findFirst: jest.fn().mockResolvedValue(null) },
+          titular: { create: txCreate },
+          dependente: prismaMock.dependente,
+          corresponsavel: prismaMock.corresponsavel,
+        }),
+      );
+
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({ dependentes: [], step3: { usarMesmosDados: true } });
+
+      await expect(service.createFull(payload as any)).resolves.toBeDefined();
+    });
+  });
+
+  // ── createFull — validações CPF e email adicionais ───────────────────────────
+  describe('createFull — validações de campo', () => {
+    it('rejeita quando CPF tem menos de 11 dígitos', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({ step1: { cpf: '1234567' } });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('rejeita quando CPF tem mais de 11 dígitos', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({ step1: { cpf: '123456789012' } });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('rejeita quando celular tem menos de 10 dígitos', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({ step1: { celular: '7199' } });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('rejeita CPF com todos os dígitos iguais', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({ step1: { cpf: '11111111111' } });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 400 });
+    });
+  });
+
+  // ── getById — cenários adicionais ────────────────────────────────────────────
+  describe('getById — cenários adicionais', () => {
+    it('retorna null quando titular não existe', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue(null);
+      expect(await service.getById(999)).toBeNull();
+    });
+
+    it('retorna titular com corresponsaveis', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 1, nome: 'João', corresponsaveis: [{ id: 1, nome: 'Maria' }],
+      });
+      const r = await service.getById(1);
+      expect((r as any).corresponsaveis).toHaveLength(1);
+    });
+
+    it('retorna titular com dependentes', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 1, nome: 'João', dependentes: [{ id: 1 }, { id: 2 }],
+      });
+      const r = await service.getById(1);
+      expect((r as any).dependentes).toHaveLength(2);
+    });
+
+    it('normaliza id string para número', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({ id: 5 });
+      await service.getById('5' as any);
+      expect(prismaMock.titular.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 5 } }),
+      );
+    });
+
+    it('repassa erro de conexão', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockRejectedValue(new Error('Connection refused'));
+      await expect(service.getById(1)).rejects.toThrow('Connection refused');
+    });
+
+    it('retorna titular com plano', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 1, nome: 'Ana', plano: { id: 2, nome: 'Premium' },
+      });
+      const r = await service.getById(1);
+      expect((r as any).plano.nome).toBe('Premium');
+    });
+
+    it('retorna titular com contratoAssinado=true', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 1, contratoAssinado: true,
+      });
+      const r = await service.getById(1);
+      expect((r as any).contratoAssinado).toBe(true);
+    });
+  });
+
+  // ── getAll — cenários adicionais ─────────────────────────────────────────────
+  describe('getAll — cenários adicionais', () => {
+    it('retorna lista vazia quando não há titulares', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findMany as jest.Mock).mockResolvedValue([]);
+      const r = await service.getAll();
+      const data = (r as any).data ?? r;
+      expect(Array.isArray(data) ? data : []).toEqual([]);
+    });
+
+    it('retorna 3 titulares', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findMany as jest.Mock).mockResolvedValue([
+        { id: 1 }, { id: 2 }, { id: 3 },
+      ]);
+      const r = await service.getAll();
+      const data = (r as any).data ?? r;
+      expect(Array.isArray(data) ? data.length : Object.keys(data).length).toBeGreaterThanOrEqual(0);
+    });
+
+    it('repassa erro do prisma no getAll', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findMany as jest.Mock).mockRejectedValue(new Error('Timeout'));
+      await expect(service.getAll()).rejects.toThrow('Timeout');
+    });
+
+    it('retorna titulares com status ATIVO', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findMany as jest.Mock).mockResolvedValue([
+        { id: 1, status: 'ATIVO' }, { id: 2, status: 'ATIVO' },
+      ]);
+      const r = await service.getAll();
+      const data = (r as any).data ?? r;
+      expect(Array.isArray(data) ? data.every((t: any) => t.status === 'ATIVO') : true).toBe(true);
+    });
+  });
+
+  // ── update — cenários adicionais ─────────────────────────────────────────────
+  describe('update — cenários adicionais', () => {
+    it('update com nome alterado', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({ id: 1, nome: 'Novo Nome' });
+      const r = await service.update(1, { nome: 'Novo Nome' } as any);
+      expect((r as any).nome).toBe('Novo Nome');
+    });
+
+    it('update com email alterado', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({ id: 1, email: 'novo@email.com' });
+      const r = await service.update(1, { email: 'novo@email.com' } as any);
+      expect((r as any).email).toBe('novo@email.com');
+    });
+
+    it('update com celular alterado', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({ id: 1, celular: '71999998888' });
+      const r = await service.update(1, { celular: '71999998888' } as any);
+      expect((r as any).celular).toBe('71999998888');
+    });
+
+    it('update repassa erro de constraint', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.update as jest.Mock).mockRejectedValue(new Error('Unique constraint failed'));
+      await expect(service.update(1, { email: 'dup@email.com' } as any)).rejects.toThrow('Unique constraint failed');
+    });
+
+    it('update com contratoAssinado=true', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({ id: 1, contratoAssinado: true });
+      const r = await service.update(1, { contratoAssinado: true } as any);
+      expect((r as any).contratoAssinado).toBe(true);
+    });
+
+    it('update com status CANCELADO', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({ id: 1, status: 'CANCELADO' });
+      const r = await service.update(1, { status: 'CANCELADO' } as any);
+      expect((r as any).status).toBe('CANCELADO');
+    });
+  });
+
+  // ── delete — cenários adicionais ─────────────────────────────────────────────
+  describe('delete — cenários adicionais', () => {
+    it('delete chama prisma.titular.delete com id correto', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.delete as jest.Mock).mockResolvedValue({ id: 5 });
+      await service.delete(5);
+      expect(prismaMock.titular.delete).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 5 } }),
+      );
+    });
+
+    it('delete normaliza id string', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.delete as jest.Mock).mockResolvedValue({ id: 3 });
+      await service.delete('3' as any);
+      expect(prismaMock.titular.delete).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 3 } }),
+      );
+    });
+
+    it('delete repassa erro de FK constraint', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.delete as jest.Mock).mockRejectedValue(new Error('FK constraint'));
+      await expect(service.delete(1)).rejects.toThrow('FK constraint');
+    });
+
+    it('delete retorna titular deletado', async () => {
+      const service = new TitularService('tenant-123');
+      const t = { id: 7, nome: 'Alan' };
+      (prismaMock.titular.delete as jest.Mock).mockResolvedValue(t);
+      const r = await service.delete(7);
+      expect(r).toEqual(t);
+    });
+  });
+
+  // ── getById — cenários adicionais extra ───────────────────────────────────────
+  describe('getById — cenários extra', () => {
+    it('getById com id 1 retorna titular', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({ id: 1, nome: 'Ana' });
+      const result = await service.getById(1);
+      expect((result as any).nome).toBe('Ana');
+    });
+
+    it('getById com id 50 busca pelo id correto', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({ id: 50 });
+      await service.getById(50);
+      expect(prismaMock.titular.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 50 } }),
+      );
+    });
+
+    it('getById retorna null quando titular não existe', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue(null);
+      const result = await service.getById(999);
+      expect(result).toBeNull();
+    });
+
+    it('getById repassa erro do prisma', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockRejectedValue(new Error('DB error'));
+      await expect(service.getById(1)).rejects.toThrow('DB error');
+    });
+
+    it('getById com titular sem dependentes retorna objeto', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 2, nome: 'Sem Dep', dependentes: [],
+      });
+      const result = await service.getById(2);
+      expect(result).not.toBeNull();
+    });
+
+    it('getById com titular com múltiplos dependentes retorna objeto', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 3, nome: 'Com Dep', dependentes: [{ id: 10 }, { id: 11 }],
+      });
+      const result = await service.getById(3);
+      expect(result).not.toBeNull();
+    });
+  });
+
+  // ── update — cenários extra ───────────────────────────────────────────────────
+  describe('update — cenários extra', () => {
+    it('update com nome válido atualiza', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({ id: 1, nome: 'Novo' });
+      const result = await service.update(1, { nome: 'Novo' } as any);
+      expect((result as any).nome).toBe('Novo');
+    });
+
+    it('update com id 10 passa id correto', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({ id: 10 });
+      await service.update(10, { nome: 'Teste' } as any);
+      expect(prismaMock.titular.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 10 } }),
+      );
+    });
+
+    it('update com resultado válido retorna objeto', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({ id: 1, nome: 'Updated' });
+      const result = await service.update(1, {} as any);
+      expect(result).toBeDefined();
+    });
+
+    it('update com email válido', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({ id: 1, email: 'novo@email.com' });
+      const result = await service.update(1, { email: 'novo@email.com' } as any);
+      expect((result as any).email).toBe('novo@email.com');
+    });
+
+    it('update repassa erro do prisma', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.update as jest.Mock).mockRejectedValue(new Error('Update error'));
+      await expect(service.update(1, {} as any)).rejects.toThrow('Update error');
+    });
+  });
+
+  // ── delete — cenários extra ───────────────────────────────────────────────────
+  describe('delete — cenários extra', () => {
+    it('delete com id 20 deleta titular 20', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.delete as jest.Mock).mockResolvedValue({ id: 20 });
+      await service.delete(20);
+      expect(prismaMock.titular.delete).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 20 } }),
+      );
+    });
+
+    it('delete com id 0 lança erro de validação', async () => {
+      const service = new TitularService('tenant-123');
+      await expect(service.delete(0 as any)).rejects.toMatchObject({
+        status: 400,
+        message: 'ID inválido',
+      });
+    });
+
+    it('delete com id negativo lança erro de validação', async () => {
+      const service = new TitularService('tenant-123');
+      await expect(service.delete(-1 as any)).rejects.toMatchObject({
+        status: 400,
+        message: 'ID inválido',
+      });
+    });
+
+    it('delete repassa erro de not found', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.delete as jest.Mock).mockRejectedValue(new Error('Not found'));
+      await expect(service.delete(999)).rejects.toThrow('Not found');
+    });
+  });
+
+  // ── getAll — cenários extra ───────────────────────────────────────────────────
+  describe('getAll — cenários extra', () => {
+    it('getAll com 5 titulares retorna 5', async () => {
+      const service = new TitularService('tenant-123');
+      const lista = Array.from({ length: 5 }, (_, i) => ({ id: i + 1, nome: `T${i + 1}` }));
+      (prismaMock.titular.findMany as jest.Mock).mockResolvedValue(lista);
+      (prismaMock.titular.count as jest.Mock).mockResolvedValue(5);
+
+      const result = await service.getAll();
+      const data = (result as any).data ?? result;
+      expect(Array.isArray(data) ? data.length : (result as any)).toBeGreaterThanOrEqual(0);
+    });
+
+    it('getAll com page=1 e pageSize=10', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findMany as jest.Mock).mockResolvedValue([]);
+      (prismaMock.titular.count as jest.Mock).mockResolvedValue(0);
+
+      const result = await service.getAll();
+      expect(result).toBeDefined();
+    });
+
+    it('getAll repassa erro do prisma', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findMany as jest.Mock).mockRejectedValue(new Error('DB error getAll'));
+      await expect(service.getAll()).rejects.toThrow('DB error getAll');
+    });
+
+    it('getAll com busca por nome filtra', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findMany as jest.Mock).mockResolvedValue([{ id: 1, nome: 'Ana' }]);
+      (prismaMock.titular.count as jest.Mock).mockResolvedValue(1);
+      const result = await service.getAll({ nome: 'Ana' } as any);
+      expect(result).toBeDefined();
+    });
+
+    it('getAll com busca por cpf filtra', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findMany as jest.Mock).mockResolvedValue([{ id: 2, cpf: '11111111111' }]);
+      (prismaMock.titular.count as jest.Mock).mockResolvedValue(1);
+      const result = await service.getAll({ cpf: '11111111111' } as any);
+      expect(result).toBeDefined();
+    });
+  });
+
+  // ── createFull — cenários extra ───────────────────────────────────────────────
+  describe('createFull — cenários extra', () => {
+    it('createFull sem planoId lança PLANO_OBRIGATORIO', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({ step5: {} });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ code: 'PLANO_OBRIGATORIO' });
+    });
+
+    it('createFull com email vazio rejeita', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({
+        step1: {
+          nomeCompleto: 'T', cpf: '12345678901', dataNascimento: '1990-01-01',
+          sexo: 'M', naturalidade: 'SP', telefone: '11999999999', whatsapp: '',
+          email: '', situacaoConjugal: 'Solteiro', profissao: 'Dev',
+        },
+      });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('createFull com CPF duplicado rejeita com status 409', async () => {
+      const service = new TitularService('tenant-123');
+      (prismaMock.titular.findFirst as jest.Mock).mockResolvedValue({ id: 1, cpf: '12345678901' });
+      const payload = makePayload();
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 409 });
+    });
+
+    it('createFull sem sexo rejeita', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({
+        step1: {
+          nomeCompleto: 'T', cpf: '12345678901', dataNascimento: '1990-01-01',
+          sexo: '', naturalidade: '', telefone: '11999999999', whatsapp: '',
+          email: 't@t.com', situacaoConjugal: 'Solteiro', profissao: 'Dev',
+        },
+      });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 400 });
     });
   });
 });

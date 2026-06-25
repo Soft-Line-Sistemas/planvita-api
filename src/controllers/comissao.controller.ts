@@ -11,6 +11,17 @@ export interface TenantRequest extends Request {
 export class ComissaoController {
   private logger = new Logger({ service: 'ComissaoController' });
 
+  private respondFromError(res: Response, error: unknown) {
+    const candidate = error as { status?: number; code?: string; message?: string };
+    if (candidate?.status) {
+      return res.status(candidate.status).json({ message: candidate.message ?? 'Request failed' });
+    }
+    if (candidate?.code === 'P2025') {
+      return res.status(404).json({ message: 'Comissao not found' });
+    }
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+
   async getAll(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
@@ -83,7 +94,7 @@ export class ComissaoController {
       res.json(result);
     } catch (error) {
       this.logger.error(`Failed to update Comissao`, error, { params: req.params, body: req.body });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 
@@ -99,8 +110,7 @@ export class ComissaoController {
       res.status(204).send();
     } catch (error) {
       this.logger.error(`Failed to delete Comissao`, error, { params: req.params });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 }
-

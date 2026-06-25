@@ -29,6 +29,10 @@ export class NotificacaoWhatsappController {
     const valor = Array.isArray(tipo) ? tipo[0] : tipo;
     const normalizado = valor ? String(valor).toLowerCase() : '';
     const permitidos: NotificationFlowType[] = [
+      'lembrete-3-dias-antes',
+      'cobranca-no-vencimento',
+      'atraso-1-dia',
+      'atraso-7-dias',
       'pendencia-periodica',
       'aviso-vencimento',
       'aviso-pendencia',
@@ -94,7 +98,7 @@ export class NotificacaoWhatsappController {
 
   async getQueue(req: TenantRequest, res: Response) {
     try {
-      const tipo = this.resolveTipo(req.query?.tipo) ?? 'pendencia-periodica';
+      const tipo = this.resolveTipo(req.query?.tipo) ?? 'lembrete-3-dias-antes';
       const result = await this.resolveRecurringService(req).getWhatsappQueue(tipo);
       res.json(result);
     } catch (error) {

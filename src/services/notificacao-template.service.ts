@@ -12,6 +12,12 @@ export class NotificacaoTemplateService {
     this.prisma = getPrismaForTenant(tenantId);
   }
 
+  private createValidationError(message: string) {
+    const err: any = new Error(message);
+    err.status = 400;
+    return err;
+  }
+
   async listar(flow?: string | null): Promise<NotificationTemplateModel[]> {
     return this.prisma.notificationTemplate.findMany({
       where: {
@@ -25,13 +31,22 @@ export class NotificacaoTemplateService {
   }
 
   async criar(data: Partial<NotificationTemplateModel>): Promise<NotificationTemplateModel> {
+    if (!data || Object.keys(data).length === 0) {
+      throw this.createValidationError('Payload inválido');
+    }
+
+    const nome = String(data.nome ?? '').trim();
+    if (!nome) {
+      throw this.createValidationError('Nome é obrigatório');
+    }
+
     if (data.isDefault) {
       await this.desmarcarDefaults(data.canal, data.flow);
     }
     return this.prisma.notificationTemplate.create({
       data: {
         tenantId: this.tenantId,
-        nome: data.nome ?? 'Template sem nome',
+        nome,
         canal: (data.canal ?? 'email').toLowerCase(),
         flow: data.flow?.toLowerCase() ?? null,
         assunto: data.assunto,
@@ -47,6 +62,9 @@ export class NotificacaoTemplateService {
     id: number,
     data: Partial<NotificationTemplateModel>,
   ): Promise<NotificationTemplateModel> {
+    if (data.nome !== undefined && !String(data.nome).trim()) {
+      throw this.createValidationError('Nome é obrigatório');
+    }
     if (data.isDefault) {
       await this.desmarcarDefaults(data.canal, data.flow);
     }

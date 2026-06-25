@@ -27,6 +27,12 @@ export class PlanoService {
     this.pricingService = new TitularPricingService(tenantId);
   }
 
+  private createValidationError(message: string) {
+    const error: Error & { status?: number } = new Error(message);
+    error.status = 400;
+    return error;
+  }
+
   // -------- CRUD básico --------
   private normalizarBeneficiarios(beneficiarios: unknown): string[] {
     if (!Array.isArray(beneficiarios)) return [];
@@ -40,13 +46,35 @@ export class PlanoService {
   }
 
   private buildPlanoCreateData(data: PlanoInput): Prisma.PlanoCreateInput {
+    const nome = String(data.nome ?? '').trim();
+    const valorMensal = Number(data.valorMensal);
+    const coberturaMaxima = Number(data.coberturaMaxima ?? 0);
+    const carenciaDias = Number(data.carenciaDias ?? 0);
+    const vigenciaMeses = Number(data.vigenciaMeses ?? 0);
+
+    if (!nome) {
+      throw this.createValidationError('Nome do plano é obrigatório');
+    }
+    if (!Number.isFinite(valorMensal) || valorMensal < 0) {
+      throw this.createValidationError('valorMensal inválido');
+    }
+    if (!Number.isFinite(coberturaMaxima) || coberturaMaxima < 0) {
+      throw this.createValidationError('coberturaMaxima inválida');
+    }
+    if (!Number.isFinite(carenciaDias) || carenciaDias < 0) {
+      throw this.createValidationError('carenciaDias inválido');
+    }
+    if (!Number.isFinite(vigenciaMeses) || vigenciaMeses < 0) {
+      throw this.createValidationError('vigenciaMeses inválido');
+    }
+
     return {
-      nome: String(data.nome ?? '').trim(),
-      valorMensal: Number(data.valorMensal ?? 0),
+      nome,
+      valorMensal,
       idadeMaxima: data.idadeMaxima ?? null,
-      coberturaMaxima: Number(data.coberturaMaxima ?? 0),
-      carenciaDias: Number(data.carenciaDias ?? 0),
-      vigenciaMeses: Number(data.vigenciaMeses ?? 0),
+      coberturaMaxima,
+      carenciaDias,
+      vigenciaMeses,
       ativo: data.ativo ?? true,
       totalClientes: Number(data.totalClientes ?? 0),
       receitaMensal: Number(data.receitaMensal ?? 0),
@@ -61,13 +89,40 @@ export class PlanoService {
 
   private buildPlanoUpdateData(data: Partial<PlanoInput>): Prisma.PlanoUpdateInput {
     const payload: Prisma.PlanoUpdateInput = {};
-    if (data.nome !== undefined) payload.nome = String(data.nome).trim();
-    if (data.valorMensal !== undefined) payload.valorMensal = Number(data.valorMensal);
+    if (data.nome !== undefined) {
+      const nome = String(data.nome).trim();
+      if (!nome) throw this.createValidationError('Nome do plano é obrigatório');
+      payload.nome = nome;
+    }
+    if (data.valorMensal !== undefined) {
+      const valorMensal = Number(data.valorMensal);
+      if (!Number.isFinite(valorMensal) || valorMensal < 0) {
+        throw this.createValidationError('valorMensal inválido');
+      }
+      payload.valorMensal = valorMensal;
+    }
     if (data.idadeMaxima !== undefined) payload.idadeMaxima = data.idadeMaxima;
-    if (data.coberturaMaxima !== undefined)
-      payload.coberturaMaxima = Number(data.coberturaMaxima);
-    if (data.carenciaDias !== undefined) payload.carenciaDias = Number(data.carenciaDias);
-    if (data.vigenciaMeses !== undefined) payload.vigenciaMeses = Number(data.vigenciaMeses);
+    if (data.coberturaMaxima !== undefined) {
+      const coberturaMaxima = Number(data.coberturaMaxima);
+      if (!Number.isFinite(coberturaMaxima) || coberturaMaxima < 0) {
+        throw this.createValidationError('coberturaMaxima inválida');
+      }
+      payload.coberturaMaxima = coberturaMaxima;
+    }
+    if (data.carenciaDias !== undefined) {
+      const carenciaDias = Number(data.carenciaDias);
+      if (!Number.isFinite(carenciaDias) || carenciaDias < 0) {
+        throw this.createValidationError('carenciaDias inválido');
+      }
+      payload.carenciaDias = carenciaDias;
+    }
+    if (data.vigenciaMeses !== undefined) {
+      const vigenciaMeses = Number(data.vigenciaMeses);
+      if (!Number.isFinite(vigenciaMeses) || vigenciaMeses < 0) {
+        throw this.createValidationError('vigenciaMeses inválido');
+      }
+      payload.vigenciaMeses = vigenciaMeses;
+    }
     if (data.ativo !== undefined) payload.ativo = Boolean(data.ativo);
     if (data.totalClientes !== undefined) payload.totalClientes = Number(data.totalClientes);
     if (data.receitaMensal !== undefined) payload.receitaMensal = Number(data.receitaMensal);
@@ -302,7 +357,12 @@ export class PlanoService {
   }
 
   async delete(id: number): Promise<PlanoType> {
-    return this.prisma.plano.delete({ where: { id: Number(id) } });
+    const planoId = Number(id);
+    return this.prisma.$transaction(async (tx) => {
+      await tx.planoBeneficiario.deleteMany({ where: { planoId } });
+      await tx.planoCobertura.deleteMany({ where: { planoId } });
+      return tx.plano.delete({ where: { id: planoId } });
+    });
   }
 
   // -------- Regras para sugestão de plano --------

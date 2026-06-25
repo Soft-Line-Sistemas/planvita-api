@@ -1407,12 +1407,10 @@ export class FinanceiroService {
     if (!this.asaasIntegration.isEnabled()) {
       return { processed: 0, inserted: 0, updated: 0 };
     }
-    return this.asaasIntegration.syncRecurringPaymentsFromProvider();
+    return this.asaasIntegration.syncRecurringPaymentsFromProvider({ maxPages: 1, onlyOpen: true });
   }
 
   async listarRecorrencias(): Promise<RecorrenciaFinanceiraDTO[]> {
-    await this.sincronizarRecorrenciasAsaas();
-
     const [titulares, abertas, pagas, subscriptionsProvider] = await Promise.all([
       this.prisma.titular.findMany({
         select: {

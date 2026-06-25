@@ -180,7 +180,18 @@ export class ComissaoService {
   }
 
   async update(id: number, data: Partial<ComissaoType>): Promise<ComissaoType> {
-    const titularId = Number((data as any)?.titularId);
+    const normalizedData: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+    if (normalizedData.status !== undefined && normalizedData.statusPagamento === undefined) {
+      normalizedData.statusPagamento = normalizedData.status;
+    }
+    delete normalizedData.status;
+
+    await this.prisma.comissao.findUniqueOrThrow({
+      where: { id: Number(id) },
+      select: { id: true },
+    });
+
+    const titularId = Number((normalizedData as any)?.titularId);
     if (Number.isFinite(titularId) && titularId > 0) {
       const existente = await this.prisma.comissao.findFirst({
         where: {
@@ -195,7 +206,10 @@ export class ComissaoService {
         throw new Error('Titular já possui comissão cadastrada');
       }
     }
-    return this.prisma.comissao.update({ where: { id: Number(id) }, data });
+    return this.prisma.comissao.update({
+      where: { id: Number(id) },
+      data: normalizedData as Partial<ComissaoType>,
+    });
   }
 
   async delete(id: number): Promise<ComissaoType> {

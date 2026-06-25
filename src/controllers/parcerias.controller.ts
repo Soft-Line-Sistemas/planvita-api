@@ -81,12 +81,18 @@ export class ParceriasController {
       res.status(204).send();
     } catch (error) {
       this.logger.error('Erro ao excluir vantagem', error);
+      if ((error as { code?: string }).code === 'P2025') {
+        return res.status(404).json({ message: 'Vantagem não encontrada' });
+      }
       res.status(400).json({ message: (error as Error).message });
     }
   }
 
   async listarCategoriasCliente(req: TenantRequest, res: Response) {
     try {
+      if ((req as ClienteAuthRequest).user && !(req as ClienteAuthRequest).cliente) {
+        return res.status(403).json({ message: 'Acesso disponível apenas para cliente autenticado.' });
+      }
       const data = await this.resolve(req).listarCategoriasCliente();
       res.json(data);
     } catch (error) {
@@ -97,6 +103,9 @@ export class ParceriasController {
 
   async listarVantagensCliente(req: TenantRequest & ClienteAuthRequest, res: Response) {
     try {
+      if (req.user && !req.cliente) {
+        return res.status(403).json({ message: 'Acesso disponível apenas para cliente autenticado.' });
+      }
       const titularId = req.cliente?.titularId;
       if (!titularId) return res.status(401).json({ message: 'Não autenticado' });
       const q = typeof req.query?.q === 'string' ? req.query.q : undefined;
@@ -125,6 +134,9 @@ export class ParceriasController {
 
   async obterVantagemCliente(req: TenantRequest & ClienteAuthRequest, res: Response) {
     try {
+      if (req.user && !req.cliente) {
+        return res.status(403).json({ message: 'Acesso disponível apenas para cliente autenticado.' });
+      }
       const titularId = req.cliente?.titularId;
       if (!titularId) return res.status(401).json({ message: 'Não autenticado' });
       const slug = String(req.params.slug ?? '').trim();
@@ -140,6 +152,9 @@ export class ParceriasController {
 
   async registrarResgate(req: TenantRequest & ClienteAuthRequest, res: Response) {
     try {
+      if (req.user && !req.cliente) {
+        return res.status(403).json({ message: 'Acesso disponível apenas para cliente autenticado.' });
+      }
       const titularId = req.cliente?.titularId;
       if (!titularId) return res.status(401).json({ message: 'Não autenticado' });
       const vantagemId = Number(req.params.id);

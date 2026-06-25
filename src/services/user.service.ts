@@ -242,17 +242,39 @@ export class UserService {
   }
 
   async updateEmail(id: number, email: string): Promise<UserType> {
+    const userId = Number(id);
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!existing) {
+      const err: any = new Error('Usuário não encontrado');
+      err.status = 404;
+      throw err;
+    }
+
     return this.prisma.user.update({
-      where: { id: Number(id) },
+      where: { id: userId },
       data: { email },
     });
   }
 
   async updatePassword(id: number, newPassword: string): Promise<void> {
+    const userId = Number(id);
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!existing) {
+      const err: any = new Error('Usuário não encontrado');
+      err.status = 404;
+      throw err;
+    }
+
     const senhaHash = await bcrypt.hash(newPassword, 10);
 
     await this.prisma.user.update({
-      where: { id: Number(id) },
+      where: { id: userId },
       data: { senhaHash },
     });
   }
@@ -274,6 +296,28 @@ export class UserService {
     valorComissaoIndicacao?: number,
     percentualComissaoIndicacao?: number,
   ) {
+    const [user, role] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, nome: true },
+      }),
+      this.prisma.role.findUnique({
+        where: { id: roleId },
+        select: { id: true },
+      }),
+    ]);
+
+    if (!user) {
+      const err: any = new Error('Usuário não encontrado');
+      err.status = 404;
+      throw err;
+    }
+    if (!role) {
+      const err: any = new Error('Role não encontrada');
+      err.status = 404;
+      throw err;
+    }
+
     await this.prisma.userRole.deleteMany({ where: { userId } });
 
     const newRole = await this.prisma.userRole.create({
@@ -287,19 +331,12 @@ export class UserService {
     });
 
     if (this.isConsultorRole(newRole.role?.name)) {
-      const user = await this.prisma.user.findUnique({
-        where: { id: userId },
-        select: { nome: true },
-      });
-
-      if (user) {
-        await this.garantirConsultorParaUsuario(
-          userId,
-          user.nome,
-          valorComissaoIndicacao,
-          percentualComissaoIndicacao,
-        );
-      }
+      await this.garantirConsultorParaUsuario(
+        userId,
+        user.nome,
+        valorComissaoIndicacao,
+        percentualComissaoIndicacao,
+      );
     }
 
     return newRole;

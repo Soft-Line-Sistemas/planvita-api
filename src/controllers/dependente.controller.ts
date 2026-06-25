@@ -12,6 +12,15 @@ export interface TenantRequest extends AuthRequest {
 export class DependenteController {
   private logger = new Logger({ service: 'DependenteController' });
 
+  private respondFromError(res: Response, error: any) {
+    const status = error?.status ?? (error?.code === 'P2025' ? 404 : 500);
+    const message =
+      error?.message ?? (status === 404 ? 'Dependente not found' : 'Internal server error');
+    const payload: any = { message };
+    if (error?.meta) payload.meta = error.meta;
+    return res.status(status).json(payload);
+  }
+
   async getAll(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
@@ -82,10 +91,14 @@ export class DependenteController {
         }
       }
 
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
       const service = new DependenteService(req.tenantId);
-      const { id } = req.params;
       const data = req.body;
-      const result = await service.update(Number(id), data);
+      const result = await service.update(id, data);
 
       this.logger.info(`update executed successfully for id: ${id}`, {
         tenant: req.tenantId,
@@ -97,11 +110,7 @@ export class DependenteController {
         params: req.params,
         body: req.body,
       });
-      const status = error?.status ?? 500;
-      const message = error?.message ?? 'Internal server error';
-      const payload: any = { message };
-      if (error?.meta) payload.meta = error.meta;
-      res.status(status).json(payload);
+      this.respondFromError(res, error);
     }
   }
 
@@ -109,15 +118,19 @@ export class DependenteController {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
       const service = new DependenteService(req.tenantId);
-      const { id } = req.params;
-      await service.delete(Number(id));
+      await service.delete(id);
 
       this.logger.info(`delete executed successfully for id: ${id}`, { tenant: req.tenantId });
       res.status(204).send();
     } catch (error) {
       this.logger.error(`Failed to delete Dependente`, error, { params: req.params });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 }

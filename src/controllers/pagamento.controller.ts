@@ -11,6 +11,17 @@ export interface TenantRequest extends Request {
 export class PagamentoController {
   private logger = new Logger({ service: 'PagamentoController' });
 
+  private respondFromError(res: Response, error: unknown) {
+    const candidate = error as { status?: number; code?: string; message?: string };
+    if (candidate?.status) {
+      return res.status(candidate.status).json({ message: candidate.message ?? 'Request failed' });
+    }
+    if (candidate?.code === 'P2025') {
+      return res.status(404).json({ message: 'Pagamento not found' });
+    }
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+
   async getAll(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
@@ -19,7 +30,7 @@ export class PagamentoController {
       const result = await service.getAll();
 
       this.logger.info('getAll executed successfully', { tenant: req.tenantId });
-      res.json(result);
+      res.json({ data: result });
     } catch (error) {
       this.logger.error('Failed to get all Pagamento', error);
       res.status(500).json({ message: 'Internal server error' });
@@ -30,9 +41,13 @@ export class PagamentoController {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
       const service = new PagamentoService(req.tenantId);
-      const { id } = req.params;
-      const result = await service.getById(Number(id));
+      const result = await service.getById(id);
 
       if (!result) {
         this.logger.warn(`Pagamento not found for id: ${id}`, { tenant: req.tenantId });
@@ -67,10 +82,14 @@ export class PagamentoController {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
       const service = new PagamentoService(req.tenantId);
-      const { id } = req.params;
       const data = req.body;
-      const result = await service.update(Number(id), data);
+      const result = await service.update(id, data);
 
       this.logger.info(`update executed successfully for id: ${id}`, {
         tenant: req.tenantId,
@@ -82,7 +101,7 @@ export class PagamentoController {
         params: req.params,
         body: req.body,
       });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 
@@ -90,16 +109,19 @@ export class PagamentoController {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
       const service = new PagamentoService(req.tenantId);
-      const { id } = req.params;
-      await service.delete(Number(id));
+      await service.delete(id);
 
       this.logger.info(`delete executed successfully for id: ${id}`, { tenant: req.tenantId });
       res.status(204).send();
     } catch (error) {
       this.logger.error(`Failed to delete Pagamento`, error, { params: req.params });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 }
-

@@ -3,6 +3,7 @@ import { UserService } from '../services/user.service';
 import Logger from '../utils/logger';
 import { PrismaClient } from '@prisma/client';
 import { AuthRequest } from '../types/auth';
+import { isValidEmail } from '../utils/helpers';
 
 export interface TenantRequest extends Request {
   tenantId?: string;
@@ -13,6 +14,17 @@ type TenantAuthRequest = TenantRequest & AuthRequest;
 
 export class UserController {
   private logger = new Logger({ service: 'UserController' });
+
+  private respondFromError(res: Response, error: unknown) {
+    const candidate = error as { status?: number; code?: string; message?: string };
+    if (candidate?.status) {
+      return res.status(candidate.status).json({ message: candidate.message ?? 'Request failed' });
+    }
+    if (candidate?.code === 'P2025') {
+      return res.status(404).json({ message: 'Usuário não encontrado' });
+    }
+    return res.status(500).json({ message: 'Erro interno no servidor' });
+  }
 
   async getAll(req: TenantRequest, res: Response) {
     try {
@@ -139,7 +151,7 @@ export class UserController {
         params: req.params,
         body: req.body,
       });
-      res.status(500).json({ message: 'Erro interno no servidor' });
+      this.respondFromError(res, error);
     }
   }
 
@@ -153,16 +165,11 @@ export class UserController {
         return res.status(400).json({ message: 'ID de usuário inválido' });
       }
 
-      const { currentPassword, newPassword } = req.body as {
+      const { currentPassword } = req.body as {
         currentPassword?: string;
         newPassword?: string;
+        password?: string;
       };
-
-      if (!newPassword || typeof newPassword !== 'string' || newPassword.trim().length < 6) {
-        return res
-          .status(400)
-          .json({ message: 'A nova senha deve ter pelo menos 6 caracteres' });
-      }
 
       const service = new UserService(req.tenantId);
       const existingUser = await service.getById(targetUserId);
@@ -172,6 +179,17 @@ export class UserController {
           tenant: req.tenantId,
         });
         return res.status(404).json({ message: 'Usuário não encontrado' });
+      }
+
+      const payload = req.body as { newPassword?: string; password?: string };
+      const rawNewPassword = payload.newPassword ?? payload.password;
+      const newPassword =
+        typeof rawNewPassword === 'string' ? rawNewPassword.trim() : rawNewPassword;
+
+      if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+        return res
+          .status(400)
+          .json({ message: 'A nova senha deve ter pelo menos 6 caracteres' });
       }
 
       const isSelf = req.user.id === targetUserId;
@@ -212,7 +230,7 @@ export class UserController {
         params: req.params,
         body: req.body,
       });
-      res.status(500).json({ message: 'Erro interno no servidor' });
+      this.respondFromError(res, error);
     }
   }
 
@@ -234,6 +252,9 @@ export class UserController {
       const { email } = req.body as { email?: string };
       if (!email || typeof email !== 'string' || !email.trim()) {
         return res.status(400).json({ message: 'E-mail é obrigatório' });
+      }
+      if (!isValidEmail(email.trim())) {
+        return res.status(400).json({ message: 'E-mail inválido' });
       }
 
       const service = new UserService(req.tenantId);
@@ -258,7 +279,7 @@ export class UserController {
         params: req.params,
         body: req.body,
       });
-      res.status(500).json({ message: 'Erro interno no servidor' });
+      this.respondFromError(res, error);
     }
   }
 }

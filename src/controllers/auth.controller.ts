@@ -141,7 +141,7 @@ export class AuthController {
         maxAge: 1000 * 60 * 60 * 24, // 1 dia
       });
 
-      return res.json(user);
+      return res.json({ ...user, token });
     } catch (error) {
       this.logger.error('Erro ao realizar login', error);
       res.status(500).json({ message: 'Erro interno no servidor' });
