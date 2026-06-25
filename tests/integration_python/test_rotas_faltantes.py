@@ -279,12 +279,12 @@ class TestLayoutEndpoints(BaseIntegrationTest):
 
 class TestAuthRotasCliente(BaseIntegrationTest):
 
-    def test_030_auth_pagamento_reenviar_sem_autenticacao_retorna_401(self):
+    def test_030_auth_pagamento_reenviar_sem_autenticacao_fica_publico(self):
         s = requests.Session()
         s.verify = False
         s.headers.update({"X-Tenant": self.tenant})
         r = s.post(f"{self.base_url}/auth/pagamento/reenviar", json={})
-        self.assertEqual(r.status_code, 401)
+        self.assertIn(r.status_code, [400, 404], r.text)
 
     def test_031_auth_pagamento_reenviar_com_admin_retorna_resposta(self):
         r = self.session.post(
@@ -827,6 +827,25 @@ class TestNotificacoesRecorrentesClientePatch(BaseIntegrationTest):
             json={},
         )
         self.assertIn(r.status_code, [400, 404, 422, 500])
+
+
+class TestPlanoSugestaoPublica(BaseIntegrationTest):
+
+    def test_170_plano_sugerir_sem_autenticacao_com_tenant_retorna_200(self):
+        s = requests.Session()
+        s.verify = False
+        s.headers.update({"X-Tenant": self.tenant})
+        r = s.post(
+            f"{self.base_url}/plano/sugerir",
+            json={
+                "participantes": [
+                    {"dataNascimento": "1990-01-01", "parentesco": "Titular"},
+                ],
+                "retornarTodos": True,
+            },
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIsInstance(r.json(), list)
 
 
 if __name__ == "__main__":
