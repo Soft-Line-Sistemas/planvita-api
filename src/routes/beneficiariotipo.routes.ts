@@ -12,6 +12,12 @@ router.get(
   controller.getAll.bind(controller),
 );
 router.get(
+  '/tipo',
+  authenticate,
+  authorize(['beneficiario_tipo.view']),
+  controller.getAll.bind(controller),
+);
+router.get(
   '/:id',
   authenticate,
   authorize(['beneficiario_tipo.view']),

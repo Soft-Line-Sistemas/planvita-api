@@ -1,14 +1,14 @@
 import { Router } from 'express';
 import { TitularController } from '../controllers/titular.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
-import { authenticateCliente } from '../middlewares/cliente-auth.middleware';
+import { authenticateAdminOrCliente, authenticateCliente } from '../middlewares/cliente-auth.middleware';
 
 const router = Router();
 const controller = new TitularController();
 
 // Rota pública de busca por CPF (deve vir antes das rotas parametrizadas e não ter auth)
 router.get('/public/search', controller.publicSearch.bind(controller));
-router.get('/me', authenticateCliente, controller.me.bind(controller));
+router.get('/me', authenticateAdminOrCliente, controller.me.bind(controller));
 router.get('/me/foto/arquivo', authenticateCliente, controller.downloadFotoPerfilMe.bind(controller));
 router.post('/me/foto', authenticateCliente, controller.uploadFotoPerfilMe.bind(controller));
 router.delete('/me/foto', authenticateCliente, controller.deleteFotoPerfilMe.bind(controller));

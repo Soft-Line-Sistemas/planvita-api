@@ -26,10 +26,20 @@ export class CorresponsavelService {
   }
 
   async update(id: number, data: Partial<CorresponsavelType>): Promise<CorresponsavelType> {
+    if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+      const err: any = new Error('ID inválido');
+      err.status = 400;
+      throw err;
+    }
     return this.prisma.corresponsavel.update({ where: { id: Number(id) }, data });
   }
 
   async delete(id: number): Promise<CorresponsavelType> {
+    if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+      const err: any = new Error('ID inválido');
+      err.status = 400;
+      throw err;
+    }
     return this.prisma.corresponsavel.delete({ where: { id: Number(id) } });
   }
 }

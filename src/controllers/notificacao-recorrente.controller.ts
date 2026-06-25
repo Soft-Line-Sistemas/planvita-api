@@ -9,6 +9,19 @@ import Logger from '../utils/logger';
 export class NotificacaoRecorrenteController {
   private logger = new Logger({ service: 'NotificacaoRecorrenteController' });
 
+  private respondFromError(res: Response, error: unknown, fallbackMessage: string) {
+    const candidate = error as { status?: number; code?: string; message?: string };
+    if (candidate?.status) {
+      return res.status(candidate.status).json({ message: candidate.message ?? fallbackMessage });
+    }
+    if (candidate?.code === 'P2025') {
+      return res.status(404).json({ message: 'Cliente não encontrado' });
+    }
+    return res.status(error instanceof Error && error.message === 'Tenant unknown' ? 400 : 500).json({
+      message: error instanceof Error && error.message === 'Tenant unknown' ? 'Tenant unknown' : fallbackMessage,
+    });
+  }
+
   private resolveService(req: TenantRequest) {
     if (!req.tenantId) {
       throw new Error('Tenant unknown');
@@ -21,6 +34,10 @@ export class NotificacaoRecorrenteController {
     const valor = Array.isArray(tipo) ? tipo[0] : tipo;
     const normalizado = valor ? String(valor).toLowerCase() : '';
     const permitidos: NotificationFlowType[] = [
+      'lembrete-3-dias-antes',
+      'cobranca-no-vencimento',
+      'atraso-1-dia',
+      'atraso-7-dias',
       'pendencia-periodica',
       'aviso-vencimento',
       'aviso-pendencia',
@@ -37,7 +54,7 @@ export class NotificacaoRecorrenteController {
   async getPainel(req: TenantRequest, res: Response) {
     try {
       const service = this.resolveService(req);
-      const tipo = this.resolveTipo(req.query?.tipo) ?? 'pendencia-periodica';
+      const tipo = this.resolveTipo(req.query?.tipo) ?? 'lembrete-3-dias-antes';
       const result = await service.getPainel(tipo);
       res.json(result);
     } catch (error) {
@@ -59,7 +76,7 @@ export class NotificacaoRecorrenteController {
       const force = req.query.force
         ? String(req.query.force).toLowerCase() === 'true'
         : true; // padrão: disparo manual força execução imediata
-      const tipo = this.resolveTipo(req.query?.tipo) ?? 'pendencia-periodica';
+      const tipo = this.resolveTipo(req.query?.tipo) ?? 'lembrete-3-dias-antes';
       const resultado = await service.dispararLote(force, tipo);
       res.json(resultado);
     } catch (error) {
@@ -80,6 +97,10 @@ export class NotificacaoRecorrenteController {
       const service = this.resolveService(req);
       const { frequenciaMinutos, proximaExecucao, metodoPreferencial, ativo } = req.body ?? {};
 
+      if (!req.body || Object.keys(req.body).length === 0) {
+        return res.status(400).json({ message: 'Payload inválido' });
+      }
+
       const result = await service.atualizarAgendamento({
         frequenciaMinutos: frequenciaMinutos ? Number(frequenciaMinutos) : undefined,
         proximaExecucao: proximaExecucao ? new Date(proximaExecucao) : undefined,
@@ -93,12 +114,7 @@ export class NotificacaoRecorrenteController {
         tenant: req.tenantId,
         body: req.body,
       });
-      res.status(error instanceof Error && error.message === 'Tenant unknown' ? 400 : 500).json({
-        message:
-          error instanceof Error && error.message === 'Tenant unknown'
-            ? 'Tenant unknown'
-            : 'Erro ao atualizar agendamento',
-      });
+      this.respondFromError(res, error, 'Erro ao atualizar agendamento');
     }
   }
 
@@ -110,25 +126,19 @@ export class NotificacaoRecorrenteController {
 
     try {
       const { bloqueado } = req.body ?? {};
+      if (typeof bloqueado !== 'boolean') {
+        return res.status(400).json({ message: 'Campo bloqueado é obrigatório' });
+      }
       const service = this.resolveService(req);
-      const tipo = this.resolveTipo(req.query?.tipo) ?? 'pendencia-periodica';
-      const destinatario = await service.atualizarBloqueio(
-        titularId,
-        Boolean(bloqueado),
-        tipo,
-      );
+      const tipo = this.resolveTipo(req.query?.tipo) ?? 'lembrete-3-dias-antes';
+      const destinatario = await service.atualizarBloqueio(titularId, bloqueado, tipo);
       res.json(destinatario);
     } catch (error) {
       this.logger.error('Falha ao atualizar bloqueio de notificações', error, {
         tenant: req.tenantId,
         params: req.params,
       });
-      res.status(error instanceof Error && error.message === 'Tenant unknown' ? 400 : 500).json({
-        message:
-          error instanceof Error && error.message === 'Tenant unknown'
-            ? 'Tenant unknown'
-            : 'Erro ao atualizar bloqueio do cliente',
-      });
+      this.respondFromError(res, error, 'Erro ao atualizar bloqueio do cliente');
     }
   }
 
@@ -145,7 +155,7 @@ export class NotificacaoRecorrenteController {
 
     try {
       const service = this.resolveService(req);
-      const tipo = this.resolveTipo(req.query?.tipo) ?? 'pendencia-periodica';
+      const tipo = this.resolveTipo(req.query?.tipo) ?? 'lembrete-3-dias-antes';
       const destinatario = await service.atualizarMetodo(
         titularId,
         metodo.toLowerCase() as any,
@@ -157,12 +167,7 @@ export class NotificacaoRecorrenteController {
         tenant: req.tenantId,
         params: req.params,
       });
-      res.status(error instanceof Error && error.message === 'Tenant unknown' ? 400 : 500).json({
-        message:
-          error instanceof Error && error.message === 'Tenant unknown'
-            ? 'Tenant unknown'
-            : 'Erro ao atualizar método do cliente',
-      });
+      this.respondFromError(res, error, 'Erro ao atualizar método do cliente');
     }
   }
 

@@ -8,6 +8,10 @@ import { WhatsappNotificationService } from './whatsapp-notification.service';
 type BusinessRulesModel = Prisma.BusinessRulesGetPayload<{}>;
 
 export type NotificationFlowType =
+  | 'lembrete-3-dias-antes'
+  | 'cobranca-no-vencimento'
+  | 'atraso-1-dia'
+  | 'atraso-7-dias'
   | 'pendencia-periodica'
   | 'aviso-vencimento'
   | 'aviso-pendencia'
@@ -15,7 +19,14 @@ export type NotificationFlowType =
   | 'suspensao'
   | 'pos-suspensao';
 
-const DEFAULT_DIAS_AVISO_VENCIMENTO = 2;
+export const COBRANCA_NOTIFICATION_FLOWS: NotificationFlowType[] = [
+  'lembrete-3-dias-antes',
+  'cobranca-no-vencimento',
+  'atraso-1-dia',
+  'atraso-7-dias',
+];
+
+const DEFAULT_DIAS_AVISO_VENCIMENTO = 3;
 const DEFAULT_DIAS_AVISO_PENDENCIA = 1;
 const DEFAULT_REPETICAO_PENDENCIA_DIAS = 1;
 const DEFAULT_DIAS_SUSPENSAO_PREVENTIVA = 85;
@@ -60,6 +71,15 @@ export interface DestinatarioNotificacao {
     paymentUrl?: string | null;
   }>;
 }
+
+type TitularNotificacaoSnapshot = {
+  id: number;
+  nome: string;
+  email: string | null;
+  telefone: string | null;
+  bloquearNotificacaoRecorrente: boolean;
+  metodoNotificacaoRecorrente: string | null;
+};
 
 export interface PainelNotificacao {
   agendamento: {
@@ -143,7 +163,7 @@ export class NotificacaoRecorrenteService {
     this.whatsappService = new WhatsappNotificationService(tenantId);
   }
 
-  async getPainel(tipo: NotificationFlowType = 'pendencia-periodica'): Promise<PainelNotificacao> {
+  async getPainel(tipo: NotificationFlowType = 'lembrete-3-dias-antes'): Promise<PainelNotificacao> {
     const agendamento = await this.ensureAgendamento();
     const contas = await this.buscarPendencias(tipo);
     const destinatarios = this.mapearDestinatarios(contas, agendamento.metodoPreferencial);
@@ -207,11 +227,19 @@ export class NotificacaoRecorrenteService {
   async atualizarBloqueio(
     titularId: number,
     bloqueado: boolean,
-    tipo: NotificationFlowType = 'pendencia-periodica',
+    tipo: NotificationFlowType = 'lembrete-3-dias-antes',
   ): Promise<DestinatarioNotificacao> {
-    await this.prisma.titular.update({
+    const titular = await this.prisma.titular.update({
       where: { id: titularId },
       data: { bloquearNotificacaoRecorrente: bloqueado },
+      select: {
+        id: true,
+        nome: true,
+        email: true,
+        telefone: true,
+        bloquearNotificacaoRecorrente: true,
+        metodoNotificacaoRecorrente: true,
+      },
     });
 
     const agendamento = await this.ensureAgendamento();
@@ -219,21 +247,25 @@ export class NotificacaoRecorrenteService {
     const destinatarios = this.mapearDestinatarios(contas, agendamento.metodoPreferencial);
 
     const destinatario = destinatarios.find((d) => d.titularId === titularId);
-    if (!destinatario) {
-      throw new Error('Cliente não encontrado ou sem cobranças pendentes');
-    }
-
-    return destinatario;
+    return destinatario ?? this.mapearTitularSemPendencias(titular);
   }
 
   async atualizarMetodo(
     titularId: number,
     metodo: NotificationChannel,
-    tipo: NotificationFlowType = 'pendencia-periodica',
+    tipo: NotificationFlowType = 'lembrete-3-dias-antes',
   ): Promise<DestinatarioNotificacao> {
-    await this.prisma.titular.update({
+    const titular = await this.prisma.titular.update({
       where: { id: titularId },
       data: { metodoNotificacaoRecorrente: this.normalizarCanal(metodo) },
+      select: {
+        id: true,
+        nome: true,
+        email: true,
+        telefone: true,
+        bloquearNotificacaoRecorrente: true,
+        metodoNotificacaoRecorrente: true,
+      },
     });
 
     const agendamento = await this.ensureAgendamento();
@@ -241,22 +273,42 @@ export class NotificacaoRecorrenteService {
     const destinatarios = this.mapearDestinatarios(contas, agendamento.metodoPreferencial);
 
     const destinatario = destinatarios.find((d) => d.titularId === titularId);
-    if (!destinatario) {
-      throw new Error('Cliente não encontrado ou sem cobranças pendentes');
-    }
+    return destinatario ?? this.mapearTitularSemPendencias(titular);
+  }
 
-    return destinatario;
+  private mapearTitularSemPendencias(titular: TitularNotificacaoSnapshot): DestinatarioNotificacao {
+    return {
+      titularId: titular.id,
+      nome: titular.nome,
+      email: titular.email,
+      telefone: titular.telefone,
+      bloqueado: !!titular.bloquearNotificacaoRecorrente,
+      metodo: this.normalizarCanal(titular.metodoNotificacaoRecorrente ?? 'email'),
+      totalPendente: 0,
+      proximoVencimento: null,
+      quantidadeCobrancas: 0,
+      cobrancas: [],
+    };
   }
 
   async dispararLote(
     force = true,
-    tipo: NotificationFlowType = 'pendencia-periodica',
+    tipo: NotificationFlowType = 'lembrete-3-dias-antes',
+    options?: {
+      bypassScheduleWindow?: boolean;
+      updateSchedule?: boolean;
+    },
   ): Promise<ResultadoDisparo> {
     const agendamento = await this.ensureAgendamento();
     const agora = new Date();
+    const shouldUpdateSchedule = options?.updateSchedule ?? true;
 
     // Só dispara se já passou do horário programado
-    if (!force && agora < new Date(agendamento.proximaExecucao)) {
+    if (
+      !force &&
+      !options?.bypassScheduleWindow &&
+      agora < new Date(agendamento.proximaExecucao)
+    ) {
       const segundosRestantes = Math.max(
         0,
         Math.floor((new Date(agendamento.proximaExecucao).getTime() - agora.getTime()) / 1000),
@@ -458,13 +510,15 @@ export class NotificacaoRecorrenteService {
     const ultimaExecucao = new Date();
     const proximaExecucao = this.calcularProximaExecucao(agendamento.frequenciaMinutos, ultimaExecucao);
 
-    await this.prisma.notificationSchedule.update({
-      where: { id: agendamento.id },
-      data: {
-        ultimaExecucao,
-        proximaExecucao,
-      },
-    });
+    if (shouldUpdateSchedule) {
+      await this.prisma.notificationSchedule.update({
+        where: { id: agendamento.id },
+        data: {
+          ultimaExecucao,
+          proximaExecucao,
+        },
+      });
+    }
 
     await this.salvarLogsDb(logsParaPersistir);
 
@@ -527,7 +581,7 @@ export class NotificacaoRecorrenteService {
   }
 
   async getWhatsappQueue(
-    tipo: NotificationFlowType = 'pendencia-periodica',
+    tipo: NotificationFlowType = 'lembrete-3-dias-antes',
   ): Promise<WhatsappQueuePreview> {
     const agendamento = await this.ensureAgendamento();
     const contas = await this.buscarPendencias(tipo);
@@ -708,20 +762,28 @@ export class NotificacaoRecorrenteService {
       ? new Date(cobranca.vencimento).toLocaleDateString('pt-BR')
       : '—';
     const urlBase = `https://${tenant}.planvita.com.br`;
-    const urlCobranca = `${urlBase}/cliente`;
+    const urlCobranca = cobranca?.paymentUrl || `${urlBase}/cliente`;
 
     const highlight =
-      tipo === 'aviso-vencimento'
-        ? 'Lembrete de vencimento'
-        : tipo === 'aviso-pendencia'
-          ? 'Aviso de pendência'
-          : tipo === 'suspensao-preventiva'
-            ? 'Aviso de suspensão preventiva'
-            : tipo === 'suspensao'
-              ? 'Aviso de suspensão'
-              : tipo === 'pos-suspensao'
-                ? 'Lembrete pós-suspensão'
-            : 'Cobrança pendente';
+      tipo === 'lembrete-3-dias-antes'
+        ? 'Lembrete 3 dias antes'
+        : tipo === 'cobranca-no-vencimento'
+          ? 'Cobrança no vencimento'
+          : tipo === 'atraso-1-dia'
+            ? 'Atraso 1 dia'
+            : tipo === 'atraso-7-dias'
+              ? 'Atraso 7 dias'
+              : tipo === 'aviso-vencimento'
+                ? 'Lembrete de vencimento'
+                : tipo === 'aviso-pendencia'
+                  ? 'Aviso de pendência'
+                  : tipo === 'suspensao-preventiva'
+                    ? 'Aviso de suspensão preventiva'
+                    : tipo === 'suspensao'
+                      ? 'Aviso de suspensão'
+                      : tipo === 'pos-suspensao'
+                        ? 'Lembrete pós-suspensão'
+                        : 'Cobrança pendente';
 
     return `
     <div style="font-family: Arial, sans-serif; background-color: #f4f5f7; padding: 24px;">
@@ -737,8 +799,8 @@ export class NotificacaoRecorrenteService {
         <div style="padding: 24px; color: #0f172a;">
           <p style="font-size: 16px; margin: 0 0 12px 0;">Olá, ${destinatario.nome}.</p>
           <p style="font-size: 14px; margin: 0 0 12px 0;">
-            Lembramos que a sua cobrança gerada por <strong>PLANO FAMILIAR CAMPO DO BOSQUE LTDA</strong>
-            no valor de <strong>${valorFormatado}</strong> vence em
+            Lembramos que a sua cobrança gerada por <strong>${displayName}</strong>
+            no valor de <strong>${valorFormatado}</strong> está vinculada ao vencimento de
             <strong>${vencimentoFormatado}</strong>.
           </p>
           <p style="font-size: 14px; margin: 0 0 16px 0;">
@@ -749,7 +811,7 @@ export class NotificacaoRecorrenteService {
               Visualizar cobrança
             </a>
           </div>
-          <p style="font-size: 13px; color: #475569;">Clique no botão acima para visualizar a cobrança. Ou acesse: ${urlBase}</p>
+          <p style="font-size: 13px; color: #475569;">Clique no botão acima para visualizar a cobrança. Ou acesse: ${urlCobranca}</p>
         </div>
         <div style="background: #0f172a; color: #e2e8f0; padding: 18px 24px; font-size: 12px;">
           <strong>${displayName}</strong><br/>
@@ -796,6 +858,30 @@ export class NotificacaoRecorrenteService {
     const descricao = cobranca?.descricao ?? 'Cobrança de serviços';
 
     const mensagens: Record<NotificationFlowType, string[]> = {
+      'lembrete-3-dias-antes': [
+        `Olá, ${destinatario.nome}`,
+        `Passando para lembrar que sua cobrança de ${valor} vence em ${vencimento}.`,
+        `Descrição: ${descricao}.`,
+        `Pague ou consulte em: ${urlCobranca}`,
+      ],
+      'cobranca-no-vencimento': [
+        `Olá, ${destinatario.nome}`,
+        `Sua cobrança de ${valor} vence hoje (${vencimento}).`,
+        `Descrição: ${descricao}.`,
+        `Pague ou consulte em: ${urlCobranca}`,
+      ],
+      'atraso-1-dia': [
+        `Olá, ${destinatario.nome}`,
+        `Identificamos que sua cobrança de ${valor} está com 1 dia de atraso desde ${vencimento}.`,
+        `Descrição: ${descricao}.`,
+        `Regularize em: ${urlCobranca}`,
+      ],
+      'atraso-7-dias': [
+        `Olá, ${destinatario.nome}`,
+        `Sua cobrança de ${valor} está com 7 dias de atraso desde ${vencimento}.`,
+        `Descrição: ${descricao}.`,
+        `Regularize em: ${urlCobranca}`,
+      ],
       'aviso-vencimento': [
         `Olá, ${destinatario.nome}`,
         `Lembrete: sua cobrança de ${valor} vence em ${vencimento}.`,
@@ -905,6 +991,14 @@ export class NotificacaoRecorrenteService {
 
   private resolveAssuntoPadrao(tipo: NotificationFlowType) {
     switch (tipo) {
+      case 'lembrete-3-dias-antes':
+        return 'Lembrete 3 dias antes do vencimento';
+      case 'cobranca-no-vencimento':
+        return 'Cobrança no vencimento';
+      case 'atraso-1-dia':
+        return 'Atraso de 1 dia';
+      case 'atraso-7-dias':
+        return 'Atraso de 7 dias';
       case 'aviso-vencimento':
         return 'Lembrete de vencimento';
       case 'aviso-pendencia':
@@ -932,6 +1026,30 @@ export class NotificacaoRecorrenteService {
     }).format(destinatario.totalPendente);
 
     switch (tipo) {
+      case 'lembrete-3-dias-antes':
+        base.push(
+          `Sua cobrança de ${valorTotal} vence em ${cobrancaMaisProxima ? new Date(cobrancaMaisProxima.vencimento).toLocaleDateString('pt-BR') : '3 dias'}.`,
+        );
+        base.push('Antecipe o pagamento para evitar atraso e manter seus benefícios ativos.');
+        break;
+      case 'cobranca-no-vencimento':
+        base.push(
+          `Sua cobrança de ${valorTotal} vence hoje${cobrancaMaisProxima ? ` (${new Date(cobrancaMaisProxima.vencimento).toLocaleDateString('pt-BR')})` : ''}.`,
+        );
+        base.push('Realize o pagamento hoje para manter seus benefícios ativos.');
+        break;
+      case 'atraso-1-dia':
+        base.push(
+          `Identificamos atraso de 1 dia em uma cobrança de ${valorTotal}${cobrancaMaisProxima ? ` vencida em ${new Date(cobrancaMaisProxima.vencimento).toLocaleDateString('pt-BR')}` : ''}.`,
+        );
+        base.push('Regularize o quanto antes para evitar evolução da inadimplência.');
+        break;
+      case 'atraso-7-dias':
+        base.push(
+          `Identificamos atraso de 7 dias em uma cobrança de ${valorTotal}${cobrancaMaisProxima ? ` vencida em ${new Date(cobrancaMaisProxima.vencimento).toLocaleDateString('pt-BR')}` : ''}.`,
+        );
+        base.push('Regularize com urgência ou entre em contato com nosso time.');
+        break;
       case 'aviso-vencimento':
         base.push(
           `Lembrete: sua cobrança de ${valorTotal} vence em ${cobrancaMaisProxima ? new Date(cobrancaMaisProxima.vencimento).toLocaleDateString('pt-BR') : 'breve'}.`,
@@ -1093,6 +1211,14 @@ export class NotificacaoRecorrenteService {
       const diasAtraso = this.calcularDiasAtraso(conta.vencimento);
 
       switch (tipo) {
+        case 'lembrete-3-dias-antes':
+          return diasParaVencer === 3;
+        case 'cobranca-no-vencimento':
+          return diasParaVencer === 0;
+        case 'atraso-1-dia':
+          return diasAtraso === 1;
+        case 'atraso-7-dias':
+          return diasAtraso === 7;
         case 'aviso-vencimento':
           return diasParaVencer >= 0 && diasParaVencer <= diasAvisoVencimento;
         case 'aviso-pendencia':

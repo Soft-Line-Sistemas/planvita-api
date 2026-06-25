@@ -387,7 +387,7 @@ export class TitularService {
 
     const porCpf = new Map<string, string[]>();
     const registrar = (cpfDigits: string, origem: string) => {
-      if (cpfDigits.length !== 11) return;
+      if (cpfDigits.length < 8 || cpfDigits.length > 11 || /^0+$/.test(cpfDigits)) return;
       const atual = porCpf.get(cpfDigits) ?? [];
       atual.push(origem);
       porCpf.set(cpfDigits, atual);
@@ -834,16 +834,107 @@ export class TitularService {
   }
 
   async getById(id: number) {
-    await this.sincronizarStatusPlanoPorSuspensao([Number(id)]);
+    const titularId = Number(id);
+    if (!Number.isInteger(titularId) || titularId <= 0) {
+      const err: any = new Error('ID inválido');
+      err.status = 400;
+      throw err;
+    }
+
+    await this.sincronizarStatusPlanoPorSuspensao([titularId]);
     const titular = await this.prisma.titular.findUnique({
-      where: { id: Number(id) },
+      where: { id: titularId },
       select: TITULAR_FULL_SELECT,
     });
     return titular ? this.comporGradeFamiliarComCorresponsavel(titular as any) : titular;
   }
 
+  async getByCpfExact(cpf: string) {
+    const cpfNormalizado = this.normalizeCpf(cpf);
+    if (
+      cpfNormalizado.length < 8 ||
+      cpfNormalizado.length > 11 ||
+      /^0+$/.test(cpfNormalizado)
+    ) {
+      return null;
+    }
+
+    const titular = await this.prisma.titular.findFirst({
+      where: { cpf: cpfNormalizado },
+      select: TITULAR_FULL_SELECT,
+    });
+
+    return titular ? this.comporGradeFamiliarComCorresponsavel(titular as any) : null;
+  }
+
   async create(data: TitularType): Promise<TitularType> {
-    const titular = await this.prisma.titular.create({ data });
+    const payload = data as Record<string, unknown>;
+    const nome = String(payload.nome ?? payload.nomeCompleto ?? '').trim();
+    const email = String(payload.email ?? '').trim().toLowerCase();
+    const cpf = this.normalizeCpf(
+      payload.cpf === undefined || payload.cpf === null ? null : String(payload.cpf),
+    );
+    const planoIdRaw = payload.planoId;
+    const planoId =
+      planoIdRaw === undefined || planoIdRaw === null || planoIdRaw === ''
+        ? null
+        : Number(planoIdRaw);
+
+    if (!nome) {
+      const err: any = new Error('Nome é obrigatório');
+      err.status = 400;
+      throw err;
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      const err: any = new Error('E-mail inválido');
+      err.status = 400;
+      throw err;
+    }
+    if (!cpf || cpf.length !== 11 || /^0+$/.test(cpf)) {
+      const err: any = new Error('CPF inválido');
+      err.status = 400;
+      throw err;
+    }
+    if (planoId !== null && (!Number.isInteger(planoId) || planoId <= 0)) {
+      const err: any = new Error('planoId inválido');
+      err.status = 400;
+      throw err;
+    }
+
+    const dataNascimentoRaw = payload.dataNascimento;
+    const dataNascimento =
+      dataNascimentoRaw instanceof Date ? dataNascimentoRaw : new Date(String(dataNascimentoRaw ?? ''));
+    if (Number.isNaN(dataNascimento.getTime())) {
+      const err: any = new Error('dataNascimento inválida');
+      err.status = 400;
+      throw err;
+    }
+
+    const titular = await this.prisma.titular.create({
+      data: {
+        nome,
+        email,
+        cpf,
+        dataNascimento,
+        sexo: payload.sexo ? String(payload.sexo) : null,
+        rg: payload.rg ? String(payload.rg) : null,
+        naturalidade: payload.naturalidade ? String(payload.naturalidade) : null,
+        telefone: payload.telefone ? String(payload.telefone) : null,
+        situacaoConjugal: payload.situacaoConjugal ? String(payload.situacaoConjugal) : null,
+        profissao: payload.profissao ? String(payload.profissao) : null,
+        statusPlano: String(payload.statusPlano ?? 'PENDENTE_ASSINATURA'),
+        dataContratacao: new Date(),
+        cep: payload.cep ? String(payload.cep) : null,
+        uf: payload.uf ? String(payload.uf) : null,
+        cidade: payload.cidade ? String(payload.cidade) : null,
+        bairro: payload.bairro ? String(payload.bairro) : null,
+        logradouro: payload.logradouro ? String(payload.logradouro) : null,
+        numero: payload.numero ? String(payload.numero) : null,
+        complemento: payload.complemento ? String(payload.complemento) : null,
+        pontoReferencia: payload.pontoReferencia ? String(payload.pontoReferencia) : null,
+        planoId,
+      },
+    });
     const valorMensal = await this.pricingService.recalcularFinanceiroTitular(titular.id);
     void this.syncCustomerAsaasSafe(titular.id);
     void this.syncSubscriptionAsaasSafe(titular.id, titular.nome, valorMensal);
@@ -854,10 +945,26 @@ export class TitularService {
     const { step1, step2, step3, dependentes, step5 } = data;
     const dataContratacao = new Date();
 
+    if (!step1 || typeof step1 !== 'object') {
+      throw Object.assign(new Error('step1 é obrigatório'), { status: 400 });
+    }
+    if (!step2 || typeof step2 !== 'object') {
+      throw Object.assign(new Error('step2 é obrigatório'), { status: 400 });
+    }
+    if (!step5 || typeof step5 !== 'object') {
+      throw Object.assign(new Error('step5 é obrigatório'), { status: 400 });
+    }
+
     // --- Validações básicas ---
-    if (!step1.email || !step1.cpf || !step1.situacaoConjugal || !step1.profissao) {
+    if (
+      !String(step1.nomeCompleto ?? '').trim() ||
+      !step1.email ||
+      !step1.cpf ||
+      !step1.situacaoConjugal ||
+      !step1.profissao
+    ) {
       throw Object.assign(
-        new Error('Email, CPF, situação conjugal e profissão são obrigatórios'),
+        new Error('Nome, email, CPF, situação conjugal e profissão são obrigatórios'),
         { status: 400 },
       );
     }
@@ -882,6 +989,12 @@ export class TitularService {
     // Normaliza email e CPF
     const email = step1.email.trim().toLowerCase();
     const cpf = step1.cpf.replace(/\D/g, '');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw Object.assign(new Error('E-mail inválido'), { status: 400 });
+    }
+    if (cpf.length < 8 || cpf.length > 11 || /^0+$/.test(cpf) || /\D/.test(cpf)) {
+      throw Object.assign(new Error('CPF inválido'), { status: 400 });
+    }
     const situacaoConjugal = String(step1.situacaoConjugal ?? '').trim();
     const profissao = String(step1.profissao ?? '').trim();
     const sexo = String(step1.sexo ?? '').trim();
@@ -1151,13 +1264,18 @@ export class TitularService {
   }
 
   async update(id: number, data: Partial<TitularType>): Promise<TitularType> {
+    if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+      const err: any = new Error('ID inválido');
+      err.status = 400;
+      throw err;
+    }
     const titular = await this.prisma.titular.update({ where: { id: Number(id) }, data });
     await this.pricingService.recalcularDependentesDoTitular(titular.id);
     void this.syncCustomerAsaasSafe(titular.id);
     return titular;
   }
 
-  async promoverCorresponsavelParaTitular(id: number) {
+  async promoverCorresponsavelParaTitular(id: number, corresponsavelId?: number) {
     const titularId = Number(id);
     const titularAtual = await this.prisma.titular.findUnique({
       where: { id: titularId },
@@ -1175,10 +1293,12 @@ export class TitularService {
       throw err;
     }
 
-    const corresponsavel = titularAtual.corresponsaveis?.[0] ?? null;
+    const corresponsavel = titularAtual.corresponsaveis?.find(
+      (item) => Number(item.id) === Number(corresponsavelId ?? item.id),
+    ) ?? null;
     if (!corresponsavel) {
       const err: any = new Error('Titular não possui corresponsável para sucessão.');
-      err.status = 400;
+      err.status = corresponsavelId ? 404 : 400;
       err.code = 'CORRESPONSAVEL_INEXISTENTE';
       throw err;
     }
@@ -1242,7 +1362,25 @@ export class TitularService {
   }
 
   async delete(id: number): Promise<TitularType> {
-    return this.prisma.titular.delete({ where: { id: Number(id) } });
+    if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+      const err: any = new Error('ID inválido');
+      err.status = 400;
+      throw err;
+    }
+    const titularId = Number(id);
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.comissao.deleteMany({ where: { titularId } });
+      await tx.pagamento.deleteMany({ where: { titularId } });
+      await tx.documento.deleteMany({ where: { titularId } });
+      await tx.corresponsavel.deleteMany({ where: { titularId } });
+      await tx.dependente.deleteMany({ where: { titularId } });
+      await tx.contaReceber.deleteMany({ where: { clienteId: titularId } });
+      await tx.orcamento.deleteMany({ where: { clienteId: titularId } });
+      await tx.recibo.deleteMany({ where: { clienteId: titularId } });
+
+      return tx.titular.delete({ where: { id: titularId } });
+    });
   }
 
   async listarAssinaturas(titularId: number): Promise<AssinaturaDigitalType[]> {

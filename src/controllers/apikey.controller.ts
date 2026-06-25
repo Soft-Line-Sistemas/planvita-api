@@ -11,6 +11,17 @@ export interface TenantRequest extends Request {
 export class ApiKeyController {
   private logger = new Logger({ service: 'ApiKeyController' });
 
+  private respondFromError(res: Response, error: unknown) {
+    const candidate = error as { status?: number; code?: string; message?: string };
+    if (candidate?.status) {
+      return res.status(candidate.status).json({ message: candidate.message ?? 'Request failed' });
+    }
+    if (candidate?.code === 'P2025') {
+      return res.status(404).json({ message: 'ApiKey not found' });
+    }
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+
   async getAll(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) {
@@ -36,7 +47,7 @@ export class ApiKeyController {
 
       const { id } = req.params;
       const service = new ApiKeyService(req.tenantId);
-      const result = await service.getById(Number(id));
+      const result = await service.getById(String(id));
 
       if (!result) {
         this.logger.warn(`ApiKey not found for id: ${id}`);
@@ -78,7 +89,7 @@ export class ApiKeyController {
       const { id } = req.params;
       const service = new ApiKeyService(req.tenantId);
       const data = req.body;
-      const result = await service.update(Number(id), data);
+      const result = await service.update(String(id), data);
 
       this.logger.info(`update executed successfully for id: ${id}`, {
         data,
@@ -87,7 +98,7 @@ export class ApiKeyController {
       res.json(result);
     } catch (error) {
       this.logger.error(`Failed to update ApiKey`, error, { params: req.params, body: req.body });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 
@@ -99,14 +110,13 @@ export class ApiKeyController {
 
       const { id } = req.params;
       const service = new ApiKeyService(req.tenantId);
-      await service.delete(Number(id));
+      await service.delete(String(id));
 
       this.logger.info(`delete executed successfully for id: ${id}`, { tenant: req.tenantId });
       res.status(204).send();
     } catch (error) {
       this.logger.error(`Failed to delete ApiKey`, error, { params: req.params });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 }
-

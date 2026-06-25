@@ -13,6 +13,16 @@ export interface TenantRequest extends Request {
 export class TitularController {
   private logger = new Logger({ service: 'TitularController' });
 
+  private respondFromError(res: Response, error: any) {
+    if (error?.status) {
+      return res.status(error.status).json({ message: error.message ?? 'Request failed' });
+    }
+    if (error?.code === 'P2025') {
+      return res.status(404).json({ message: 'Titular not found' });
+    }
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+
   private getTitularIdFromClienteRequest(req: TenantRequest & ClienteAuthRequest): number | null {
     const titularId = Number(req?.cliente?.titularId);
     if (!titularId || Number.isNaN(titularId)) return null;
@@ -119,25 +129,18 @@ export class TitularController {
         return res.status(400).json({ message: "CPF is required" });
       }
 
-      const service = new TitularService(req.tenantId);
-
-      // Busca exata pelo CPF
-      const result = await service.getAll({
-        page: 1,
-        limit: 1,
-        search: cpf.replace(/\D/g, ''), // Normaliza CPF
-      });
-
-      if (result.data.length === 0) {
+      const cpfNormalizado = cpf.replace(/\D/g, '');
+      if (
+        cpfNormalizado.length < 8 ||
+        cpfNormalizado.length > 11 ||
+        /^0+$/.test(cpfNormalizado)
+      ) {
         return res.status(404).json({ message: "Titular not found" });
       }
 
-      // Verifica se o CPF bate exatamente (para evitar match parcial se o search for like)
-      const titular = result.data[0];
-      const cpfNormalizado = cpf.replace(/\D/g, '');
-      const titularCpfNormalizado = titular.cpf?.replace(/\D/g, '');
-
-      if (titularCpfNormalizado !== cpfNormalizado) {
+      const service = new TitularService(req.tenantId);
+      const titular = await service.getByCpfExact(cpfNormalizado);
+      if (!titular) {
         return res.status(404).json({ message: "Titular not found" });
       }
       
@@ -160,6 +163,9 @@ export class TitularController {
   async me(req: any, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      if (req?.user && !req?.cliente) {
+        return res.status(403).json({ message: 'Acesso disponível apenas para cliente autenticado.' });
+      }
       const titularId = Number(req?.cliente?.titularId);
       if (!titularId || Number.isNaN(titularId)) {
         return res.status(401).json({ message: 'Não autenticado' });
@@ -532,9 +538,14 @@ export class TitularController {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
-      const service = new TitularService(req.tenantId);
       const { id } = req.params;
-      const result = await service.getById(Number(id));
+      const titularId = Number(id);
+      if (!Number.isInteger(titularId) || titularId <= 0) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
+      const service = new TitularService(req.tenantId);
+      const result = await service.getById(titularId);
 
       if (!result) {
         this.logger.warn(`Titular not found for id: ${id}`, { tenant: req.tenantId });
@@ -561,7 +572,7 @@ export class TitularController {
       res.status(201).json(result);
     } catch (error) {
       this.logger.error('Failed to create Titular', error, { body: req.body });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 
@@ -621,18 +632,24 @@ export class TitularController {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
       const service = new TitularService(req.tenantId);
-      const { id } = req.params;
       const data = req.body;
-      const result = await service.update(Number(id), data);
+      const result = await service.update(id, data);
 
       this.logger.info(`update executed successfully for id: ${id}`, {
         tenant: req.tenantId,
         data,
       });
       res.json(result);
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error('Failed to update Titular', error, { params: req.params, body: req.body });
+      if (error?.status) return res.status(error.status).json({ message: error.message });
+      if (error?.code === 'P2025') return res.status(404).json({ message: 'Titular not found' });
       res.status(500).json({ message: 'Internal server error' });
     }
   }
@@ -642,8 +659,20 @@ export class TitularController {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
       const service = new TitularService(req.tenantId);
-      const { id } = req.params;
-      const result = await service.promoverCorresponsavelParaTitular(Number(id));
+      const titularId = Number(req.params.id);
+      if (!Number.isInteger(titularId) || titularId <= 0) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+      const corresponsavelIdRaw = (req.body as any)?.corresponsavelId;
+      if (corresponsavelIdRaw === undefined || corresponsavelIdRaw === null) {
+        return res.status(400).json({ message: 'corresponsavelId é obrigatório' });
+      }
+      const corresponsavelId = Number(corresponsavelIdRaw);
+      if (!Number.isInteger(corresponsavelId) || corresponsavelId <= 0) {
+        return res.status(400).json({ message: 'corresponsavelId inválido' });
+      }
+
+      const result = await service.promoverCorresponsavelParaTitular(titularId, corresponsavelId);
       res.json(result);
     } catch (error: any) {
       if (error?.status) {
@@ -663,14 +692,20 @@ export class TitularController {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
       const service = new TitularService(req.tenantId);
-      const { id } = req.params;
-      await service.delete(Number(id));
+      await service.delete(id);
 
       this.logger.info(`delete executed successfully for id: ${id}`, { tenant: req.tenantId });
       res.status(204).send();
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error('Failed to delete Titular', error, { params: req.params });
+      if (error?.status) return res.status(error.status).json({ message: error.message });
+      if (error?.code === 'P2025') return res.status(404).json({ message: 'Titular not found' });
       res.status(500).json({ message: 'Internal server error' });
     }
   }

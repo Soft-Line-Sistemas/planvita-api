@@ -14,6 +14,7 @@
     "sync:status-plano": "ts-node src/scripts/sync-status-plano.ts",
     "sync:dependentes-adicionais": "ts-node src/scripts/recalcular-adicionais-dependentes.ts",
     "test": "jest",
+    "test:python": "bash tests/integration_python/run_tests.sh",
     "lint": "eslint 'src/**/*.{ts,js}'",
     "format": "prettier --write 'src/**/*.{ts,js,json,md}'"
   },

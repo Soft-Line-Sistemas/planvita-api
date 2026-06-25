@@ -61,9 +61,9 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
       }
     }
 
-    // Fallback para um tenant padrão se estiver em desenvolvimento ou se for uma rota de health
-    if (!tenant && (process.env.NODE_ENV === 'development' || req.path.includes('health'))) {
-      tenant = 'lider'; // Ou qualquer outro tenant padrão
+    // Health pode responder mesmo sem tenant explícito.
+    if (!tenant && req.path.includes('health')) {
+      tenant = 'lider';
     }
 
     if (!tenant) {
@@ -75,7 +75,7 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
 
     if (!/^[a-z0-9-]+$/.test(tenant)) {
       if (isClienteLoginRoute) {
-        return next();
+        return res.status(404).send('Tenant database not configured');
       }
       return res.status(400).send('Invalid tenant format');
     }

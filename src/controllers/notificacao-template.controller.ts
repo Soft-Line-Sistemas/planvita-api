@@ -49,13 +49,17 @@ export class NotificacaoTemplateController {
 
   async criar(req: TenantRequest, res: Response) {
     try {
+      if (!req.body || Object.keys(req.body).length === 0) {
+        return res.status(400).json({ message: 'Payload inválido' });
+      }
       const service = this.resolveService(req);
       const template = await service.criar(req.body);
       res.status(201).json(template);
     } catch (error) {
       this.logger.error('Erro ao criar template', error, { tenant: req.tenantId, body: req.body });
-      res.status(error instanceof Error && error.message === 'Tenant unknown' ? 400 : 500).json({
-        message: 'Erro ao criar template',
+      const err = error as { status?: number; code?: string; message?: string };
+      res.status(err?.status ?? (err?.code === 'P2025' ? 404 : error instanceof Error && error.message === 'Tenant unknown' ? 400 : 500)).json({
+        message: err?.message ?? 'Erro ao criar template',
       });
     }
   }
@@ -69,8 +73,9 @@ export class NotificacaoTemplateController {
       res.json(template);
     } catch (error) {
       this.logger.error('Erro ao atualizar template', error, { tenant: req.tenantId, params: req.params });
-      res.status(error instanceof Error && error.message === 'Tenant unknown' ? 400 : 500).json({
-        message: 'Erro ao atualizar template',
+      const err = error as { status?: number; code?: string; message?: string };
+      res.status(err?.status ?? (err?.code === 'P2025' ? 404 : error instanceof Error && error.message === 'Tenant unknown' ? 400 : 500)).json({
+        message: err?.message ?? 'Erro ao atualizar template',
       });
     }
   }
@@ -84,8 +89,9 @@ export class NotificacaoTemplateController {
       res.status(204).send();
     } catch (error) {
       this.logger.error('Erro ao remover template', error, { tenant: req.tenantId, params: req.params });
-      res.status(error instanceof Error && error.message === 'Tenant unknown' ? 400 : 500).json({
-        message: 'Erro ao remover template',
+      const err = error as { status?: number; code?: string; message?: string };
+      res.status(err?.status ?? (err?.code === 'P2025' ? 404 : error instanceof Error && error.message === 'Tenant unknown' ? 400 : 500)).json({
+        message: err?.message ?? 'Erro ao remover template',
       });
     }
   }

@@ -100,8 +100,11 @@ export class FinanceiroController {
       res.status(201).json(result);
     } catch (error) {
       this.logger.error('Falha ao criar conta a pagar', error, { body: req.body });
-      res.status(this.shouldReturnTenantError(error) ? 400 : 500).json({
-        message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : 'Internal server error',
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      const isValidationError =
+        /obrigatóri|positivo|inválid|não encontrada|não encontrado/i.test(message);
+      res.status(this.shouldReturnTenantError(error) || isValidationError ? 400 : 500).json({
+        message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : message,
       });
     }
   }
@@ -119,8 +122,11 @@ export class FinanceiroController {
       res.status(201).json(result);
     } catch (error) {
       this.logger.error('Falha ao criar conta a receber', error, { body: req.body });
-      res.status(this.shouldReturnTenantError(error) ? 400 : 500).json({
-        message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : 'Internal server error',
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      const isValidationError =
+        /obrigatóri|positivo|inválid|não encontrada|não encontrado/i.test(message);
+      res.status(this.shouldReturnTenantError(error) || isValidationError ? 400 : 500).json({
+        message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : message,
       });
     }
   }

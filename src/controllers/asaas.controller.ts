@@ -19,6 +19,11 @@ export class AsaasController {
       return res.status(400).json({ message: 'Tenant não informado' });
     }
 
+    if (!req.body || typeof req.body !== 'object' || !Object.keys(req.body).length) {
+      this.logger.warn('Webhook Asaas rejeitado: payload vazio', { tenantId });
+      return res.status(400).json({ message: 'Payload inválido' });
+    }
+
     let client: AsaasClient;
     try {
       client = new AsaasClient(tenantId, (req as any).requestId);

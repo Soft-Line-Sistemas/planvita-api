@@ -47,6 +47,16 @@ export class RoleService {
   }
 
   async updatePermissions(roleId: number, permissionIds: number[]) {
+    const role = await this.prisma.role.findUnique({
+      where: { id: roleId },
+      select: { id: true },
+    });
+    if (!role) {
+      const err: any = new Error('Role not found');
+      err.status = 404;
+      throw err;
+    }
+
     await this.prisma.rolePermission.deleteMany({ where: { roleId } });
 
     const newPermissions = permissionIds.map((pid) => ({

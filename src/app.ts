@@ -25,6 +25,7 @@ import titularRoutes from './routes/titular.routes';
 import roleRoutes from './routes/role.routes';
 import permissionRoutes from './routes/permission.routes';
 import userRoutes from './routes/user.routes';
+import apiKeyRoutes from './routes/apikey.routes';
 import authRoutes from './routes/auth.routes';
 import regrasRoutes from './routes/regras.routes';
 import financeiroRoutes from './routes/financeiro.routes';
@@ -132,11 +133,13 @@ app.use('/health', rateLimitMiddleware.healthCheck);
 // Unauthenticated
 app.use('/health', healthRoutes);
 app.use(`/api/${API_VERSION}/pagamento/asaas`, asaasRoutes);
+app.use(`/api/${API_VERSION}/asaas`, asaasRoutes);
 
 // Authenticated
 app.use(tenantMiddleware);
 app.use(`/api/${API_VERSION}/auth`, authRoutes);
 app.use(`/api/${API_VERSION}/beneficiario/tipo`, beneficiarioTipoRoutes);
+app.use(`/api/${API_VERSION}/beneficiariotipo`, beneficiarioTipoRoutes);
 app.use(`/api/${API_VERSION}/beneficio`, beneficioRoutes);
 app.use(`/api/${API_VERSION}/comissao`, comissaoRoutes);
 app.use(`/api/${API_VERSION}/consultor`, consultorRoutes);
@@ -150,6 +153,7 @@ app.use(`/api/${API_VERSION}/titular`, titularRoutes);
 app.use(`/api/${API_VERSION}/roles`, roleRoutes);
 app.use(`/api/${API_VERSION}/permissions`, permissionRoutes);
 app.use(`/api/${API_VERSION}/users`, userRoutes);
+app.use(`/api/${API_VERSION}/apikey`, apiKeyRoutes);
 app.use(`/api/${API_VERSION}/regras`, regrasRoutes);
 app.use(`/api/${API_VERSION}/financeiro`, financeiroRoutes);
 app.use(`/api/${API_VERSION}/providers`, providerRoutes);

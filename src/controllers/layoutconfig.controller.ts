@@ -11,6 +11,13 @@ export interface TenantRequest extends Request {
 export class LayoutConfigController {
   private logger = new Logger({ service: 'LayoutConfigController' });
 
+  private respondFromError(res: Response, error: unknown) {
+    const candidate = error as { status?: number; code?: string; message?: string };
+    if (candidate?.status) return res.status(candidate.status).json({ message: candidate.message });
+    if (candidate?.code === 'P2025') return res.status(404).json({ message: 'LayoutConfig not found' });
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+
   async getAll(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
@@ -124,6 +131,9 @@ export class LayoutConfigController {
   async create(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      if (!req.body || Object.keys(req.body).length === 0) {
+        return res.status(400).json({ message: 'Payload inválido' });
+      }
       const service = new LayoutConfigService(req.tenantId);
       const data = req.body;
 
@@ -133,7 +143,7 @@ export class LayoutConfigController {
       res.status(201).json(result);
     } catch (error) {
       this.logger.error('Failed to create LayoutConfig', error, { body: req.body });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 
@@ -141,10 +151,14 @@ export class LayoutConfigController {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
       const service = new LayoutConfigService(req.tenantId);
-      const { id } = req.params;
       const { id: _, ...dataWithoutId } = req.body;
-      const result = await service.update(Number(id), dataWithoutId);
+      const result = await service.update(id, dataWithoutId);
 
       this.logger.info(`update executed successfully for id: ${id}`, {
         tenant: req.tenantId,
@@ -156,7 +170,7 @@ export class LayoutConfigController {
         params: req.params,
         body: req.body,
       });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 
@@ -164,16 +178,19 @@ export class LayoutConfigController {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
+      const id = Number(req.params.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ message: 'ID inválido' });
+      }
+
       const service = new LayoutConfigService(req.tenantId);
-      const { id } = req.params;
-      await service.delete(Number(id));
+      await service.delete(id);
 
       this.logger.info(`delete executed successfully for id: ${id}`, { tenant: req.tenantId });
       res.status(204).send();
     } catch (error) {
       this.logger.error(`Failed to delete LayoutConfig`, error, { params: req.params });
-      res.status(500).json({ message: 'Internal server error' });
+      this.respondFromError(res, error);
     }
   }
 }
-
