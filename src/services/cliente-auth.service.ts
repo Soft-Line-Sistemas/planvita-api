@@ -22,6 +22,17 @@ export type ClienteLoginResult = {
   cpf: string | null;
 };
 
+type ClienteAccessIdentity = {
+  titularId: number;
+  nome: string;
+  email: string;
+  cpf: string | null;
+  telefone: string | null;
+  metodoNotificacaoRecorrente?: string | null;
+  pagamentoConfirmadoEm?: Date | null;
+  source: 'titular' | 'corresponsavel';
+};
+
 export type AuthStartResult = {
   channel: NotificationChannel;
   destinationMasked: string;
@@ -88,15 +99,15 @@ export class ClienteAuthService {
   }
 
   async login(loginRaw: string, senha: string): Promise<{ result: ClienteLoginResult | null; code?: string }> {
-    const titular = await this.findTitularByLogin(loginRaw);
-    if (!titular) return { result: null };
+    const identity = await this.findAccessIdentityByLogin(loginRaw);
+    if (!identity) return { result: null };
 
-    if (!titular.pagamentoConfirmadoEm) {
+    if (!identity.pagamentoConfirmadoEm) {
       return { result: null, code: 'PAYMENT_REQUIRED' };
     }
 
     const credential = await (this.prisma as any).titularCredential.findUnique({
-      where: { titularId: titular.id },
+      where: { titularId: identity.titularId },
     });
 
     if (!credential?.senhaHash) {
@@ -107,16 +118,16 @@ export class ClienteAuthService {
     if (!ok) return { result: null };
 
     await (this.prisma as any).titularCredential.update({
-      where: { titularId: titular.id },
+      where: { titularId: identity.titularId },
       data: { lastLoginAt: new Date() },
     });
 
     return {
       result: {
-        titularId: titular.id,
-        nome: titular.nome,
-        email: titular.email,
-        cpf: titular.cpf ?? null,
+        titularId: identity.titularId,
+        nome: identity.nome,
+        email: identity.email,
+        cpf: identity.cpf ?? null,
       },
     };
   }
@@ -128,7 +139,21 @@ export class ClienteAuthService {
 
     await this.ensureCredential(titular.id);
 
-    const start = await this.startOtp(titular.id, this.resolvePreferredChannel(titular), 'REGISTER');
+    const identity: ClienteAccessIdentity = {
+      titularId: titular.id,
+      nome: titular.nome,
+      email: titular.email,
+      cpf: titular.cpf ?? null,
+      telefone: titular.telefone ?? null,
+      metodoNotificacaoRecorrente: titular.metodoNotificacaoRecorrente ?? null,
+      pagamentoConfirmadoEm: titular.pagamentoConfirmadoEm ?? null,
+      source: 'titular',
+    };
+    const start = await this.startOtp(
+      identity,
+      this.resolvePreferredChannel(identity),
+      'REGISTER',
+    );
 
     return { titularId: titular.id, start };
   }
@@ -137,24 +162,24 @@ export class ClienteAuthService {
     loginRaw: string,
     requestedChannelRaw?: unknown,
   ): Promise<AuthStartResult> {
-    const titular = await this.findTitularByLogin(loginRaw);
-    if (!titular) {
+    const identity = await this.findAccessIdentityByLogin(loginRaw);
+    if (!identity) {
       const err: any = new Error('Cliente não encontrado.');
       err.status = 404;
       throw err;
     }
 
-    if (!titular.pagamentoConfirmadoEm) {
+    if (!identity.pagamentoConfirmadoEm) {
       const err: any = new Error('Pagamento ainda não confirmado. Aguarde a confirmação do pagamento para criar sua senha.');
       err.status = 402;
       err.code = 'PAYMENT_REQUIRED';
       throw err;
     }
 
-    await this.ensureCredential(titular.id);
-    const linkToken = await this.createToken('FIRST_ACCESS_LINK', titular.id, 'FIRST_ACCESS');
-    const channel = this.resolveChannel(titular, requestedChannelRaw);
-    const start = await this.startOtp(titular.id, channel, 'FIRST_ACCESS', linkToken);
+    await this.ensureCredential(identity.titularId);
+    const linkToken = await this.createToken('FIRST_ACCESS_LINK', identity.titularId, 'FIRST_ACCESS');
+    const channel = this.resolveChannel(identity, requestedChannelRaw);
+    const start = await this.startOtp(identity, channel, 'FIRST_ACCESS', linkToken);
     return start;
   }
 
@@ -184,21 +209,35 @@ export class ClienteAuthService {
     await this.ensureCredential(titular.id);
     const linkToken = await this.createToken('FIRST_ACCESS_LINK', titular.id, 'FIRST_ACCESS');
     const channel = this.resolveChannel(titular, requestedChannelRaw);
-    const start = await this.startOtp(titular.id, channel, 'FIRST_ACCESS', linkToken);
+    const start = await this.startOtp(
+      {
+        titularId: titular.id,
+        nome: '',
+        email: titular.email ?? '',
+        cpf: null,
+        telefone: titular.telefone ?? null,
+        metodoNotificacaoRecorrente: titular.metodoNotificacaoRecorrente ?? null,
+        pagamentoConfirmadoEm: titular.pagamentoConfirmadoEm ?? null,
+        source: 'titular',
+      },
+      channel,
+      'FIRST_ACCESS',
+      linkToken,
+    );
     return start;
   }
 
   async startForgotPassword(loginRaw: string): Promise<AuthStartResult> {
-    const titular = await this.findTitularByLogin(loginRaw);
-    if (!titular) {
+    const identity = await this.findAccessIdentityByLogin(loginRaw);
+    if (!identity) {
       const err: any = new Error('Cliente não encontrado.');
       err.status = 404;
       throw err;
     }
 
-    await this.ensureCredential(titular.id);
-    const linkToken = await this.createToken('RESET_PASSWORD_LINK', titular.id, 'RESET_PASSWORD');
-    const start = await this.startOtp(titular.id, this.resolvePreferredChannel(titular), 'RESET_PASSWORD', linkToken);
+    await this.ensureCredential(identity.titularId);
+    const linkToken = await this.createToken('RESET_PASSWORD_LINK', identity.titularId, 'RESET_PASSWORD');
+    const start = await this.startOtp(identity, this.resolvePreferredChannel(identity), 'RESET_PASSWORD', linkToken);
     return start;
   }
 
@@ -373,32 +412,118 @@ export class ClienteAuthService {
     });
   }
 
-  private async findTitularByLogin(loginRaw: string) {
+  private async findAccessIdentityByLogin(loginRaw: string): Promise<ClienteAccessIdentity | null> {
     const login = String(loginRaw ?? '').trim().toLowerCase();
     if (!login) return null;
 
     if (isEmail(login)) {
-      return this.prisma.titular.findUnique({
+      const titular = await this.prisma.titular.findUnique({
         where: { email: login },
         select: { id: true, nome: true, email: true, cpf: true, telefone: true, metodoNotificacaoRecorrente: true, pagamentoConfirmadoEm: true },
       });
+      if (titular) {
+        return {
+          titularId: titular.id,
+          nome: titular.nome,
+          email: titular.email,
+          cpf: titular.cpf ?? null,
+          telefone: titular.telefone ?? null,
+          metodoNotificacaoRecorrente: titular.metodoNotificacaoRecorrente ?? null,
+          pagamentoConfirmadoEm: titular.pagamentoConfirmadoEm ?? null,
+          source: 'titular',
+        };
+      }
+
+      const corresponsavel = await (this.prisma as any).corresponsavel.findFirst({
+        where: { email: login },
+        select: {
+          nome: true,
+          email: true,
+          cpf: true,
+          telefone: true,
+          titular: {
+            select: {
+              id: true,
+              nome: true,
+              email: true,
+              cpf: true,
+              pagamentoConfirmadoEm: true,
+              metodoNotificacaoRecorrente: true,
+            },
+          },
+        },
+      });
+      if (!corresponsavel?.titular) return null;
+      return {
+        titularId: corresponsavel.titular.id,
+        nome: corresponsavel.titular.nome,
+        email: corresponsavel.titular.email,
+        cpf: corresponsavel.titular.cpf ?? null,
+        telefone: corresponsavel.telefone ?? null,
+        metodoNotificacaoRecorrente: corresponsavel.titular.metodoNotificacaoRecorrente ?? null,
+        pagamentoConfirmadoEm: corresponsavel.titular.pagamentoConfirmadoEm ?? null,
+        source: 'corresponsavel',
+      };
     }
 
     const cpf = normalizeCpf(login);
     if (cpf.length === 11) {
-      return this.prisma.titular.findFirst({
+      const titular = await this.prisma.titular.findFirst({
         where: { cpf },
         select: { id: true, nome: true, email: true, cpf: true, telefone: true, metodoNotificacaoRecorrente: true, pagamentoConfirmadoEm: true },
       });
+      if (titular) {
+        return {
+          titularId: titular.id,
+          nome: titular.nome,
+          email: titular.email,
+          cpf: titular.cpf ?? null,
+          telefone: titular.telefone ?? null,
+          metodoNotificacaoRecorrente: titular.metodoNotificacaoRecorrente ?? null,
+          pagamentoConfirmadoEm: titular.pagamentoConfirmadoEm ?? null,
+          source: 'titular',
+        };
+      }
+
+      const corresponsavel = await (this.prisma as any).corresponsavel.findFirst({
+        where: { cpf },
+        select: {
+          nome: true,
+          email: true,
+          cpf: true,
+          telefone: true,
+          titular: {
+            select: {
+              id: true,
+              nome: true,
+              email: true,
+              cpf: true,
+              pagamentoConfirmadoEm: true,
+              metodoNotificacaoRecorrente: true,
+            },
+          },
+        },
+      });
+      if (!corresponsavel?.titular) return null;
+      return {
+        titularId: corresponsavel.titular.id,
+        nome: corresponsavel.titular.nome,
+        email: corresponsavel.titular.email,
+        cpf: corresponsavel.titular.cpf ?? null,
+        telefone: corresponsavel.telefone ?? null,
+        metodoNotificacaoRecorrente: corresponsavel.titular.metodoNotificacaoRecorrente ?? null,
+        pagamentoConfirmadoEm: corresponsavel.titular.pagamentoConfirmadoEm ?? null,
+        source: 'corresponsavel',
+      };
     }
 
     return null;
   }
 
-  private resolvePreferredChannel(titular: { email?: string | null; telefone?: string | null; metodoNotificacaoRecorrente?: string | null }): NotificationChannel {
-    const preferred = String(titular.metodoNotificacaoRecorrente ?? '').toLowerCase();
-    const canWhatsapp = Boolean(titular.telefone && titular.telefone.trim().length >= 8);
-    const canEmail = Boolean(titular.email && titular.email.includes('@'));
+  private resolvePreferredChannel(identity: { email?: string | null; telefone?: string | null; metodoNotificacaoRecorrente?: string | null }): NotificationChannel {
+    const preferred = String(identity.metodoNotificacaoRecorrente ?? '').toLowerCase();
+    const canWhatsapp = Boolean(identity.telefone && identity.telefone.trim().length >= 8);
+    const canEmail = Boolean(identity.email && identity.email.includes('@'));
     if (preferred === 'whatsapp' && canWhatsapp) return 'whatsapp';
     if (preferred === 'email' && canEmail) return 'email';
     if (canEmail) return 'email';
@@ -406,15 +531,15 @@ export class ClienteAuthService {
   }
 
   private resolveChannel(
-    titular: { email?: string | null; telefone?: string | null; metodoNotificacaoRecorrente?: string | null },
+    identity: { email?: string | null; telefone?: string | null; metodoNotificacaoRecorrente?: string | null },
     requestedChannelRaw?: unknown,
   ): NotificationChannel {
     const requestedChannel = String(requestedChannelRaw ?? '').trim().toLowerCase();
-    const canWhatsapp = Boolean(titular.telefone && titular.telefone.trim().length >= 8);
-    const canEmail = Boolean(titular.email && titular.email.includes('@'));
+    const canWhatsapp = Boolean(identity.telefone && identity.telefone.trim().length >= 8);
+    const canEmail = Boolean(identity.email && identity.email.includes('@'));
 
     if (!requestedChannel) {
-      return this.resolvePreferredChannel(titular);
+      return this.resolvePreferredChannel(identity);
     }
 
     if (requestedChannel === 'whatsapp') {
@@ -449,23 +574,18 @@ export class ClienteAuthService {
   }
 
   private async startOtp(
-    titularId: number,
+    identity: ClienteAccessIdentity,
     channel: NotificationChannel,
     purpose: OtpPurpose,
     linkToken?: string,
   ): Promise<AuthStartResult> {
-    const titular = await this.prisma.titular.findUnique({
-      where: { id: titularId },
-      select: { email: true, telefone: true },
-    });
-
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     const codeHash = await bcrypt.hash(otp, 10);
     const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
 
     await (this.prisma as any).titularOtp.create({
       data: {
-        titularId,
+        titularId: identity.titularId,
         channel,
         purpose,
         codeHash,
@@ -474,7 +594,7 @@ export class ClienteAuthService {
     });
 
     const destination =
-      channel === 'email' ? String(titular?.email ?? '') : String(titular?.telefone ?? '');
+      channel === 'email' ? String(identity.email ?? '') : String(identity.telefone ?? '');
     const destinationMasked = channel === 'email' ? maskEmail(destination) : maskPhone(destination);
 
     const messageParts = [
@@ -526,7 +646,7 @@ export class ClienteAuthService {
 
       const titular = await this.prisma.titular.findUnique({
         where: { id: token.titularId },
-        select: { email: true, telefone: true, metodoNotificacaoRecorrente: true },
+        select: { id: true },
       });
       if (!titular) {
         const err: any = new Error('Cliente não encontrado.');
@@ -536,13 +656,13 @@ export class ClienteAuthService {
       return { titularId: token.titularId };
     }
 
-    const titular = await this.findTitularByLogin(value);
-    if (!titular) {
+    const identity = await this.findAccessIdentityByLogin(value);
+    if (!identity) {
       const err: any = new Error('Cliente não encontrado.');
       err.status = 404;
       throw err;
     }
-    return { titularId: titular.id };
+    return { titularId: identity.titularId };
   }
 
   private async markVerifiedChannel(titularId: number, channel: NotificationChannel) {

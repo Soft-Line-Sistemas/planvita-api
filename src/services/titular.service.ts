@@ -1134,7 +1134,8 @@ export class TitularService {
         dataNascimento: step1.dataNascimento,
         parentesco: 'Titular',
       },
-      ...(corresponsavelContaNaGrade
+      ...(corresponsavelContaNaGrade &&
+      this.corresponsavelContaNaComposicaoDoPlano(corresponsavelData.relacionamento)
         ? [
             {
               dataNascimento:
@@ -2406,5 +2407,9 @@ export class TitularService {
         titularId,
       });
     }
+  }
+
+  private corresponsavelContaNaComposicaoDoPlano(relacionamento?: string | null) {
+    return canonicalizeRelationship(relacionamento) === 'conjuge';
   }
 }

@@ -336,6 +336,42 @@ describe('TitularService', () => {
       });
     });
 
+    it('não deve usar corresponsável não cônjuge na composição para sugerir plano', async () => {
+      const service = new TitularService('tenant-123');
+
+      const payload = makePayload({
+        step3: {
+          usarMesmosDados: false,
+          nomeCompleto: 'Corresponsavel Primo',
+          cpf: '22233344455',
+          dataNascimento: '1992-02-02',
+          sexo: 'Feminino',
+          naturalidade: 'Salvador',
+          parentesco: 'Primo(a)',
+          email: 'primo@teste.com',
+          telefone: '71999999999',
+          situacaoConjugal: 'Solteiro(a)',
+          profissao: 'Advogada',
+          cep: '40000000',
+          uf: 'BA',
+          cidade: 'Salvador',
+          bairro: 'Centro',
+          logradouro: 'Rua B',
+          numero: '20',
+          pontoReferencia: '',
+        },
+      });
+
+      await service.createFull(payload as any);
+
+      expect(listarPlanosCompativeisMock).toHaveBeenCalledWith([
+        expect.objectContaining({
+          dataNascimento: '1990-01-01',
+          parentesco: 'Titular',
+        }),
+      ]);
+    });
+
     it('deve rejeitar cadastro quando corresponsável for menor de idade', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-06-18T12:00:00.000Z'));
       const service = new TitularService('tenant-123');

@@ -14,6 +14,9 @@ const prismaMock = {
     update: jest.fn(),
     create: jest.fn(),
   },
+  corresponsavel: {
+    findFirst: jest.fn(),
+  },
   titularOtpVerification: {
     create: jest.fn(),
     findFirst: jest.fn(),
@@ -236,6 +239,38 @@ describe('ClienteAuthService', () => {
       expect(result.result).toBeNull();
     });
 
+    it('faz login usando CPF do corresponsável e credencial do titular', async () => {
+      (prismaMock.titular.findFirst as jest.Mock).mockResolvedValue(null);
+      (prismaMock.corresponsavel.findFirst as jest.Mock).mockResolvedValue({
+        nome: 'Resp',
+        email: 'resp@email.com',
+        cpf: '22233344455',
+        telefone: '71999999999',
+        titular: {
+          id: 10,
+          nome: 'Titular Principal',
+          email: 'titular@email.com',
+          cpf: '12345678901',
+          pagamentoConfirmadoEm: new Date(),
+          metodoNotificacaoRecorrente: 'email',
+        },
+      });
+      (prismaMock.titularCredential.findUnique as jest.Mock).mockResolvedValue({ senhaHash: '$2a$10$hash' });
+      (prismaMock.titularCredential.update as jest.Mock).mockResolvedValue({});
+      jest.spyOn(bcrypt, 'compare').mockResolvedValue(true as never);
+
+      const result = await service.login('22233344455', 'Senha@123');
+
+      expect(prismaMock.corresponsavel.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { cpf: '22233344455' } }),
+      );
+      expect(result.result).toMatchObject({
+        titularId: 10,
+        nome: 'Titular Principal',
+        email: 'titular@email.com',
+      });
+    });
+
     it('retorna null quando senha errada', async () => {
       (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
         id: 1, nome: 'Teste', email: 'teste@email.com', cpf: '12345678901', telefone: null,
@@ -365,17 +400,100 @@ describe('ClienteAuthService', () => {
 
   // ── startForgotPassword ────────────────────────────────────────────────────
   describe('startForgotPassword', () => {
+    it('mantém envio para o próprio titular quando o login é do titular', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 21,
+        nome: 'Titular Teste',
+        email: 'titular@email.com',
+        cpf: '12345678901',
+        telefone: '71999990001',
+        metodoNotificacaoRecorrente: 'email',
+        pagamentoConfirmadoEm: new Date(),
+      });
+      (prismaMock.titularCredential.upsert as jest.Mock).mockResolvedValue({});
+      (prismaMock.titularToken.create as jest.Mock).mockResolvedValue({});
+      (prismaMock.titularOtp.create as jest.Mock).mockResolvedValue({});
+
+      const result = await service.startForgotPassword('titular@email.com');
+
+      expect(prismaMock.corresponsavel.findFirst).not.toHaveBeenCalled();
+      expect(result.channel).toBe('email');
+      expect(result.destinationMasked).toContain('ti');
+    });
+
     it('lança erro quando titular não encontrado', async () => {
       (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue(null);
       (prismaMock.titular.findFirst as jest.Mock).mockResolvedValue(null);
+      (prismaMock.corresponsavel.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(service.startForgotPassword('inexistente@email.com')).rejects.toThrow();
     });
 
     it('lança erro quando titular não encontrado por CPF', async () => {
       (prismaMock.titular.findFirst as jest.Mock).mockResolvedValue(null);
+      (prismaMock.corresponsavel.findFirst as jest.Mock).mockResolvedValue(null);
 
       await expect(service.startForgotPassword('12345678901')).rejects.toThrow();
+    });
+
+    it('envia OTP para email do corresponsável quando login pertence ao corresponsável', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue(null);
+      (prismaMock.corresponsavel.findFirst as jest.Mock).mockResolvedValue({
+        nome: 'Resp',
+        email: 'resp@email.com',
+        cpf: '22233344455',
+        telefone: '71999999999',
+        titular: {
+          id: 10,
+          nome: 'Titular Principal',
+          email: 'titular@email.com',
+          cpf: '12345678901',
+          pagamentoConfirmadoEm: new Date(),
+          metodoNotificacaoRecorrente: 'email',
+        },
+      });
+      (prismaMock.titularCredential.upsert as jest.Mock).mockResolvedValue({});
+      (prismaMock.titularToken.create as jest.Mock).mockResolvedValue({});
+      (prismaMock.titularOtp.create as jest.Mock).mockResolvedValue({});
+
+      const result = await service.startForgotPassword('resp@email.com');
+
+      expect(prismaMock.corresponsavel.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { email: 'resp@email.com' } }),
+      );
+      expect(result.channel).toBe('email');
+      expect(result.destinationMasked).toContain('@');
+    });
+  });
+
+  describe('startFirstAccessByLogin', () => {
+    it('resolve corresponsável financeiro e retorna first access do titular vinculado', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue(null);
+      (prismaMock.corresponsavel.findFirst as jest.Mock).mockResolvedValue({
+        nome: 'Resp',
+        email: 'resp@email.com',
+        cpf: '22233344455',
+        telefone: '71999999999',
+        titular: {
+          id: 30,
+          nome: 'Titular Vinculado',
+          email: 'titular.vinculado@email.com',
+          cpf: '12345678901',
+          pagamentoConfirmadoEm: new Date(),
+          metodoNotificacaoRecorrente: 'whatsapp',
+        },
+      });
+      (prismaMock.titularCredential.upsert as jest.Mock).mockResolvedValue({});
+      (prismaMock.titularToken.create as jest.Mock).mockResolvedValue({});
+      (prismaMock.titularOtp.create as jest.Mock).mockResolvedValue({});
+
+      const result = await service.startFirstAccessByLogin('resp@email.com', 'whatsapp');
+
+      expect(prismaMock.corresponsavel.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { email: 'resp@email.com' } }),
+      );
+      expect(result.channel).toBe('whatsapp');
+      expect(result.destinationMasked).toContain('71');
     });
   });
 
