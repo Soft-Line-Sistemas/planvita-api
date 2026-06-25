@@ -101,7 +101,10 @@ function sanitizeLogData(data: any): any {
     "cardNumber",
     "cardCvv",
     "cardToken",
+    "creditCardToken",
     "pixKey",
+    "number",
+    "ccv",
   ];
 
   if (typeof data !== "object" || data === null) {
@@ -118,6 +121,10 @@ function sanitizeLogData(data: any): any {
 
   // Recursively sanitize nested objects
   for (const key in sanitized) {
+    if (key === "creditCard" || key === "creditCardHolderInfo") {
+      sanitized[key] = "[REDACTED]";
+      continue;
+    }
     if (typeof sanitized[key] === "object" && sanitized[key] !== null) {
       sanitized[key] = sanitizeLogData(sanitized[key]);
     }

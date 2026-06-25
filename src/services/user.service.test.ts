@@ -244,7 +244,7 @@ describe('UserService', () => {
       prismaMock.userRole.create.mockResolvedValue({ userId: 1, roleId: 5, role: { name: 'consultor' } });
       prismaMock.consultor.upsert.mockResolvedValue({ id: 9 });
 
-      await service.updateUserRole(1, 5, 100, 5);
+      await service.updateUserRole(1, 5, undefined, 100, 5);
 
       expect(prismaMock.consultor.upsert).toHaveBeenCalledWith(
         expect.objectContaining({

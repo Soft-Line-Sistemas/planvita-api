@@ -38,6 +38,7 @@ export class UserController {
         email: u.email,
         roleId: u.roles?.[0]?.role?.id ?? null,
         consultorId: (u as any).consultor?.id ?? null,
+        consultorWhatsapp: (u as any).consultor?.whatsapp ?? null,
         valorComissaoIndicacao: (u as any).consultor?.valorComissaoIndicacao ?? null,
         percentualComissaoIndicacao: (u as any).consultor?.percentualComissaoIndicacao ?? null,
         comissaoPendente: (u as any).consultor?.comissaoPendente ?? 0,
@@ -130,7 +131,12 @@ export class UserController {
 
       const service = new UserService(req.tenantId);
       const { userId } = req.params;
-      const { roleId, valorComissaoIndicacao, percentualComissaoIndicacao } = req.body;
+      const {
+        roleId,
+        whatsapp,
+        valorComissaoIndicacao,
+        percentualComissaoIndicacao,
+      } = req.body;
 
       if (!roleId) {
         return res.status(400).json({ message: 'roleId é obrigatório' });
@@ -139,6 +145,7 @@ export class UserController {
       const result = await service.updateUserRole(
         Number(userId),
         Number(roleId),
+        whatsapp,
         valorComissaoIndicacao,
         percentualComissaoIndicacao,
       );

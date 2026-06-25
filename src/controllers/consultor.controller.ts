@@ -27,6 +27,12 @@ export class ConsultorController {
 
   async getPublicOptions(req: TenantRequest, res: Response) {
     try {
+      const scope = String(req.query?.scope ?? '').trim().toLowerCase();
+      if (scope === 'global') {
+        const result = await ConsultorService.getGlobalPublicOptions();
+        return res.json(result);
+      }
+
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
 
       const service = new ConsultorService(req.tenantId);

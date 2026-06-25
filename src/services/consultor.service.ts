@@ -1,4 +1,5 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
+import { getConfiguredPublicTenants, getTenantLabel } from '../utils/tenants';
 
 type ConsultorType = Prisma.ConsultorGetPayload<{}>;
 type ConsultorPublicOptionType = Prisma.ConsultorGetPayload<{
@@ -19,6 +20,29 @@ type ConsultorResumoType = Prisma.ConsultorGetPayload<{
   };
 }>;
 
+export type ConsultorPublicOption = {
+  id: number;
+  nome: string;
+  nomeCompleto: string;
+  tenantId: string;
+  tenantLabel: string;
+  selectionKey: string;
+};
+
+function buildSelectionKey(tenantId: string, consultorId: number) {
+  return `${tenantId}:${consultorId}`;
+}
+
+function formatConsultorDisplayName(nome: string, tenantId: string) {
+  const partes = String(nome)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const resumido =
+    partes.length <= 1 ? partes[0] ?? '' : `${partes[0]} ${partes[partes.length - 1]}`;
+  return `${resumido} (${getTenantLabel(tenantId)})`.trim();
+}
+
 export class ConsultorService {
   private prisma;
 
@@ -34,8 +58,8 @@ export class ConsultorService {
     return this.prisma.consultor.findMany();
   }
 
-  async getPublicOptions(): Promise<ConsultorPublicOptionType[]> {
-    return this.prisma.consultor.findMany({
+  async getPublicOptions(): Promise<ConsultorPublicOption[]> {
+    const options = await this.prisma.consultor.findMany({
       select: {
         id: true,
         nome: true,
@@ -44,6 +68,46 @@ export class ConsultorService {
         nome: 'asc',
       },
     });
+
+    return options.map((option) => ({
+      id: option.id,
+      nome: formatConsultorDisplayName(option.nome, this.tenantId),
+      nomeCompleto: option.nome,
+      tenantId: this.tenantId,
+      tenantLabel: getTenantLabel(this.tenantId),
+      selectionKey: buildSelectionKey(this.tenantId, option.id),
+    }));
+  }
+
+  static async getGlobalPublicOptions(): Promise<ConsultorPublicOption[]> {
+    const tenants = getConfiguredPublicTenants();
+    const resultados = await Promise.all(
+      tenants.map(async (tenantId) => {
+        const prisma = getPrismaForTenant(tenantId);
+        const consultores = (await prisma.consultor.findMany({
+          select: {
+            id: true,
+            nome: true,
+          },
+          orderBy: {
+            nome: 'asc',
+          },
+        })) as ConsultorPublicOptionType[];
+
+        return consultores.map((consultor) => ({
+          id: consultor.id,
+          nome: formatConsultorDisplayName(consultor.nome, tenantId),
+          nomeCompleto: consultor.nome,
+          tenantId,
+          tenantLabel: getTenantLabel(tenantId),
+          selectionKey: buildSelectionKey(tenantId, consultor.id),
+        }));
+      }),
+    );
+
+    return resultados
+      .flat()
+      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
   }
 
   async getById(id: number): Promise<ConsultorType | null> {
