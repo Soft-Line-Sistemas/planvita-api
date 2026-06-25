@@ -42,6 +42,13 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
       }
     }
 
+    // Cookie simples "tenant" — setado pelo frontend quando o usuário escolhe a empresa
+    // em domínios genéricos como app.planvita.com.br.
+    if (!tenant) {
+      const tenantCookie = (req as any).cookies?.tenant as string | undefined;
+      if (tenantCookie) tenant = tenantCookie.trim().toLowerCase();
+    }
+
     if (!tenant) {
       const host = req.headers.host;
       if (!host) return res.status(400).send('Host header missing');
