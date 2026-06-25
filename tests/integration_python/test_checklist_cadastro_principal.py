@@ -379,6 +379,23 @@ class ChecklistCadastroPrincipalIntegrationTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400, response.text)
         self.assertEqual(response.json()["message"], "Informe a lista de participantes.")
 
+    def test_04b_plano_sugerir_publico_com_tenant_retorna_200(self) -> None:
+        anon = requests.Session()
+        anon.verify = False
+        response = anon.post(
+            f"{self.base_url}/plano/sugerir",
+            headers={"X-Tenant": self.tenant},
+            json={
+                "participantes": [
+                    {"dataNascimento": "1990-01-01", "parentesco": "Titular"},
+                ],
+                "retornarTodos": True,
+            },
+            timeout=20,
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsInstance(response.json(), list)
+
     def test_05_titular_full_rejeita_falta_de_plano(self) -> None:
         payload = self._make_unique_payload()
         payload["step5"] = {}
