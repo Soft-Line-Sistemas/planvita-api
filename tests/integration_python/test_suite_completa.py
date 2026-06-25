@@ -422,6 +422,98 @@ class TestAuth(BaseIntegrationTest):
         )
         self.assertIn(r.status_code, (400, 401, 404))
 
+    def test_021b_cliente_titular_e_corresponsavel_resolvem_fluxos_publicos(self):
+        suffix = str(int(time.time() * 1000))[-8:]
+        titular_id = None
+        titular_email = f"titular.auth.{suffix}@example.com"
+        corresponsavel_email = f"corresp.auth.{suffix}@example.com"
+        payload = self._make_payload(
+            dependentes=[],
+            step1_extra={
+                "email": titular_email,
+                "telefone": "71999991001",
+                "whatsapp": "71999991001",
+            },
+            step3_extra={
+                "usarMesmosDados": False,
+                "nomeCompleto": f"Corresponsavel Auth {suffix}",
+                "cpf": f"7{suffix[:7]}9"[:11],
+                "dataNascimento": "1992-02-02",
+                "sexo": "Feminino",
+                "naturalidade": "Salvador",
+                "parentesco": "Outro",
+                "email": corresponsavel_email,
+                "telefone": "71999991002",
+                "whatsapp": "71999991002",
+                "situacaoConjugal": "Solteiro(a)",
+                "profissao": "Assistente",
+                "cep": "40000000",
+                "uf": "BA",
+                "cidade": "Salvador",
+                "bairro": "Centro",
+                "logradouro": "Rua B",
+                "complemento": "",
+                "numero": "20",
+                "pontoReferencia": "",
+            },
+        )
+
+        try:
+            created = self._create_titular(payload)
+            titular_id = int(created["id"])
+
+            forgot_titular = requests.post(
+                f"{self.base_url}/auth/forgot-password",
+                json={"login": titular_email},
+                headers={"X-Tenant": self.tenant},
+                verify=False,
+                timeout=20,
+            )
+            self.assertEqual(forgot_titular.status_code, 200, forgot_titular.text)
+            forgot_titular_body = forgot_titular.json()
+            self.assertEqual(forgot_titular_body["start"]["channel"], "email")
+
+            forgot_corresponsavel = requests.post(
+                f"{self.base_url}/auth/forgot-password",
+                json={"login": corresponsavel_email},
+                headers={"X-Tenant": self.tenant},
+                verify=False,
+                timeout=20,
+            )
+            self.assertEqual(forgot_corresponsavel.status_code, 200, forgot_corresponsavel.text)
+            forgot_corresponsavel_body = forgot_corresponsavel.json()
+            self.assertEqual(forgot_corresponsavel_body["start"]["channel"], "email")
+            self.assertNotEqual(
+                forgot_titular_body["start"]["destinationMasked"],
+                forgot_corresponsavel_body["start"]["destinationMasked"],
+            )
+
+            first_access_titular = requests.post(
+                f"{self.base_url}/auth/first-access",
+                json={"login": titular_email},
+                headers={"X-Tenant": self.tenant},
+                verify=False,
+                timeout=20,
+            )
+            self.assertIn(first_access_titular.status_code, (200, 402), first_access_titular.text)
+
+            first_access_corresponsavel = requests.post(
+                f"{self.base_url}/auth/first-access",
+                json={"login": corresponsavel_email, "channel": "whatsapp"},
+                headers={"X-Tenant": self.tenant},
+                verify=False,
+                timeout=20,
+            )
+            self.assertIn(first_access_corresponsavel.status_code, (200, 402), first_access_corresponsavel.text)
+
+            if first_access_titular.status_code == 402:
+                self.assertEqual(first_access_titular.json().get("code"), "PAYMENT_REQUIRED")
+            if first_access_corresponsavel.status_code == 402:
+                self.assertEqual(first_access_corresponsavel.json().get("code"), "PAYMENT_REQUIRED")
+        finally:
+            if titular_id:
+                self._cleanup_titular(titular_id)
+
     def test_022_reenviar_pagamento_sem_autenticacao_retorna_401(self):
         anon = requests.Session()
         anon.verify = False
