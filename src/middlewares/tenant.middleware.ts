@@ -52,8 +52,9 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
       // a menos que haja um subdomínio explícito antes do nome do projeto.
       const isVercel = hostname.includes('vercel.app');
       const isMainDomain = hostname === 'planvita.com.br' || hostname === 'localhost';
+      const isGenericSubdomain = hostname === 'app.planvita.com.br' || hostname === 'api.planvita.com.br';
 
-      if (!isVercel && !isMainDomain) {
+      if (!isVercel && !isMainDomain && !isGenericSubdomain) {
         const parts = hostname.split('.');
         const forbidden = ['www', 'api', 'app'];
         const candidate = parts.find((part) => part && !forbidden.includes(part));
