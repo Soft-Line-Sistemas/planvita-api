@@ -9,6 +9,7 @@ import { AuthRequest } from '../types/auth';
 import jwt from 'jsonwebtoken';
 import config from '../config';
 import { ClienteAuthRequest } from '../middlewares/cliente-auth.middleware';
+import { normalizeTenantId } from '../utils/tenants';
 
 export interface TenantRequest extends Request {
   tenantId?: string;
@@ -18,6 +19,13 @@ export interface TenantRequest extends Request {
 export class AuthController {
   private logger = new Logger({ service: 'AuthController' });
   private readonly clienteTenantFallback = ['lider', 'pax', 'bosque'];
+
+  private resolveRequestIp(req: Request): string | null {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (typeof forwarded === 'string' && forwarded.trim()) return forwarded;
+    if (Array.isArray(forwarded) && forwarded[0]?.trim()) return forwarded[0];
+    return req.socket?.remoteAddress ?? null;
+  }
 
   private getClienteTenantCookieOptions() {
     const isProd = config.server.nodeEnv === 'production';
@@ -150,17 +158,29 @@ export class AuthController {
 
   async register(req: TenantRequest, res: Response) {
     try {
-      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
-      const service = new TitularService(req.tenantId);
-      const novoTitular = await service.createFull(req.body);
+      const targetTenant =
+        normalizeTenantId(req.body?.targetTenantId) ||
+        normalizeTenantId(req.body?.consultorTenantId) ||
+        normalizeTenantId(typeof req.query?.tenant === 'string' ? req.query.tenant : null) ||
+        normalizeTenantId(req.tenantId);
 
-      const auth = new ClienteAuthService(req.tenantId);
-      const start = await auth.startFirstAccessByTitularId(novoTitular.id);
+      if (!targetTenant) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const service = new TitularService(targetTenant);
+      const novoTitular = await service.createFull(req.body, {
+        requestIp: this.resolveRequestIp(req),
+      });
+
+      const auth = new ClienteAuthService(targetTenant);
+      const start = await auth.startFirstAccessByTitularId(novoTitular.titular.id);
+      res.cookie('tenant', targetTenant, this.getClienteTenantCookieOptions());
 
       res.status(201).json({
-        titularId: novoTitular.id,
+        titularId: novoTitular.titular.id,
+        tenant: targetTenant,
         message: 'Cadastro criado. Enviamos um código para validação.',
         start,
+        recurring: novoTitular.recurring,
       });
     } catch (error: any) {
       const status = error?.status ?? 500;

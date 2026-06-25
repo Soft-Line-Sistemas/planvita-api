@@ -1358,4 +1358,167 @@ describe('TitularService', () => {
       await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 400 });
     });
   });
+
+  // ── validateCreditCardInput ─────────────────────────────────────────────────
+  describe('validateCreditCardInput (via createFull com billingType CREDIT_CARD)', () => {
+    const makeCardPayload = (cardOverrides: Record<string, unknown> = {}) =>
+      makePayload({
+        step5: {
+          planoId: 1,
+          billingType: 'CREDIT_CARD',
+          creditCard: {
+            holderName: 'JOAO DA SILVA',
+            holderCpf: '12345678901',
+            number: '4111111111111111',
+            expiryMonth: '12',
+            expiryYear: '28',
+            ccv: '123',
+            ...cardOverrides,
+          },
+        },
+      });
+
+    it('rejeita quando creditCard não é fornecido para billingType CREDIT_CARD', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({
+        step5: { planoId: 1, billingType: 'CREDIT_CARD' },
+      });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        status: 400,
+        code: 'CREDIT_CARD_REQUIRED',
+      });
+    });
+
+    it('rejeita holderName com menos de 3 caracteres', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ holderName: 'AB' });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        status: 400,
+        code: 'CREDIT_CARD_HOLDER_NAME_INVALID',
+      });
+    });
+
+    it('rejeita holderName vazio', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ holderName: '' });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        code: 'CREDIT_CARD_HOLDER_NAME_INVALID',
+      });
+    });
+
+    it('rejeita CPF com menos de 11 dígitos', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ holderCpf: '1234567890' });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        status: 400,
+        code: 'CREDIT_CARD_HOLDER_CPF_INVALID',
+      });
+    });
+
+    it('rejeita CPF com letras', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ holderCpf: 'abc.def.ghi-jk' });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        code: 'CREDIT_CARD_HOLDER_CPF_INVALID',
+      });
+    });
+
+    it('rejeita número do cartão com menos de 13 dígitos', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ number: '411111111111' });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        status: 400,
+        code: 'CREDIT_CARD_NUMBER_INVALID',
+      });
+    });
+
+    it('rejeita número do cartão com mais de 19 dígitos', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ number: '41111111111111111111' });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        code: 'CREDIT_CARD_NUMBER_INVALID',
+      });
+    });
+
+    it('rejeita mês de vencimento inválido (00)', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ expiryMonth: '00' });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        status: 400,
+        code: 'CREDIT_CARD_EXPIRY_MONTH_INVALID',
+      });
+    });
+
+    it('rejeita mês de vencimento inválido (13)', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ expiryMonth: '13' });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        code: 'CREDIT_CARD_EXPIRY_MONTH_INVALID',
+      });
+    });
+
+    it('rejeita mês de vencimento com 1 dígito', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ expiryMonth: '6' });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        code: 'CREDIT_CARD_EXPIRY_MONTH_INVALID',
+      });
+    });
+
+    it('rejeita ano de vencimento com 3 dígitos', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ expiryYear: '202' });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        status: 400,
+        code: 'CREDIT_CARD_EXPIRY_YEAR_INVALID',
+      });
+    });
+
+    it('rejeita CVV com 2 dígitos', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ ccv: '12' });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        status: 400,
+        code: 'CREDIT_CARD_CVV_INVALID',
+      });
+    });
+
+    it('rejeita CVV com 5 dígitos', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ ccv: '12345' });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        code: 'CREDIT_CARD_CVV_INVALID',
+      });
+    });
+
+    it('aceita CVV com 4 dígitos (AMEX)', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ ccv: '1234' });
+      // Validação passa; createFull resolve (Asaas está mockado).
+      const result = await service.createFull(payload as any);
+      expect(result).toBeDefined();
+    });
+
+    it('aceita ano com 2 dígitos', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ expiryYear: '28' });
+      const result = await service.createFull(payload as any);
+      expect(result).toBeDefined();
+    });
+
+    it('remove formatação do número do cartão antes de validar', async () => {
+      const service = new TitularService('tenant-123');
+      // Número com hífens (16 dígitos = válido após limpeza)
+      const payload = makeCardPayload({ number: '4111-1111-1111-1111' });
+      const result = await service.createFull(payload as any);
+      expect(result).toBeDefined();
+    });
+
+    it('normaliza CPF com pontuação antes de validar', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makeCardPayload({ holderCpf: '123.456.789-01' });
+      const result = await service.createFull(payload as any);
+      expect(result).toBeDefined();
+    });
+  });
 });

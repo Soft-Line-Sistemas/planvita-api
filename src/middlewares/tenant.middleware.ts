@@ -20,6 +20,9 @@ const logger = new Logger({ service: 'tenant-middleware' });
 export const tenantMiddleware = async (req: TenantRequest, res: Response, next: NextFunction) => {
   try {
     const isClienteLoginRoute = req.path.includes('/auth/login');
+    const isGlobalConsultorPublicRoute =
+      req.path.includes('/consultor/public') &&
+      String(req.query?.scope ?? '').trim().toLowerCase() === 'global';
     let tenant = (req.headers['x-tenant'] as string | undefined)?.toLowerCase();
 
     if (!tenant) {
@@ -75,6 +78,9 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
     }
 
     if (!tenant) {
+      if (isGlobalConsultorPublicRoute) {
+        return next();
+      }
       if (isClienteLoginRoute) {
         return next();
       }

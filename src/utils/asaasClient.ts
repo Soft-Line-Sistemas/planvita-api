@@ -40,6 +40,25 @@ export interface AsaasSubscriptionPayload {
   interest?: number;
   endDate?: string;
   externalReference?: string;
+  creditCard?: {
+    holderName: string;
+    number: string;
+    expiryMonth: string;
+    expiryYear: string;
+    ccv: string;
+  };
+  creditCardHolderInfo?: {
+    name: string;
+    email?: string;
+    cpfCnpj: string;
+    postalCode?: string;
+    addressNumber?: string;
+    addressComplement?: string;
+    phone?: string;
+    mobilePhone?: string;
+  };
+  creditCardToken?: string;
+  remoteIp?: string;
 }
 
 export interface AsaasPaymentPayload {
@@ -50,6 +69,28 @@ export interface AsaasPaymentPayload {
   description?: string;
   externalReference?: string;
   subscription?: string;
+}
+
+export interface AsaasCreditCardTokenizePayload {
+  customer: string;
+  creditCard: {
+    holderName: string;
+    number: string;
+    expiryMonth: string;
+    expiryYear: string;
+    ccv: string;
+  };
+  creditCardHolderInfo: {
+    name: string;
+    email?: string;
+    cpfCnpj: string;
+    postalCode?: string;
+    addressNumber?: string;
+    addressComplement?: string;
+    phone?: string;
+    mobilePhone?: string;
+  };
+  remoteIp: string;
 }
 
 export interface AsaasPagedResponse<T> {
@@ -137,6 +178,21 @@ export class AsaasClient {
     const path = subscriptionId ? `/subscriptions/${subscriptionId}` : '/subscriptions';
     const method: HttpMethod = subscriptionId ? 'PUT' : 'POST';
     return this.request<any>(method, path, payload, {
+      context: { subscriptionId },
+    });
+  }
+
+  async tokenizeCreditCard(payload: AsaasCreditCardTokenizePayload) {
+    return this.request<any>('POST', '/creditCard/tokenizeCreditCard', payload, {
+      context: { customerId: payload.customer },
+    });
+  }
+
+  async updateSubscriptionCreditCard(
+    subscriptionId: string,
+    payload: Omit<AsaasCreditCardTokenizePayload, 'customer' | 'remoteIp'>,
+  ) {
+    return this.request<any>('PUT', `/subscriptions/${subscriptionId}/creditCard`, payload, {
       context: { subscriptionId },
     });
   }

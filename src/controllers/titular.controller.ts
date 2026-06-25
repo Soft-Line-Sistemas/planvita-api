@@ -603,7 +603,13 @@ export class TitularController {
 
       const service = new TitularService(req.tenantId);
       const data = req.body;
-      const result = await service.createFull(data);
+      const forwarded = req.headers['x-forwarded-for'];
+      const requestIp =
+        (typeof forwarded === 'string' && forwarded.trim()) ||
+        (Array.isArray(forwarded) && forwarded[0]?.trim()) ||
+        req.socket?.remoteAddress ||
+        null;
+      const result = await service.createFull(data, { requestIp });
 
       res.status(201).json(result);
     } catch (error: any) {

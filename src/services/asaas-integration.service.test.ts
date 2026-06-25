@@ -3,6 +3,7 @@ import { AsaasIntegrationService } from './asaas-integration.service';
 const prismaMock = {
   contaReceber: {
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
     findMany: jest.fn(),
     update: jest.fn(),
     create: jest.fn(),
@@ -30,6 +31,9 @@ const mockAsaasClient = {
   updateCustomer: jest.fn(),
   getSubscriptions: jest.fn(),
   createSubscription: jest.fn(),
+  tokenizeCreditCard: jest.fn(),
+  createOrUpdateSubscription: jest.fn(),
+  updateSubscriptionCreditCard: jest.fn(),
 };
 
 jest.mock('../utils/prisma', () => ({
@@ -39,6 +43,11 @@ jest.mock('../utils/prisma', () => ({
 jest.mock('../utils/asaasClient', () => ({
   AsaasClient: jest.fn().mockImplementation(() => mockAsaasClient),
   resolveAsaasCredentials: jest.fn().mockReturnValue({ enabled: true }),
+}));
+
+jest.mock('../utils/crypto', () => ({
+  encryptText: jest.fn((v: string) => `enc:${v}`),
+  decryptText: jest.fn((v: string) => v.replace(/^enc:/, '')),
 }));
 
 describe('AsaasIntegrationService', () => {
@@ -735,6 +744,343 @@ describe('AsaasIntegrationService', () => {
         id: 2, asaasPaymentId: null,
       });
       await expect(service.deletePaymentForContaReceber(2)).resolves.not.toThrow();
+    });
+  });
+
+  // ── detectCardBrand ────────────────────────────────────────────────────────────
+  describe('detectCardBrand', () => {
+    const detect = (n: string) => (service as any).detectCardBrand(n);
+
+    it('identifica VISA pelo prefixo 4', () => {
+      expect(detect('4111111111111111')).toBe('VISA');
+    });
+
+    it('identifica MASTERCARD série 5x', () => {
+      expect(detect('5500000000000004')).toBe('MASTERCARD');
+    });
+
+    it('identifica MASTERCARD série 2x', () => {
+      expect(detect('2221000000000000')).toBe('MASTERCARD');
+    });
+
+    it('identifica AMEX pelo prefixo 34', () => {
+      expect(detect('378282246310005')).toBe('AMEX');
+    });
+
+    it('identifica AMEX pelo prefixo 37', () => {
+      expect(detect('371449635398431')).toBe('AMEX');
+    });
+
+    it('identifica DISCOVER pelo prefixo 6011', () => {
+      expect(detect('6011111111111117')).toBe('DISCOVER');
+    });
+
+    it('identifica DISCOVER pelo prefixo 65', () => {
+      expect(detect('6500000000000000')).toBe('DISCOVER');
+    });
+
+    it('identifica ELO por prefixo 636368', () => {
+      expect(detect('6363680000000000')).toBe('ELO');
+    });
+
+    it('identifica HIPERCARD por prefixo 606282', () => {
+      expect(detect('6062820000000000')).toBe('HIPERCARD');
+    });
+
+    it('retorna UNKNOWN para número desconhecido', () => {
+      expect(detect('9999999999999999')).toBe('UNKNOWN');
+    });
+
+    it('aceita número com espaços/hífens e ainda detecta bandeira', () => {
+      expect(detect('4111-1111-1111-1111')).toBe('VISA');
+    });
+
+    it('número vazio retorna UNKNOWN', () => {
+      expect(detect('')).toBe('UNKNOWN');
+    });
+  });
+
+  // ── normalizeExpiryYear ────────────────────────────────────────────────────────
+  describe('normalizeExpiryYear', () => {
+    const normalize = (v: string) => (service as any).normalizeExpiryYear(v);
+
+    it('expande ano de 2 dígitos para 4', () => {
+      expect(normalize('28')).toBe('2028');
+    });
+
+    it('mantém ano já com 4 dígitos', () => {
+      expect(normalize('2028')).toBe('2028');
+    });
+
+    it('remove caracteres não numéricos antes de normalizar', () => {
+      expect(normalize('28/')).toBe('2028');
+    });
+
+    it('ano vazio retorna string vazia', () => {
+      expect(normalize('')).toBe('');
+    });
+  });
+
+  // ── resolveCreditCardToken ─────────────────────────────────────────────────────
+  describe('resolveCreditCardToken', () => {
+    const resolve = (titularId: number, customerId: string, creditCard?: any) =>
+      (service as any).resolveCreditCardToken(titularId, customerId, creditCard);
+
+    const validCard = {
+      card: {
+        holderName: 'JOAO SILVA',
+        holderCpf: '12345678901',
+        number: '4111111111111111',
+        expiryMonth: '12',
+        expiryYear: '28',
+        ccv: '123',
+      },
+      holderInfo: {
+        name: 'JOAO SILVA',
+        cpfCnpj: '12345678901',
+        email: 'joao@teste.com',
+        postalCode: '01001000',
+        addressNumber: '10',
+        phone: '11999999999',
+      },
+      remoteIp: '127.0.0.1',
+    };
+
+    it('retorna token descriptografado quando já existe token salvo', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCardTokenEncrypted: 'enc:tok_existente',
+      });
+
+      const token = await resolve(1, 'cus_abc', validCard);
+      expect(token).toBe('tok_existente');
+      expect(mockAsaasClient.tokenizeCreditCard).not.toHaveBeenCalled();
+    });
+
+    it('tokeniza no Asaas quando não há token salvo', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCardTokenEncrypted: null,
+      });
+      mockAsaasClient.tokenizeCreditCard.mockResolvedValue({
+        creditCardToken: 'tok_novo_abc',
+      });
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({});
+
+      const token = await resolve(1, 'cus_abc', validCard);
+      expect(token).toBe('tok_novo_abc');
+      expect(mockAsaasClient.tokenizeCreditCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customer: 'cus_abc',
+          creditCard: expect.objectContaining({ holderName: 'JOAO SILVA' }),
+        }),
+      );
+    });
+
+    it('salva token criptografado e metadados mascarados após tokenizar', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCardTokenEncrypted: null,
+      });
+      mockAsaasClient.tokenizeCreditCard.mockResolvedValue({ creditCardToken: 'tok_novo' });
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({});
+
+      await resolve(1, 'cus_abc', validCard);
+
+      expect(prismaMock.titular.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 1 },
+          data: expect.objectContaining({
+            asaasCardTokenEncrypted: 'enc:tok_novo',
+            asaasCardLast4: '1111',
+            asaasCardBrand: 'VISA',
+            asaasCardHolderName: 'JOAO SILVA',
+          }),
+        }),
+      );
+    });
+
+    it('não salva PAN nem CVV em texto puro', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCardTokenEncrypted: null,
+      });
+      mockAsaasClient.tokenizeCreditCard.mockResolvedValue({ creditCardToken: 'tok_novo' });
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({});
+
+      await resolve(1, 'cus_abc', validCard);
+
+      const updateCall = (prismaMock.titular.update as jest.Mock).mock.calls[0][0];
+      const dataValues = JSON.stringify(updateCall.data);
+      expect(dataValues).not.toContain('4111111111111111');
+      expect(dataValues).not.toContain('123');
+    });
+
+    it('retorna null quando não há token salvo e creditCard não é fornecido', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCardTokenEncrypted: null,
+      });
+
+      const token = await resolve(1, 'cus_abc', undefined);
+      expect(token).toBeNull();
+    });
+
+    it('lança erro quando Asaas não retorna token', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCardTokenEncrypted: null,
+      });
+      mockAsaasClient.tokenizeCreditCard.mockResolvedValue({ creditCardToken: '' });
+
+      await expect(resolve(1, 'cus_abc', validCard)).rejects.toThrow(
+        'Asaas nao retornou token de cartao',
+      );
+    });
+
+    it('gera novo token quando token salvo está corrompido', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCardTokenEncrypted: 'invalido_sem_separadores',
+      });
+      mockAsaasClient.tokenizeCreditCard.mockResolvedValue({ creditCardToken: 'tok_recuperado' });
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({});
+
+      const { decryptText } = require('../utils/crypto');
+      (decryptText as jest.Mock).mockImplementationOnce(() => { throw new Error('Cipher text inválido'); });
+
+      const token = await resolve(1, 'cus_abc', validCard);
+      expect(token).toBe('tok_recuperado');
+    });
+
+    it('normaliza ano de 2 dígitos no payload enviado ao Asaas', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCardTokenEncrypted: null,
+      });
+      mockAsaasClient.tokenizeCreditCard.mockResolvedValue({ creditCardToken: 'tok_norm' });
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({});
+
+      const cardWith2DigitYear = { ...validCard, card: { ...validCard.card, expiryYear: '29' } };
+      await resolve(1, 'cus_abc', cardWith2DigitYear);
+
+      expect(mockAsaasClient.tokenizeCreditCard).toHaveBeenCalledWith(
+        expect.objectContaining({
+          creditCard: expect.objectContaining({ expiryYear: '2029' }),
+        }),
+      );
+    });
+  });
+
+  // ── ensureMonthlySubscriptionForTitular — CREDIT_CARD ─────────────────────────
+  describe('ensureMonthlySubscriptionForTitular com CREDIT_CARD', () => {
+    const validCreditCard = {
+      card: {
+        holderName: 'MARIA SOUZA',
+        holderCpf: '98765432100',
+        number: '5500000000000004',
+        expiryMonth: '06',
+        expiryYear: '27',
+        ccv: '321',
+      },
+      holderInfo: {
+        name: 'MARIA SOUZA',
+        cpfCnpj: '98765432100',
+        email: 'maria@teste.com',
+        postalCode: '01001000',
+        addressNumber: '5',
+      },
+      remoteIp: '10.0.0.1',
+    };
+
+    beforeEach(() => {
+      (prismaMock.contaReceber.findFirst as jest.Mock) = jest.fn().mockResolvedValue(null);
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCardTokenEncrypted: null,
+      });
+    });
+
+    it('cria assinatura CREDIT_CARD com token após tokenização', async () => {
+      (service as any).ensureCustomerForTitular = jest.fn().mockResolvedValue('cus_xyz');
+      mockAsaasClient.tokenizeCreditCard.mockResolvedValue({ creditCardToken: 'tok_card' });
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({});
+      mockAsaasClient.createOrUpdateSubscription.mockResolvedValue({ id: 'sub_abc' });
+      (service as any).syncRecurringPaymentsFromProvider = jest.fn().mockResolvedValue(undefined);
+      (prismaMock.contaReceber.findFirst as jest.Mock)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 99 });
+
+      const subId = await service.ensureMonthlySubscriptionForTitular({
+        titularId: 1,
+        valorMensal: 100,
+        descricao: 'Mensalidade',
+        billingType: 'CREDIT_CARD',
+        creditCard: validCreditCard,
+      });
+
+      expect(subId).toBe('sub_abc');
+      expect(mockAsaasClient.createOrUpdateSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({
+          billingType: 'CREDIT_CARD',
+          creditCardToken: 'tok_card',
+        }),
+      );
+    });
+
+    it('atualiza cartão em assinatura existente', async () => {
+      (prismaMock.contaReceber.findFirst as jest.Mock).mockResolvedValue({
+        asaasSubscriptionId: 'sub_existente',
+        descricao: 'Mensalidade',
+        metodoPagamento: 'CREDIT_CARD',
+      });
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCardTokenEncrypted: 'enc:tok_saved',
+      });
+      (service as any).ensureCustomerForTitular = jest.fn().mockResolvedValue('cus_xyz');
+      mockAsaasClient.updateSubscriptionCreditCard.mockResolvedValue({});
+      mockAsaasClient.createOrUpdateSubscription.mockResolvedValue({});
+
+      const subId = await service.ensureMonthlySubscriptionForTitular({
+        titularId: 1,
+        valorMensal: 120,
+        descricao: 'Mensalidade',
+        billingType: 'CREDIT_CARD',
+        creditCard: validCreditCard,
+      });
+
+      expect(subId).toBe('sub_existente');
+      expect(mockAsaasClient.updateSubscriptionCreditCard).toHaveBeenCalledWith(
+        'sub_existente',
+        expect.objectContaining({
+          creditCard: expect.objectContaining({ holderName: 'MARIA SOUZA' }),
+        }),
+      );
+    });
+
+    it('lança erro quando billingType é CREDIT_CARD mas não há token nem dados do cartão', async () => {
+      (service as any).ensureCustomerForTitular = jest.fn().mockResolvedValue('cus_xyz');
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCardTokenEncrypted: null,
+      });
+      (prismaMock.contaReceber.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.ensureMonthlySubscriptionForTitular({
+          titularId: 1,
+          valorMensal: 100,
+          descricao: 'Mensalidade',
+          billingType: 'CREDIT_CARD',
+          creditCard: undefined,
+        }),
+      ).rejects.toThrow('Token de cartao indisponivel');
+    });
+
+    it('retorna null quando Asaas está desabilitado', async () => {
+      const { resolveAsaasCredentials } = require('../utils/asaasClient');
+      (resolveAsaasCredentials as jest.Mock).mockReturnValueOnce({ enabled: false });
+      const disabledService = new AsaasIntegrationService('tenant-disabled');
+
+      const subId = await disabledService.ensureMonthlySubscriptionForTitular({
+        titularId: 1,
+        valorMensal: 100,
+        descricao: 'Mensalidade',
+        billingType: 'CREDIT_CARD',
+        creditCard: validCreditCard,
+      });
+
+      expect(subId).toBeNull();
     });
   });
 });

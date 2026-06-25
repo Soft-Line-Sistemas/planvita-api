@@ -1,5 +1,7 @@
 export interface CadastroTitularRequest {
   consultorId?: number | null;
+  consultorTenantId?: string | null;
+  targetTenantId?: string | null;
   step1: {
     nomeCompleto: string;
     cpf: string;
@@ -57,6 +59,14 @@ export interface CadastroTitularRequest {
   step5?: {
     planoId?: number | null;
     billingType?: 'PIX' | 'BOLETO' | 'CREDIT_CARD' | 'CARTAO';
+    creditCard?: {
+      holderName: string;
+      holderCpf: string;
+      number: string;
+      expiryMonth: string;
+      expiryYear: string;
+      ccv: string;
+    };
   };
   servicosAdicionais?: string[];
 }

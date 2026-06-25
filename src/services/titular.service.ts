@@ -12,6 +12,7 @@ import Logger from '../utils/logger';
 import { TitularPricingService } from './titular-pricing.service';
 import { PlanoService, ParticipanteInput } from './plano.service';
 import { canonicalizeRelationship } from './family-relationship.service';
+import { WhatsappNotificationService } from './whatsapp-notification.service';
 import {
   AlignmentType,
   Document,
@@ -24,6 +25,21 @@ import {
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
 type TitularType = Prisma.TitularGetPayload<{}>;
+
+type CreditCardCadastroInput = NonNullable<
+  NonNullable<CadastroTitularRequest['step5']>['creditCard']
+>;
+
+type CreateFullRecurringResult = {
+  status: 'configured' | 'failed' | 'skipped';
+  message?: string;
+  subscriptionId?: string | null;
+};
+
+type CreateFullResult = {
+  titular: TitularType;
+  recurring: CreateFullRecurringResult;
+};
 
 const TITULAR_BASE_SCALARS = {
   id: true,
@@ -237,6 +253,7 @@ export class TitularService {
   private pricingService: TitularPricingService;
   private planoService: PlanoService;
   private logger: Logger;
+  private whatsappService: WhatsappNotificationService;
 
   constructor(private tenantId: string) {
     if (!tenantId) {
@@ -247,7 +264,74 @@ export class TitularService {
     this.asaasIntegration = new AsaasIntegrationService(tenantId);
     this.pricingService = new TitularPricingService(tenantId);
     this.planoService = new PlanoService(tenantId);
+    this.whatsappService = new WhatsappNotificationService(tenantId);
     this.logger = new Logger({ service: 'TitularService', tenantId });
+  }
+
+  private normalizarWhatsapp(value?: string | null): string | null {
+    const digits = String(value ?? '').replace(/\D/g, '');
+    return digits.length >= 10 ? digits : null;
+  }
+
+  private async notificarConsultorNovoCadastro(params: {
+    consultor?: { id: number; nome: string; whatsapp?: string | null } | null;
+    titular: { id: number; nome: string };
+    cpf: string;
+    dependentes: Array<{ nome: string; parentesco?: string | null }>;
+    planoNome?: string | null;
+  }) {
+    const telefone = this.normalizarWhatsapp(params.consultor?.whatsapp);
+    if (!telefone || !params.consultor) {
+      this.logger.warn('Notificação de WhatsApp ao consultor ignorada por falta de destino', {
+        consultorId: params.consultor?.id ?? null,
+        titularId: params.titular.id,
+      });
+      return;
+    }
+
+    const dependentesResumo =
+      params.dependentes.length > 0
+        ? params.dependentes
+            .map((dep) => `${dep.nome}${dep.parentesco ? ` (${dep.parentesco})` : ''}`)
+            .join(', ')
+        : 'Nenhum';
+    const mensagem = [
+      `Novo cadastro concluído em ${this.tenantId.toUpperCase()}.`,
+      `Consultor: ${params.consultor.nome}`,
+      `Titular: ${params.titular.nome}`,
+      `CPF: ${params.cpf}`,
+      `Plano: ${params.planoNome ?? 'Não informado'}`,
+      `Dependentes: ${params.dependentes.length}`,
+      `Lista: ${dependentesResumo}`,
+    ].join('\n');
+
+    try {
+      await this.whatsappService.sendViaOwnConnectionOrFallback({
+        flow: 'cadastro-consultor',
+        recipient: telefone,
+        message: mensagem,
+        triggerMode: 'MANUAL',
+        titularId: params.titular.id,
+        legacyPayload: {
+          to: telefone,
+          phone: telefone,
+          channel: 'whatsapp',
+          message: mensagem,
+          text: mensagem,
+          metadata: {
+            tipo: 'cadastro-consultor',
+            tenantId: this.tenantId,
+            consultorId: params.consultor.id,
+            titularId: params.titular.id,
+          },
+        },
+      });
+    } catch (error) {
+      this.logger.error('Falha ao notificar consultor sobre novo cadastro', error, {
+        consultorId: params.consultor.id,
+        titularId: params.titular.id,
+      });
+    }
   }
 
   private async obterLimiteBeneficiarios(): Promise<number | null> {
@@ -941,7 +1025,10 @@ export class TitularService {
     return titular;
   }
 
-  async createFull(data: CadastroTitularRequest) {
+  async createFull(
+    data: CadastroTitularRequest,
+    context?: { requestIp?: string | null },
+  ): Promise<CreateFullResult> {
     const { step1, step2, step3, dependentes, step5 } = data;
     const dataContratacao = new Date();
 
@@ -984,6 +1071,10 @@ export class TitularService {
     )
       ? (normalizedBillingType as 'PIX' | 'BOLETO' | 'CREDIT_CARD')
       : 'PIX';
+    const creditCardInput =
+      billingType === 'CREDIT_CARD'
+        ? this.validateCreditCardInput(step5?.creditCard)
+        : null;
     const servicosAdicionais = this.normalizarServicosAdicionais(data.servicosAdicionais);
 
     // Normaliza email e CPF
@@ -1169,7 +1260,7 @@ export class TitularService {
 
     try {
       // --- Criação transacional ---
-      const novoTitular = await this.prisma.$transaction(async (tx) => {
+      const cadastroCriado = await this.prisma.$transaction(async (tx) => {
         const consultor =
           consultorIdInformado && Number.isFinite(consultorIdInformado)
             ? await tx.consultor.findFirst({
@@ -1179,6 +1270,7 @@ export class TitularService {
                 select: {
                   id: true,
                   nome: true,
+                  whatsapp: true,
                   valorComissaoIndicacao: true,
                 },
               })
@@ -1240,19 +1332,45 @@ export class TitularService {
           },
         });
 
-        return titular;
+        return { titular, consultor };
       });
 
-      void this.syncCustomerAsaasSafe(novoTitular.id);
+      const novoTitular = cadastroCriado.titular;
       await this.pricingService.recalcularDependentesDoTitular(novoTitular.id);
       const valorMensal = await this.pricingService.recalcularFinanceiroTitular(novoTitular.id);
-      void this.syncSubscriptionAsaasSafe(
-        novoTitular.id,
-        novoTitular.nome,
-        valorMensal,
-        billingType,
-      );
-      return novoTitular;
+      const recurring =
+        billingType === 'CREDIT_CARD'
+          ? await this.syncCreditCardSubscription(
+              novoTitular,
+              valorMensal,
+              billingType,
+              creditCardInput!,
+              {
+                requestIp: context?.requestIp,
+                titularDados: step1,
+                titularEndereco: step2,
+                corresponsavelDados: step3,
+                usarMesmosDados,
+              },
+            )
+          : await this.syncDefaultSubscription(novoTitular, valorMensal, billingType);
+      void this.notificarConsultorNovoCadastro({
+        consultor: cadastroCriado.consultor,
+        titular: {
+          id: novoTitular.id,
+          nome: novoTitular.nome,
+        },
+        cpf,
+        dependentes: (dependentesNormalizados ?? []).map((dep) => ({
+          nome: dep.nome,
+          parentesco: dep.parentesco,
+        })),
+        planoNome: planoCompativel?.nome ?? null,
+      });
+      return {
+        titular: novoTitular,
+        recurring,
+      };
     } catch (e: any) {
       if (e instanceof PrismaClientKnownRequestError && e.code === 'P2002') {
         const err: any = new Error('Titular já existe (violação de chave única)');
@@ -2375,6 +2493,170 @@ export class TitularService {
     const normalized = this.tenantId.toUpperCase();
     const envKey = `FILES_API_TOKEN_${normalized}`;
     return process.env[envKey] || process.env.FILES_API_TOKEN || null;
+  }
+
+  private validateCreditCardInput(input?: CreditCardCadastroInput | null): CreditCardCadastroInput {
+    if (!input) {
+      throw Object.assign(new Error('Dados do cartão de crédito são obrigatórios.'), {
+        status: 400,
+        code: 'CREDIT_CARD_REQUIRED',
+      });
+    }
+
+    const holderName = String(input.holderName ?? '').trim();
+    const holderCpf = this.normalizeCpf(input.holderCpf);
+    const number = String(input.number ?? '').replace(/\D/g, '');
+    const expiryMonth = String(input.expiryMonth ?? '').replace(/\D/g, '');
+    const expiryYear = String(input.expiryYear ?? '').replace(/\D/g, '');
+    const ccv = String(input.ccv ?? '').replace(/\D/g, '');
+
+    if (!holderName || holderName.length < 3) {
+      throw Object.assign(new Error('Nome impresso no cartão é obrigatório.'), {
+        status: 400,
+        code: 'CREDIT_CARD_HOLDER_NAME_INVALID',
+      });
+    }
+    if (!holderCpf || holderCpf.length !== 11) {
+      throw Object.assign(new Error('CPF do portador do cartão é inválido.'), {
+        status: 400,
+        code: 'CREDIT_CARD_HOLDER_CPF_INVALID',
+      });
+    }
+    if (number.length < 13 || number.length > 19) {
+      throw Object.assign(new Error('Número do cartão é inválido.'), {
+        status: 400,
+        code: 'CREDIT_CARD_NUMBER_INVALID',
+      });
+    }
+    if (expiryMonth.length !== 2 || Number(expiryMonth) < 1 || Number(expiryMonth) > 12) {
+      throw Object.assign(new Error('Mês de vencimento do cartão é inválido.'), {
+        status: 400,
+        code: 'CREDIT_CARD_EXPIRY_MONTH_INVALID',
+      });
+    }
+    if (expiryYear.length !== 2 && expiryYear.length !== 4) {
+      throw Object.assign(new Error('Ano de vencimento do cartão é inválido.'), {
+        status: 400,
+        code: 'CREDIT_CARD_EXPIRY_YEAR_INVALID',
+      });
+    }
+    if (ccv.length < 3 || ccv.length > 4) {
+      throw Object.assign(new Error('Código de segurança do cartão é inválido.'), {
+        status: 400,
+        code: 'CREDIT_CARD_CVV_INVALID',
+      });
+    }
+
+    return {
+      holderName,
+      holderCpf,
+      number,
+      expiryMonth,
+      expiryYear,
+      ccv,
+    };
+  }
+
+  private async syncDefaultSubscription(
+    titular: TitularType,
+    valorMensal: number,
+    billingType?: 'PIX' | 'BOLETO' | 'CREDIT_CARD',
+  ): Promise<CreateFullRecurringResult> {
+    void this.syncCustomerAsaasSafe(titular.id);
+    void this.syncSubscriptionAsaasSafe(titular.id, titular.nome, valorMensal, billingType);
+    return { status: 'skipped' };
+  }
+
+  private async syncCreditCardSubscription(
+    titular: TitularType,
+    valorMensal: number,
+    billingType: 'CREDIT_CARD',
+    creditCard: CreditCardCadastroInput,
+    context: {
+      requestIp?: string | null;
+      titularDados: CadastroTitularRequest['step1'];
+      titularEndereco: CadastroTitularRequest['step2'];
+      corresponsavelDados: CadastroTitularRequest['step3'];
+      usarMesmosDados: boolean;
+    },
+  ): Promise<CreateFullRecurringResult> {
+    try {
+      const holderSource = context.usarMesmosDados
+        ? {
+            nome: context.titularDados.nomeCompleto,
+            email: context.titularDados.email,
+            telefone: context.titularDados.telefone,
+            cpf: context.titularDados.cpf,
+            cep: context.titularEndereco.cep,
+            numero: context.titularEndereco.numero,
+            complemento: context.titularEndereco.complemento,
+          }
+        : {
+            nome: context.corresponsavelDados.nomeCompleto || context.titularDados.nomeCompleto,
+            email: context.corresponsavelDados.email || context.titularDados.email,
+            telefone: context.corresponsavelDados.telefone || context.titularDados.telefone,
+            cpf: context.corresponsavelDados.cpf || context.titularDados.cpf,
+            cep: context.corresponsavelDados.cep || context.titularEndereco.cep,
+            numero: context.corresponsavelDados.numero || context.titularEndereco.numero,
+            complemento:
+              context.corresponsavelDados.complemento || context.titularEndereco.complemento,
+          };
+
+      const subscriptionId = await this.asaasIntegration.ensureMonthlySubscriptionForTitular({
+        titularId: titular.id,
+        valorMensal,
+        descricao: `Mensalidade Plano - ${titular.nome}`,
+        billingType,
+        creditCard: {
+          card: creditCard,
+          holderInfo: {
+            name: creditCard.holderName,
+            email: String(holderSource.email ?? '').trim().toLowerCase() || undefined,
+            cpfCnpj: creditCard.holderCpf,
+            postalCode: String(holderSource.cep ?? '').replace(/\D/g, '') || undefined,
+            addressNumber: String(holderSource.numero ?? '').trim() || undefined,
+            addressComplement: String(holderSource.complemento ?? '').trim() || undefined,
+            phone:
+              String(holderSource.telefone ?? '').replace(/\D/g, '') || undefined,
+            mobilePhone:
+              String(holderSource.telefone ?? '').replace(/\D/g, '') || undefined,
+          },
+          remoteIp: this.resolveRequestIp(context.requestIp),
+        },
+      });
+
+      return {
+        status: subscriptionId ? 'configured' : 'failed',
+        subscriptionId,
+        message: subscriptionId
+          ? 'Recorrência no cartão configurada com sucesso.'
+          : 'Não foi possível configurar a recorrência no cartão.',
+      };
+    } catch (error: any) {
+      this.logger.warn('Falha ao configurar recorrência de cartão no Asaas durante o cadastro', {
+        titularId: titular.id,
+        error: error?.message,
+      });
+      return {
+        status: 'failed',
+        message:
+          error?.message || 'Não foi possível validar o cartão e configurar a recorrência.',
+      };
+    }
+  }
+
+  private resolveRequestIp(requestIp?: string | null): string {
+    const fallback = '127.0.0.1';
+    const raw = String(requestIp ?? '').trim();
+    if (!raw) return fallback;
+    const normalized = raw.startsWith('::ffff:') ? raw.slice(7) : raw;
+    if (normalized.includes(',')) {
+      return normalized
+        .split(',')
+        .map((item) => item.trim())
+        .find(Boolean) || fallback;
+    }
+    return normalized;
   }
 
   private async syncCustomerAsaasSafe(titularId: number) {

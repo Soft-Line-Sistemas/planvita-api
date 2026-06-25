@@ -92,6 +92,7 @@ model User {
 model Consultor {
   id     Int    @id @default(autoincrement())
   nome   String
+  whatsapp String?
   valorComissaoIndicacao Float @default(0)
   percentualComissaoIndicacao Float @default(0)
 
@@ -117,6 +118,11 @@ model Titular {
   statusPlano     String
   dataContratacao DateTime
   asaasCustomerId String?          @unique
+  asaasCardTokenEncrypted String?
+  asaasCardLast4 String?
+  asaasCardBrand String?
+  asaasCardHolderName String?
+  asaasCardTokenizedAt DateTime?
 
   cep       String?
   uf        String?

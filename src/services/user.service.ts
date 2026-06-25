@@ -7,6 +7,7 @@ type UserTypeCreate = {
   nome: string;
   email: string;
   roleId?: number;
+  whatsapp?: string;
   valorComissaoIndicacao?: number;
   percentualComissaoIndicacao?: number;
   password?: string; // senha em texto puro
@@ -18,6 +19,7 @@ type User = {
   email: string;
   roleId?: number | null;
   consultorId?: number | null;
+  consultorWhatsapp?: string | null;
   valorComissaoIndicacao?: number | null;
   percentualComissaoIndicacao?: number | null;
 };
@@ -37,6 +39,7 @@ type UserRoleType = Prisma.UserGetPayload<{
     consultor: {
       select: {
         id: true;
+        whatsapp: true;
         valorComissaoIndicacao: true;
         percentualComissaoIndicacao: true;
       };
@@ -74,26 +77,31 @@ export class UserService {
   private async garantirConsultorParaUsuario(
     userId: number,
     nome: string,
+    whatsapp?: string,
     valorComissaoIndicacao?: number,
     percentualComissaoIndicacao?: number,
   ) {
     const valor = this.normalizarValorComissao(valorComissaoIndicacao);
     const percentual = this.normalizarPercentualComissao(percentualComissaoIndicacao);
+    const whatsappNormalizado = String(whatsapp ?? '').trim() || null;
     return this.prisma.consultor.upsert({
       where: { userId },
       create: {
         nome,
         userId,
+        whatsapp: whatsappNormalizado,
         valorComissaoIndicacao: valor,
         percentualComissaoIndicacao: percentual,
       },
       update: {
         nome,
+        whatsapp: whatsappNormalizado,
         valorComissaoIndicacao: valor,
         percentualComissaoIndicacao: percentual,
       },
       select: {
         id: true,
+        whatsapp: true,
         valorComissaoIndicacao: true,
         percentualComissaoIndicacao: true,
       },
@@ -133,6 +141,7 @@ export class UserService {
         consultor: {
           select: {
             id: true,
+            whatsapp: true,
             valorComissaoIndicacao: true,
             percentualComissaoIndicacao: true,
           },
@@ -170,6 +179,7 @@ export class UserService {
         consultor: {
           select: {
             id: true,
+            whatsapp: true,
             valorComissaoIndicacao: true,
             percentualComissaoIndicacao: true,
           },
@@ -209,6 +219,7 @@ export class UserService {
         const consultor = await this.garantirConsultorParaUsuario(
           user.id,
           data.nome,
+          data.whatsapp,
           data.valorComissaoIndicacao,
           data.percentualComissaoIndicacao,
         );
@@ -219,6 +230,7 @@ export class UserService {
           email: user.email,
           roleId: data.roleId,
           consultorId: consultor.id,
+          consultorWhatsapp: consultor.whatsapp,
           valorComissaoIndicacao: consultor.valorComissaoIndicacao,
           percentualComissaoIndicacao: consultor.percentualComissaoIndicacao,
         };
@@ -293,6 +305,7 @@ export class UserService {
   async updateUserRole(
     userId: number,
     roleId: number,
+    whatsapp?: string,
     valorComissaoIndicacao?: number,
     percentualComissaoIndicacao?: number,
   ) {
@@ -334,6 +347,7 @@ export class UserService {
       await this.garantirConsultorParaUsuario(
         userId,
         user.nome,
+        whatsapp,
         valorComissaoIndicacao,
         percentualComissaoIndicacao,
       );

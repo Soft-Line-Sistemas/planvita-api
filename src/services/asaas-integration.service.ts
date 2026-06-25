@@ -4,9 +4,11 @@ import {
   AsaasWebhookEvent,
   resolveAsaasCredentials,
   AsaasPaymentPayload,
+  AsaasCreditCardTokenizePayload,
 } from '../utils/asaasClient';
 import { getPrismaForTenant, Prisma } from '../utils/prisma';
 import { NotificationApiClient } from '../utils/notificationClient';
+import { decryptText, encryptText } from '../utils/crypto';
 
 type ContaReceberWithCliente = Prisma.ContaReceberGetPayload<{
   include: {
@@ -25,6 +27,28 @@ const COMISSAO_ADESAO_DELAY_MS =
     ? 60 * 60 * 1000
     : 35 * 24 * 60 * 60 * 1000;
 const STATUS_RECEBIMENTO_COMISSAO = ['RECEBIDO', 'CONFIRMADO'] as const;
+
+type CreditCardSubscriptionInput = {
+  card: {
+    holderName: string;
+    holderCpf: string;
+    number: string;
+    expiryMonth: string;
+    expiryYear: string;
+    ccv: string;
+  };
+  holderInfo: {
+    name: string;
+    email?: string;
+    cpfCnpj: string;
+    postalCode?: string;
+    addressNumber?: string;
+    addressComplement?: string;
+    phone?: string;
+    mobilePhone?: string;
+  };
+  remoteIp: string;
+};
 
 export class AsaasIntegrationService {
   private prisma;
@@ -1160,6 +1184,7 @@ export class AsaasIntegrationService {
     descricao: string;
     billingType?: 'PIX' | 'BOLETO' | 'CREDIT_CARD';
     proximoVencimento?: Date;
+    creditCard?: CreditCardSubscriptionInput;
   }): Promise<string | null> {
     if (!this.isEnabled()) return null;
 
@@ -1187,24 +1212,42 @@ export class AsaasIntegrationService {
       dueDate.setDate(dueDate.getDate() + 1);
     }
 
+    const billingType =
+      args.billingType ??
+      (referenciaExistente?.metodoPagamento as 'PIX' | 'BOLETO' | 'CREDIT_CARD' | null) ??
+      'PIX';
+    const creditCardToken =
+      billingType === 'CREDIT_CARD'
+        ? await this.resolveCreditCardToken(args.titularId, clienteAsaasId, args.creditCard)
+        : null;
+    if (billingType === 'CREDIT_CARD' && !creditCardToken) {
+      throw new Error('Token de cartao indisponivel para criar recorrencia no Asaas');
+    }
+
     if (referenciaExistente?.asaasSubscriptionId) {
       const subscriptionId = referenciaExistente.asaasSubscriptionId;
+      if (billingType === 'CREDIT_CARD' && args.creditCard) {
+        await this.client!.updateSubscriptionCreditCard(subscriptionId, {
+          creditCard: {
+            holderName: args.creditCard.card.holderName,
+            number: this.sanitizeDigits(args.creditCard.card.number) || '',
+            expiryMonth: this.sanitizeDigits(args.creditCard.card.expiryMonth) || '',
+            expiryYear: this.sanitizeDigits(args.creditCard.card.expiryYear) || '',
+            ccv: this.sanitizeDigits(args.creditCard.card.ccv) || '',
+          },
+          creditCardHolderInfo: args.creditCard.holderInfo,
+        });
+      }
       await this.client!.createOrUpdateSubscription(
         {
           customer: clienteAsaasId,
-          billingType:
-            (args.billingType ??
-              (referenciaExistente.metodoPagamento as
-                | 'PIX'
-                | 'BOLETO'
-                | 'CREDIT_CARD'
-                | null) ??
-              'PIX'),
+          billingType,
           value: valorMensal,
           nextDueDate: dueDate.toISOString().slice(0, 10),
           description: args.descricao || referenciaExistente.descricao || undefined,
           cycle: 'MONTHLY',
           externalReference: `titular-${args.titularId}`,
+          ...(creditCardToken ? { creditCardToken, remoteIp: args.creditCard?.remoteIp } : {}),
         },
         subscriptionId,
       );
@@ -1221,12 +1264,13 @@ export class AsaasIntegrationService {
 
     const subscription = await this.client!.createOrUpdateSubscription({
       customer: clienteAsaasId,
-      billingType: args.billingType ?? 'PIX',
+      billingType,
       value: valorMensal,
       nextDueDate: dueDate.toISOString().slice(0, 10),
       description: args.descricao,
       cycle: 'MONTHLY',
       externalReference: `titular-${args.titularId}`,
+      ...(creditCardToken ? { creditCardToken, remoteIp: args.creditCard?.remoteIp } : {}),
     });
 
     const subscriptionId = (subscription?.id as string | undefined) ?? null;
@@ -1255,12 +1299,89 @@ export class AsaasIntegrationService {
           dataVencimento: dueDate,
           status: 'PENDENTE',
           asaasSubscriptionId: subscriptionId,
-          metodoPagamento: args.billingType ?? 'PIX',
+          metodoPagamento: billingType,
         },
       });
     }
 
     return subscriptionId;
+  }
+
+  private async resolveCreditCardToken(
+    titularId: number,
+    customerId: string,
+    creditCard?: CreditCardSubscriptionInput,
+  ): Promise<string | null> {
+    const titular = await this.prisma.titular.findUnique({
+      where: { id: titularId },
+      select: {
+        asaasCardTokenEncrypted: true,
+      },
+    });
+
+    if (titular?.asaasCardTokenEncrypted) {
+      try {
+        return decryptText(titular.asaasCardTokenEncrypted);
+      } catch (error: any) {
+        this.logger.warn('Falha ao descriptografar token de cartao salvo; novo token sera gerado', {
+          titularId,
+          reason: error?.message,
+        });
+      }
+    }
+
+    if (!creditCard) {
+      return null;
+    }
+
+    const payload: AsaasCreditCardTokenizePayload = {
+      customer: customerId,
+      creditCard: {
+        holderName: creditCard.card.holderName,
+        number: this.sanitizeDigits(creditCard.card.number) || '',
+        expiryMonth: this.sanitizeDigits(creditCard.card.expiryMonth) || '',
+        expiryYear: this.normalizeExpiryYear(creditCard.card.expiryYear),
+        ccv: this.sanitizeDigits(creditCard.card.ccv) || '',
+      },
+      creditCardHolderInfo: creditCard.holderInfo,
+      remoteIp: creditCard.remoteIp,
+    };
+
+    const response = await this.client!.tokenizeCreditCard(payload);
+    const token = String(response?.creditCardToken ?? response?.token ?? '').trim();
+    if (!token) {
+      throw new Error('Asaas nao retornou token de cartao');
+    }
+
+    await this.prisma.titular.update({
+      where: { id: titularId },
+      data: {
+        asaasCardTokenEncrypted: encryptText(token),
+        asaasCardLast4: payload.creditCard.number.slice(-4),
+        asaasCardBrand: this.detectCardBrand(payload.creditCard.number),
+        asaasCardHolderName: payload.creditCard.holderName,
+        asaasCardTokenizedAt: new Date(),
+      },
+    });
+
+    return token;
+  }
+
+  private detectCardBrand(cardNumber: string): string {
+    const digits = this.sanitizeDigits(cardNumber) || '';
+    if (/^4/.test(digits)) return 'VISA';
+    if (/^(5[1-5]|2[2-7])/.test(digits)) return 'MASTERCARD';
+    if (/^3[47]/.test(digits)) return 'AMEX';
+    if (/^6(?:011|5)/.test(digits)) return 'DISCOVER';
+    if (/^(636368|438935|504175|451416|636297)/.test(digits)) return 'ELO';
+    if (/^(606282|3841)/.test(digits)) return 'HIPERCARD';
+    return 'UNKNOWN';
+  }
+
+  private normalizeExpiryYear(value: string): string {
+    const digits = this.sanitizeDigits(value) || '';
+    if (digits.length === 2) return `20${digits}`;
+    return digits;
   }
 
   async listSubscriptionsFromProvider(maxPages = 10): Promise<any[]> {
