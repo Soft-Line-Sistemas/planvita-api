@@ -12,9 +12,18 @@ const prismaMock = {
   },
 };
 
+const getPrismaForTenantMock = jest.fn();
+const getConfiguredPublicTenantsMock = jest.fn();
+const getTenantLabelMock = jest.fn();
+
 jest.mock('../utils/prisma', () => ({
-  getPrismaForTenant: () => prismaMock,
+  getPrismaForTenant: (...args: unknown[]) => getPrismaForTenantMock(...args),
   Prisma: { validator: () => (v: unknown) => v },
+}));
+
+jest.mock('../utils/tenants', () => ({
+  getConfiguredPublicTenants: () => getConfiguredPublicTenantsMock(),
+  getTenantLabel: (...args: unknown[]) => getTenantLabelMock(...args),
 }));
 
 import { ConsultorService } from './consultor.service';
@@ -24,6 +33,9 @@ describe('ConsultorService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    getPrismaForTenantMock.mockReturnValue(prismaMock);
+    getConfiguredPublicTenantsMock.mockReturnValue([]);
+    getTenantLabelMock.mockImplementation((tenantId: string) => tenantId);
     service = new ConsultorService('tenant-123');
   });
 
@@ -75,6 +87,71 @@ describe('ConsultorService', () => {
           tenantId: 'tenant-123',
           tenantLabel: 'tenant-123',
           selectionKey: 'tenant-123:2',
+        },
+      ]);
+    });
+  });
+
+  describe('getGlobalPublicOptions', () => {
+    it('agrega consultores de tenants públicos, inclui selectionKey e ordena pelo nome formatado', async () => {
+      const prismaTenantA = {
+        consultor: {
+          findMany: jest.fn().mockResolvedValue([
+            { id: 2, nome: 'Bruno Silva' },
+            { id: 1, nome: 'Ana Maria' },
+          ]),
+        },
+      };
+      const prismaTenantB = {
+        consultor: {
+          findMany: jest.fn().mockResolvedValue([{ id: 3, nome: 'Carlos Souza' }]),
+        },
+      };
+
+      getConfiguredPublicTenantsMock.mockReturnValue(['tenant-b', 'tenant-a']);
+      getTenantLabelMock.mockImplementation((tenantId: string) =>
+        ({ 'tenant-a': 'Unidade A', 'tenant-b': 'Unidade B' })[tenantId] ?? tenantId,
+      );
+      getPrismaForTenantMock.mockImplementation((tenantId: string) => {
+        if (tenantId === 'tenant-a') return prismaTenantA;
+        if (tenantId === 'tenant-b') return prismaTenantB;
+        return prismaMock;
+      });
+
+      const result = await ConsultorService.getGlobalPublicOptions();
+
+      expect(prismaTenantA.consultor.findMany).toHaveBeenCalledWith({
+        select: { id: true, nome: true },
+        orderBy: { nome: 'asc' },
+      });
+      expect(prismaTenantB.consultor.findMany).toHaveBeenCalledWith({
+        select: { id: true, nome: true },
+        orderBy: { nome: 'asc' },
+      });
+      expect(result).toEqual([
+        {
+          id: 1,
+          nome: 'Ana Maria (Unidade A)',
+          nomeCompleto: 'Ana Maria',
+          tenantId: 'tenant-a',
+          tenantLabel: 'Unidade A',
+          selectionKey: 'tenant-a:1',
+        },
+        {
+          id: 2,
+          nome: 'Bruno Silva (Unidade A)',
+          nomeCompleto: 'Bruno Silva',
+          tenantId: 'tenant-a',
+          tenantLabel: 'Unidade A',
+          selectionKey: 'tenant-a:2',
+        },
+        {
+          id: 3,
+          nome: 'Carlos Souza (Unidade B)',
+          nomeCompleto: 'Carlos Souza',
+          tenantId: 'tenant-b',
+          tenantLabel: 'Unidade B',
+          selectionKey: 'tenant-b:3',
         },
       ]);
     });
