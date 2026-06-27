@@ -600,6 +600,21 @@ export class AsaasIntegrationService {
     return Math.round((valor + Number.EPSILON) * 100) / 100;
   }
 
+  private adicionarMesesPreservandoDia(dataBase: Date, meses: number): Date {
+    const data = new Date(dataBase);
+    const diaOriginal = data.getDate();
+    const alvo = new Date(data.getFullYear(), data.getMonth() + meses, 1);
+    const ultimoDiaMesAlvo = new Date(
+      alvo.getFullYear(),
+      alvo.getMonth() + 1,
+      0,
+    ).getDate();
+
+    alvo.setDate(Math.min(diaOriginal, ultimoDiaMesAlvo));
+    alvo.setHours(0, 0, 0, 0);
+    return alvo;
+  }
+
   private sanitizeDigits(value?: string | null): string | undefined {
     if (!value) return undefined;
     const digits = String(value).replace(/\D/g, '');
@@ -1205,7 +1220,11 @@ export class AsaasIntegrationService {
       select: { asaasSubscriptionId: true, descricao: true, metodoPagamento: true },
     });
 
-    const baseDueDate = args.proximoVencimento ?? new Date();
+    const baseDueDate =
+      args.proximoVencimento ??
+      (referenciaExistente?.asaasSubscriptionId
+        ? new Date()
+        : this.adicionarMesesPreservandoDia(new Date(), 1));
     const dueDate = new Date(baseDueDate);
     dueDate.setHours(0, 0, 0, 0);
     if (dueDate.getTime() <= Date.now()) {

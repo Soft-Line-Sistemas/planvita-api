@@ -63,6 +63,7 @@ const TITULAR_BASE_SCALARS = {
   numero: true,
   complemento: true,
   pontoReferencia: true,
+  formaPagamentoAdesao: true,
   asaasCustomerId: true,
   asaasCardLast4: true,
   asaasCardBrand: true,
