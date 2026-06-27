@@ -172,14 +172,33 @@ export class AuthController {
       });
 
       const auth = new ClienteAuthService(targetTenant);
-      const start = await auth.startFirstAccessByTitularId(novoTitular.titular.id);
+      let start: Awaited<ReturnType<ClienteAuthService['startFirstAccessByTitularId']>> | null = null;
+      let paymentPending = false;
+
+      try {
+        start = await auth.startFirstAccessByTitularId(novoTitular.titular.id);
+      } catch (error: any) {
+        if (error?.code === 'PAYMENT_REQUIRED' || error?.status === 402) {
+          paymentPending = true;
+          this.logger.info('Cadastro concluído com pagamento pendente; primeiro acesso adiado', {
+            tenant: targetTenant,
+            titularId: novoTitular.titular.id,
+          });
+        } else {
+          throw error;
+        }
+      }
+
       res.cookie('tenant', targetTenant, this.getClienteTenantCookieOptions());
 
       res.status(201).json({
         titularId: novoTitular.titular.id,
         tenant: targetTenant,
-        message: 'Cadastro criado. Enviamos um código para validação.',
+        message: paymentPending
+          ? 'Cadastro criado. Verifique o SMS ou Email para acessar a cobrança e concluir o pagamento.'
+          : 'Cadastro criado. Enviamos um código para validação.',
         start,
+        paymentPending,
         recurring: novoTitular.recurring,
       });
     } catch (error: any) {
