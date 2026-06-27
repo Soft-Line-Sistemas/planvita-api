@@ -2215,6 +2215,199 @@ export class AsaasIntegrationService {
     }
   }
 
+  async changePaymentMethod(args: {
+    titularId: number;
+    action: 'ATUALIZAR_CARTAO' | 'TROCAR_METODO';
+    novoMetodo?: 'CREDIT_CARD' | 'PIX' | 'BOLETO';
+    creditCard?: CreditCardSubscriptionInput;
+  }): Promise<{ metodoPagamento: string }> {
+    if (!this.isEnabled()) {
+      throw new Error('Integração Asaas desabilitada para o tenant');
+    }
+
+    const { titularId, action, novoMetodo, creditCard } = args;
+
+    const titular = await this.prisma.titular.findUnique({
+      where: { id: titularId },
+      select: {
+        asaasCustomerId: true,
+        asaasCardTokenEncrypted: true,
+        asaasCardLast4: true,
+        asaasCardBrand: true,
+        asaasCardHolderName: true,
+      },
+    });
+
+    if (!titular?.asaasCustomerId) {
+      throw new Error('Titular sem customer no Asaas');
+    }
+
+    const referenciaRecorrente = await this.prisma.contaReceber.findFirst({
+      where: {
+        clienteId: titularId,
+        asaasSubscriptionId: { not: null },
+      },
+      orderBy: { id: 'desc' },
+      select: {
+        asaasSubscriptionId: true,
+        metodoPagamento: true,
+        valor: true,
+        descricao: true,
+        dataVencimento: true,
+        vencimento: true,
+      },
+    });
+
+    if (!referenciaRecorrente?.asaasSubscriptionId) {
+      throw new Error('Titular sem assinatura recorrente no Asaas');
+    }
+
+    const subscriptionId = referenciaRecorrente.asaasSubscriptionId;
+
+    const activeRequest = await this.prisma.paymentMethodChangeRequest.findFirst({
+      where: { titularId, status: { in: ['PENDING', 'PROCESSING'] } },
+    });
+    if (activeRequest) {
+      throw new Error('Já existe uma alteração de pagamento em andamento. Aguarde a conclusão.');
+    }
+
+    const metodoAtual = referenciaRecorrente.metodoPagamento ?? 'PIX';
+    const metodoDestino =
+      action === 'ATUALIZAR_CARTAO' ? 'CREDIT_CARD' : (novoMetodo ?? metodoAtual);
+
+    if (action === 'ATUALIZAR_CARTAO' && metodoAtual !== 'CREDIT_CARD') {
+      throw new Error('O método atual não é cartão de crédito. Use TROCAR_METODO para migrar.');
+    }
+    if ((metodoDestino === 'CREDIT_CARD') && !creditCard) {
+      throw new Error('Dados do cartão são obrigatórios para pagamento em cartão de crédito.');
+    }
+
+    const changeRequest = await this.prisma.paymentMethodChangeRequest.create({
+      data: {
+        titularId,
+        oldMethod: metodoAtual,
+        newMethod: metodoDestino,
+        oldCardToken: titular.asaasCardTokenEncrypted,
+        asaasCustomerId: titular.asaasCustomerId,
+        asaasSubscriptionId: subscriptionId,
+        status: 'PROCESSING',
+        idempotencyKey: `${titularId}-${action}-${Date.now()}`,
+      },
+    });
+
+    try {
+      let newToken: string | null = null;
+
+      if (metodoDestino === 'CREDIT_CARD' && creditCard) {
+        const payload: AsaasCreditCardTokenizePayload = {
+          customer: titular.asaasCustomerId,
+          creditCard: {
+            holderName: creditCard.card.holderName,
+            number: this.sanitizeDigits(creditCard.card.number) || '',
+            expiryMonth: this.sanitizeDigits(creditCard.card.expiryMonth) || '',
+            expiryYear: this.normalizeExpiryYear(creditCard.card.expiryYear),
+            ccv: this.sanitizeDigits(creditCard.card.ccv) || '',
+          },
+          creditCardHolderInfo: creditCard.holderInfo,
+          remoteIp: creditCard.remoteIp,
+        };
+
+        const tokenResponse = await this.client!.tokenizeCreditCard(payload);
+        newToken = String(tokenResponse?.creditCardToken ?? tokenResponse?.token ?? '').trim();
+        if (!newToken) throw new Error('Asaas não retornou token de cartão');
+
+        await this.client!.updateSubscriptionCreditCard(subscriptionId, {
+          creditCard: payload.creditCard,
+          creditCardHolderInfo: payload.creditCardHolderInfo,
+        });
+      }
+
+      // Atualiza billingType da assinatura quando método muda
+      if (action === 'TROCAR_METODO') {
+        const subscriptionValue = this.arredondarMoeda(Number(referenciaRecorrente.valor ?? 0));
+        if (!Number.isFinite(subscriptionValue) || subscriptionValue <= 0) {
+          throw new Error('Assinatura recorrente sem valor válido para atualizar no Asaas.');
+        }
+
+        const dueDateBase = referenciaRecorrente.dataVencimento ?? referenciaRecorrente.vencimento ?? new Date();
+        const nextDueDate = new Date(dueDateBase);
+        nextDueDate.setHours(0, 0, 0, 0);
+        if (nextDueDate.getTime() <= Date.now()) {
+          nextDueDate.setDate(nextDueDate.getDate() + 1);
+        }
+
+        await this.client!.createOrUpdateSubscription(
+          {
+            customer: titular.asaasCustomerId,
+            billingType: metodoDestino as any,
+            value: subscriptionValue,
+            nextDueDate: nextDueDate.toISOString().slice(0, 10),
+            description: referenciaRecorrente.descricao ?? undefined,
+          },
+          subscriptionId,
+        );
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        const cardUpdateData =
+          metodoDestino === 'CREDIT_CARD' && newToken && creditCard
+            ? {
+                asaasCardTokenEncrypted: encryptText(newToken),
+                asaasCardBrand: this.detectCardBrand(creditCard.card.number),
+                asaasCardLast4: (this.sanitizeDigits(creditCard.card.number) || '').slice(-4),
+                asaasCardHolderName: creditCard.card.holderName,
+                asaasCardTokenizedAt: new Date(),
+              }
+            : metodoDestino !== 'CREDIT_CARD'
+              ? {
+                  asaasCardTokenEncrypted: null,
+                  asaasCardBrand: null,
+                  asaasCardLast4: null,
+                  asaasCardHolderName: null,
+                  asaasCardTokenizedAt: null,
+                }
+              : {};
+
+        if (Object.keys(cardUpdateData).length > 0) {
+          await tx.titular.update({
+            where: { id: titularId },
+            data: cardUpdateData,
+          });
+        }
+
+        await tx.contaReceber.updateMany({
+          where: {
+            clienteId: titularId,
+            asaasSubscriptionId: subscriptionId,
+            status: 'PENDENTE',
+          },
+          data: { metodoPagamento: metodoDestino },
+        });
+
+        await tx.paymentMethodChangeRequest.update({
+          where: { id: changeRequest.id },
+          data: { status: 'SUCCESS', newCardToken: newToken },
+        });
+      });
+
+      this.logger.info('Método de pagamento alterado com sucesso', {
+        tenantId: this.tenantId,
+        titularId,
+        action,
+        oldMethod: metodoAtual,
+        newMethod: metodoDestino,
+      });
+
+      return { metodoPagamento: metodoDestino };
+    } catch (error: any) {
+      await this.prisma.paymentMethodChangeRequest.update({
+        where: { id: changeRequest.id },
+        data: { status: 'FAILED', errorMessage: String(error?.message ?? error) },
+      });
+      throw error;
+    }
+  }
+
   private mapStatusFromProvider(status: string): string {
     const normalized = (status || '').toUpperCase();
     switch (normalized) {

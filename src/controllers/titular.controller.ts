@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { TitularService } from '../services/titular.service';
+import { AsaasIntegrationService } from '../services/asaas-integration.service';
 import Logger from '../utils/logger';
 import { PrismaClient } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
@@ -713,6 +714,83 @@ export class TitularController {
       if (error?.status) return res.status(error.status).json({ message: error.message });
       if (error?.code === 'P2025') return res.status(404).json({ message: 'Titular not found' });
       res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
+  async alterarPagamentoMe(req: TenantRequest & ClienteAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      const titularId = this.getTitularIdFromClienteRequest(req);
+      if (!titularId) return res.status(401).json({ message: 'Não autenticado' });
+
+      const { action, novoMetodo, creditCard } = req.body as {
+        action?: string;
+        novoMetodo?: string;
+        creditCard?: {
+          holderName: string;
+          holderCpf: string;
+          number: string;
+          expiryMonth: string;
+          expiryYear: string;
+          ccv: string;
+        };
+      };
+
+      const allowedActions = ['ATUALIZAR_CARTAO', 'TROCAR_METODO'] as const;
+      if (!action || !allowedActions.includes(action as any)) {
+        return res.status(400).json({
+          message: `action inválida. Use: ${allowedActions.join(', ')}`,
+        });
+      }
+
+      if (action === 'TROCAR_METODO') {
+        const allowedMethods = ['CREDIT_CARD', 'PIX', 'BOLETO'];
+        if (!novoMetodo || !allowedMethods.includes(novoMetodo)) {
+          return res.status(400).json({
+            message: `novoMetodo inválido. Use: ${allowedMethods.join(', ')}`,
+          });
+        }
+      }
+
+      const remoteIp = String(
+        req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1',
+      )
+        .split(',')[0]
+        .trim();
+
+      const creditCardInput =
+        creditCard
+          ? {
+              card: {
+                holderName: creditCard.holderName,
+                holderCpf: creditCard.holderCpf,
+                number: creditCard.number,
+                expiryMonth: creditCard.expiryMonth,
+                expiryYear: creditCard.expiryYear,
+                ccv: creditCard.ccv,
+              },
+              holderInfo: {
+                name: creditCard.holderName,
+                cpfCnpj: creditCard.holderCpf,
+              },
+              remoteIp,
+            }
+          : undefined;
+
+      const asaasService = new AsaasIntegrationService(req.tenantId);
+      const result = await asaasService.changePaymentMethod({
+        titularId,
+        action: action as 'ATUALIZAR_CARTAO' | 'TROCAR_METODO',
+        novoMetodo: novoMetodo as 'CREDIT_CARD' | 'PIX' | 'BOLETO' | undefined,
+        creditCard: creditCardInput,
+      });
+
+      res.json({ success: true, metodoPagamento: result.metodoPagamento });
+    } catch (error: any) {
+      this.logger.error('Falha ao alterar pagamento do cliente', error);
+      const status = error?.status ?? 500;
+      const message = error instanceof Error ? error.message : 'Falha ao alterar método de pagamento.';
+      res.status(status).json({ message });
     }
   }
 }

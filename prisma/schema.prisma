@@ -168,6 +168,29 @@ model Titular {
   sucessaoTitularidadeEm DateTime? @map("sucessao_titularidade_em")
   titularAnteriorNome String? @map("titular_anterior_nome")
   titularAnteriorCpf String? @map("titular_anterior_cpf")
+
+  paymentChangeRequests PaymentMethodChangeRequest[]
+}
+
+model PaymentMethodChangeRequest {
+  id                  Int      @id @default(autoincrement())
+  titularId           Int
+  oldMethod           String?
+  newMethod           String
+  oldCardToken        String?
+  newCardToken        String?
+  asaasCustomerId     String?
+  asaasSubscriptionId String?
+  status              String
+  errorMessage        String?
+  idempotencyKey      String?  @unique
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  titular Titular @relation(fields: [titularId], references: [id])
+
+  @@index([titularId, status])
+  @@map("payment_method_change_requests")
 }
 
 // ----------------- AUTH CLIENTE -----------------
