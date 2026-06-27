@@ -6,6 +6,7 @@ const prismaMock = {
     findFirst: jest.fn(),
     findMany: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
     create: jest.fn(),
   },
   titular: {
@@ -16,6 +17,11 @@ const prismaMock = {
     upsert: jest.fn(),
     findFirst: jest.fn(),
     findMany: jest.fn(),
+  },
+  paymentMethodChangeRequest: {
+    findFirst: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
   },
   $transaction: jest.fn(),
 };
@@ -1081,6 +1087,380 @@ describe('AsaasIntegrationService', () => {
       });
 
       expect(subId).toBeNull();
+    });
+  });
+
+  // ── changePaymentMethod ─────────────────────────────────────────────────────
+  describe('changePaymentMethod', () => {
+    const titularBase = {
+      asaasCustomerId: 'cus_abc',
+      asaasCardTokenEncrypted: 'enc:tok_old',
+      asaasCardLast4: '1234',
+      asaasCardBrand: 'VISA',
+      asaasCardHolderName: 'JOAO SILVA',
+    };
+
+    const subscriptionRef = {
+      asaasSubscriptionId: 'sub_abc',
+      metodoPagamento: 'CREDIT_CARD',
+      valor: 149.9,
+      descricao: 'Mensalidade Plano - Joao',
+      dataVencimento: new Date('2026-07-10T00:00:00.000Z'),
+      vencimento: new Date('2026-07-10T00:00:00.000Z'),
+    };
+
+    const creditCardInput = {
+      card: {
+        holderName: 'JOAO SILVA',
+        holderCpf: '12345678901',
+        number: '4111111111111111',
+        expiryMonth: '12',
+        expiryYear: '2027',
+        ccv: '123',
+      },
+      holderInfo: { name: 'JOAO SILVA', cpfCnpj: '12345678901' },
+      remoteIp: '127.0.0.1',
+    };
+
+    beforeEach(() => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue(titularBase);
+      (prismaMock.contaReceber.findFirst as jest.Mock).mockResolvedValue(subscriptionRef);
+      (prismaMock.paymentMethodChangeRequest.findFirst as jest.Mock).mockResolvedValue(null);
+      (prismaMock.paymentMethodChangeRequest.create as jest.Mock).mockResolvedValue({ id: 1 });
+      (prismaMock.paymentMethodChangeRequest.update as jest.Mock).mockResolvedValue({});
+      mockAsaasClient.tokenizeCreditCard.mockResolvedValue({ creditCardToken: 'tok_new' });
+      mockAsaasClient.updateSubscriptionCreditCard.mockResolvedValue({});
+      mockAsaasClient.createOrUpdateSubscription.mockResolvedValue({});
+      prismaMock.$transaction.mockImplementation(async (fn: any) => fn(prismaMock));
+    });
+
+    // ── ATUALIZAR_CARTAO ────────────────────────────────────────────────────
+
+    it('ATUALIZAR_CARTAO: tokeniza novo cartão e chama updateSubscriptionCreditCard', async () => {
+      await service.changePaymentMethod({
+        titularId: 1,
+        action: 'ATUALIZAR_CARTAO',
+        creditCard: creditCardInput,
+      });
+
+      expect(mockAsaasClient.tokenizeCreditCard).toHaveBeenCalledWith(
+        expect.objectContaining({ customer: 'cus_abc' }),
+      );
+      expect(mockAsaasClient.updateSubscriptionCreditCard).toHaveBeenCalledWith(
+        'sub_abc',
+        expect.objectContaining({
+          creditCard: expect.objectContaining({ holderName: 'JOAO SILVA' }),
+        }),
+      );
+    });
+
+    it('ATUALIZAR_CARTAO: salva token criptografado e last4 no titular via $transaction', async () => {
+      await service.changePaymentMethod({
+        titularId: 1,
+        action: 'ATUALIZAR_CARTAO',
+        creditCard: creditCardInput,
+      });
+
+      expect(prismaMock.titular.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 1 },
+          data: expect.objectContaining({
+            asaasCardTokenEncrypted: 'enc:tok_new',
+            asaasCardLast4: '1111',
+          }),
+        }),
+      );
+    });
+
+    it('ATUALIZAR_CARTAO: marca request como SUCCESS após conclusão', async () => {
+      await service.changePaymentMethod({
+        titularId: 1,
+        action: 'ATUALIZAR_CARTAO',
+        creditCard: creditCardInput,
+      });
+
+      expect(prismaMock.paymentMethodChangeRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 1 },
+          data: expect.objectContaining({ status: 'SUCCESS' }),
+        }),
+      );
+    });
+
+    it('ATUALIZAR_CARTAO: retorna metodoPagamento CREDIT_CARD', async () => {
+      const result = await service.changePaymentMethod({
+        titularId: 1,
+        action: 'ATUALIZAR_CARTAO',
+        creditCard: creditCardInput,
+      });
+
+      expect(result.metodoPagamento).toBe('CREDIT_CARD');
+    });
+
+    it('ATUALIZAR_CARTAO: rejeita quando método atual não é CREDIT_CARD', async () => {
+      (prismaMock.contaReceber.findFirst as jest.Mock).mockResolvedValue({
+        asaasSubscriptionId: 'sub_abc',
+        metodoPagamento: 'PIX',
+      });
+
+      await expect(
+        service.changePaymentMethod({
+          titularId: 1,
+          action: 'ATUALIZAR_CARTAO',
+          creditCard: creditCardInput,
+        }),
+      ).rejects.toThrow('método atual não é cartão');
+    });
+
+    it('ATUALIZAR_CARTAO: marca request como FAILED e relança erro se Asaas falhar', async () => {
+      const asaasError = new Error('Asaas indisponível');
+      mockAsaasClient.tokenizeCreditCard.mockRejectedValue(asaasError);
+
+      await expect(
+        service.changePaymentMethod({
+          titularId: 1,
+          action: 'ATUALIZAR_CARTAO',
+          creditCard: creditCardInput,
+        }),
+      ).rejects.toBe(asaasError);
+
+      expect(prismaMock.paymentMethodChangeRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'FAILED' }),
+        }),
+      );
+    });
+
+    it('ATUALIZAR_CARTAO: bloqueia quando há request PROCESSING em andamento', async () => {
+      (prismaMock.paymentMethodChangeRequest.findFirst as jest.Mock).mockResolvedValue({
+        id: 99,
+        status: 'PROCESSING',
+      });
+
+      await expect(
+        service.changePaymentMethod({
+          titularId: 1,
+          action: 'ATUALIZAR_CARTAO',
+          creditCard: creditCardInput,
+        }),
+      ).rejects.toThrow('em andamento');
+    });
+
+    it('ATUALIZAR_CARTAO: rejeita sem creditCard', async () => {
+      await expect(
+        service.changePaymentMethod({
+          titularId: 1,
+          action: 'ATUALIZAR_CARTAO',
+          creditCard: undefined,
+        }),
+      ).rejects.toThrow('obrigatórios');
+    });
+
+    it('ATUALIZAR_CARTAO: rejeita titular sem asaasCustomerId', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCustomerId: null,
+      });
+
+      await expect(
+        service.changePaymentMethod({
+          titularId: 1,
+          action: 'ATUALIZAR_CARTAO',
+          creditCard: creditCardInput,
+        }),
+      ).rejects.toThrow('sem customer no Asaas');
+    });
+
+    it('ATUALIZAR_CARTAO: rejeita titular sem assinatura recorrente', async () => {
+      (prismaMock.contaReceber.findFirst as jest.Mock).mockResolvedValue(null);
+
+      await expect(
+        service.changePaymentMethod({
+          titularId: 1,
+          action: 'ATUALIZAR_CARTAO',
+          creditCard: creditCardInput,
+        }),
+      ).rejects.toThrow('sem assinatura recorrente');
+    });
+
+    // ── TROCAR_METODO → PIX ─────────────────────────────────────────────────
+
+    it('TROCAR_METODO PIX: atualiza billingType no Asaas', async () => {
+      await service.changePaymentMethod({
+        titularId: 1,
+        action: 'TROCAR_METODO',
+        novoMetodo: 'PIX',
+      });
+
+      expect(mockAsaasClient.createOrUpdateSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({
+          billingType: 'PIX',
+          value: 149.9,
+          nextDueDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        }),
+        'sub_abc',
+      );
+    });
+
+    it('TROCAR_METODO PIX: limpa token do cartão no banco', async () => {
+      await service.changePaymentMethod({
+        titularId: 1,
+        action: 'TROCAR_METODO',
+        novoMetodo: 'PIX',
+      });
+
+      expect(prismaMock.titular.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            asaasCardTokenEncrypted: null,
+            asaasCardBrand: null,
+            asaasCardLast4: null,
+          }),
+        }),
+      );
+    });
+
+    it('TROCAR_METODO PIX: não chama updateSubscriptionCreditCard', async () => {
+      await service.changePaymentMethod({
+        titularId: 1,
+        action: 'TROCAR_METODO',
+        novoMetodo: 'PIX',
+      });
+
+      expect(mockAsaasClient.updateSubscriptionCreditCard).not.toHaveBeenCalled();
+    });
+
+    it('TROCAR_METODO PIX: retorna metodoPagamento PIX', async () => {
+      const result = await service.changePaymentMethod({
+        titularId: 1,
+        action: 'TROCAR_METODO',
+        novoMetodo: 'PIX',
+      });
+
+      expect(result.metodoPagamento).toBe('PIX');
+    });
+
+    it('TROCAR_METODO PIX: atualiza ContaReceber pendente com novo método', async () => {
+      await service.changePaymentMethod({
+        titularId: 1,
+        action: 'TROCAR_METODO',
+        novoMetodo: 'PIX',
+      });
+
+      expect(prismaMock.contaReceber.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: 'PENDENTE' }),
+          data: expect.objectContaining({ metodoPagamento: 'PIX' }),
+        }),
+      );
+    });
+
+    // ── TROCAR_METODO → BOLETO ──────────────────────────────────────────────
+
+    it('TROCAR_METODO BOLETO: atualiza billingType para BOLETO no Asaas', async () => {
+      (prismaMock.contaReceber.findFirst as jest.Mock).mockResolvedValue({
+        asaasSubscriptionId: 'sub_abc',
+        metodoPagamento: 'PIX',
+        valor: 149.9,
+        descricao: 'Mensalidade Plano - Joao',
+        dataVencimento: new Date('2026-07-10T00:00:00.000Z'),
+        vencimento: new Date('2026-07-10T00:00:00.000Z'),
+      });
+
+      await service.changePaymentMethod({
+        titularId: 1,
+        action: 'TROCAR_METODO',
+        novoMetodo: 'BOLETO',
+      });
+
+      expect(mockAsaasClient.createOrUpdateSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({ billingType: 'BOLETO' }),
+        'sub_abc',
+      );
+    });
+
+    // ── TROCAR_METODO → CREDIT_CARD ─────────────────────────────────────────
+
+    it('TROCAR_METODO CREDIT_CARD: tokeniza e atualiza cartão da assinatura', async () => {
+      (prismaMock.contaReceber.findFirst as jest.Mock).mockResolvedValue({
+        asaasSubscriptionId: 'sub_abc',
+        metodoPagamento: 'PIX',
+        valor: 149.9,
+        descricao: 'Mensalidade Plano - Joao',
+        dataVencimento: new Date('2026-07-10T00:00:00.000Z'),
+        vencimento: new Date('2026-07-10T00:00:00.000Z'),
+      });
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        asaasCustomerId: 'cus_abc',
+        asaasCardTokenEncrypted: null,
+        asaasCardLast4: null,
+        asaasCardBrand: null,
+        asaasCardHolderName: null,
+      });
+
+      await service.changePaymentMethod({
+        titularId: 1,
+        action: 'TROCAR_METODO',
+        novoMetodo: 'CREDIT_CARD',
+        creditCard: creditCardInput,
+      });
+
+      expect(mockAsaasClient.tokenizeCreditCard).toHaveBeenCalled();
+      expect(mockAsaasClient.updateSubscriptionCreditCard).toHaveBeenCalled();
+    });
+
+    it('TROCAR_METODO CREDIT_CARD: rejeita sem dados do cartão', async () => {
+      (prismaMock.contaReceber.findFirst as jest.Mock).mockResolvedValue({
+        asaasSubscriptionId: 'sub_abc',
+        metodoPagamento: 'PIX',
+        valor: 149.9,
+        descricao: 'Mensalidade Plano - Joao',
+        dataVencimento: new Date('2026-07-10T00:00:00.000Z'),
+        vencimento: new Date('2026-07-10T00:00:00.000Z'),
+      });
+
+      await expect(
+        service.changePaymentMethod({
+          titularId: 1,
+          action: 'TROCAR_METODO',
+          novoMetodo: 'CREDIT_CARD',
+          creditCard: undefined,
+        }),
+      ).rejects.toThrow('obrigatórios');
+    });
+
+    it('TROCAR_METODO: rejeita quando a assinatura local não possui valor válido', async () => {
+      (prismaMock.contaReceber.findFirst as jest.Mock).mockResolvedValue({
+        asaasSubscriptionId: 'sub_abc',
+        metodoPagamento: 'PIX',
+        valor: 0,
+        descricao: 'Mensalidade Plano - Joao',
+        dataVencimento: new Date('2026-07-10T00:00:00.000Z'),
+        vencimento: new Date('2026-07-10T00:00:00.000Z'),
+      });
+
+      await expect(
+        service.changePaymentMethod({
+          titularId: 1,
+          action: 'TROCAR_METODO',
+          novoMetodo: 'BOLETO',
+        }),
+      ).rejects.toThrow('sem valor válido');
+    });
+
+    // ── Asaas desabilitado ──────────────────────────────────────────────────
+
+    it('lança erro quando Asaas está desabilitado', async () => {
+      const { resolveAsaasCredentials } = require('../utils/asaasClient');
+      (resolveAsaasCredentials as jest.Mock).mockReturnValueOnce({ enabled: false });
+      const disabledService = new AsaasIntegrationService('tenant-disabled');
+
+      await expect(
+        disabledService.changePaymentMethod({
+          titularId: 1,
+          action: 'ATUALIZAR_CARTAO',
+          creditCard: creditCardInput,
+        }),
+      ).rejects.toThrow('desabilitada');
     });
   });
 });

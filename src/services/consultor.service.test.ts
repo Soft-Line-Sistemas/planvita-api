@@ -59,7 +59,24 @@ describe('ConsultorService', () => {
         select: { id: true, nome: true },
         orderBy: { nome: 'asc' },
       });
-      expect(result).toEqual(options);
+      expect(result).toEqual([
+        {
+          id: 1,
+          nome: 'Ana (tenant-123)',
+          nomeCompleto: 'Ana',
+          tenantId: 'tenant-123',
+          tenantLabel: 'tenant-123',
+          selectionKey: 'tenant-123:1',
+        },
+        {
+          id: 2,
+          nome: 'Bruno (tenant-123)',
+          nomeCompleto: 'Bruno',
+          tenantId: 'tenant-123',
+          tenantLabel: 'tenant-123',
+          selectionKey: 'tenant-123:2',
+        },
+      ]);
     });
   });
 
