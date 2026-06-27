@@ -1090,6 +1090,39 @@ describe('AsaasIntegrationService', () => {
     });
   });
 
+  describe('ensureMonthlySubscriptionForTitular — vencimento inicial', () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-06-27T12:00:00.000Z'));
+      (service as any).ensureCustomerForTitular = jest.fn().mockResolvedValue('cus_xyz');
+      (prismaMock.contaReceber.findFirst as jest.Mock).mockResolvedValue(null);
+      mockAsaasClient.createOrUpdateSubscription.mockResolvedValue({ id: 'sub_new' });
+      (service as any).syncRecurringPaymentsFromProvider = jest.fn().mockResolvedValue(undefined);
+      (prismaMock.contaReceber.findFirst as jest.Mock)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 55 });
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('cria primeira mensalidade para um mes depois do cadastro', async () => {
+      await service.ensureMonthlySubscriptionForTitular({
+        titularId: 1,
+        valorMensal: 100,
+        descricao: 'Mensalidade Plano - Joao',
+        billingType: 'BOLETO',
+      });
+
+      expect(mockAsaasClient.createOrUpdateSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nextDueDate: '2026-07-27',
+        }),
+      );
+    });
+  });
+
   // ── changePaymentMethod ─────────────────────────────────────────────────────
   describe('changePaymentMethod', () => {
     const titularBase = {

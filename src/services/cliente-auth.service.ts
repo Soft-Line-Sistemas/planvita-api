@@ -98,9 +98,57 @@ export class ClienteAuthService {
     this.notifier = new NotificationApiClient(tenantId);
   }
 
+  private async reconcilePagamentoConfirmadoEm(
+    titularId: number,
+    currentValue?: Date | null,
+  ): Promise<Date | null> {
+    if (currentValue) return currentValue;
+
+    const contaReceberRepo = (this.prisma as any)?.contaReceber;
+    if (!contaReceberRepo?.findFirst) return null;
+
+    const contaReceberConfirmada = await contaReceberRepo.findFirst({
+      where: {
+        clienteId: titularId,
+        status: { in: ['RECEBIDO', 'CONFIRMADO'] },
+      },
+      select: {
+        dataRecebimento: true,
+        dataVencimento: true,
+        vencimento: true,
+      },
+      orderBy: [{ dataRecebimento: 'asc' }, { id: 'asc' }],
+    });
+
+    const pagamentoConfirmadoEm =
+      contaReceberConfirmada?.dataRecebimento ??
+      contaReceberConfirmada?.dataVencimento ??
+      contaReceberConfirmada?.vencimento ??
+      null;
+
+    if (!pagamentoConfirmadoEm) return null;
+
+    await this.prisma.titular.update({
+      where: { id: titularId },
+      data: { pagamentoConfirmadoEm },
+    });
+
+    await (this.prisma as any).dependente?.updateMany?.({
+      where: { titularId },
+      data: { carenciaInicioEm: pagamentoConfirmadoEm },
+    });
+
+    return pagamentoConfirmadoEm;
+  }
+
   async login(loginRaw: string, senha: string): Promise<{ result: ClienteLoginResult | null; code?: string }> {
     const identity = await this.findAccessIdentityByLogin(loginRaw);
     if (!identity) return { result: null };
+
+    identity.pagamentoConfirmadoEm = await this.reconcilePagamentoConfirmadoEm(
+      identity.titularId,
+      identity.pagamentoConfirmadoEm ?? null,
+    );
 
     if (!identity.pagamentoConfirmadoEm) {
       return { result: null, code: 'PAYMENT_REQUIRED' };
@@ -169,6 +217,11 @@ export class ClienteAuthService {
       throw err;
     }
 
+    identity.pagamentoConfirmadoEm = await this.reconcilePagamentoConfirmadoEm(
+      identity.titularId,
+      identity.pagamentoConfirmadoEm ?? null,
+    );
+
     if (!identity.pagamentoConfirmadoEm) {
       const err: any = new Error('Pagamento ainda não confirmado. Aguarde a confirmação do pagamento para criar sua senha.');
       err.status = 402;
@@ -198,6 +251,11 @@ export class ClienteAuthService {
       err.status = 404;
       throw err;
     }
+
+    titular.pagamentoConfirmadoEm = await this.reconcilePagamentoConfirmadoEm(
+      titular.id,
+      titular.pagamentoConfirmadoEm ?? null,
+    );
 
     if (!bypassPaymentCheck && !titular.pagamentoConfirmadoEm) {
       const err: any = new Error('Pagamento ainda não confirmado. Aguarde a confirmação do pagamento para criar sua senha.');

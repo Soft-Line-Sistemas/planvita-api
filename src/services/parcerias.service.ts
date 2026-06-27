@@ -262,7 +262,7 @@ export class ParceriasService {
     return vantagens.map((v) => {
       if (v.publico === 'PUBLICO') return this.mapResumo(v, true, null);
       if (!this.isTitularAtivo(titular.statusPlano)) {
-        return this.mapResumo(v, false, 'Seu plano está inativo/suspenso. Regularize para resgatar.');
+        return this.mapResumo(v, false, 'Seu plano está inativo/suspenso.');
       }
       if (v.publico === 'PLANOS_ESPECIFICOS') {
         const elegivel = Boolean(titular.planoId) && v.planos.some((p) => p.planoId === titular.planoId);
