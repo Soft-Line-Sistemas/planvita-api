@@ -514,6 +514,23 @@ export class TitularController {
     }
   }
 
+  async solicitarExclusaoConta(req: TenantRequest & ClienteAuthRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      const titularId = this.getTitularIdFromClienteRequest(req);
+      if (!titularId) return res.status(401).json({ message: 'Não autenticado' });
+
+      const service = new TitularService(req.tenantId);
+      await service.inativarConta(titularId);
+      res.status(200).json({ message: 'Conta encerrada com sucesso.' });
+    } catch (error) {
+      this.logger.error('Falha ao inativar conta do titular', error);
+      const status = (error as any)?.status ?? 500;
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      res.status(status).json({ message });
+    }
+  }
+
   async downloadFotoPerfilMe(req: TenantRequest & ClienteAuthRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });

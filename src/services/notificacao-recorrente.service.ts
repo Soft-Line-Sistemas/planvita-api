@@ -744,8 +744,8 @@ export class NotificacaoRecorrenteService {
   }) {
     const tenant = this.tenantId.toLowerCase();
     const displayName = this.getDisplayName(tenant);
-    const logoUrl = `https://${tenant}.planvita.com.br/logo.png`;
-    const logoTag = `<img src="${logoUrl}" alt="Planvita" style="height:48px;" />`;
+    const logoUrl = `${this.getUrlBase(tenant)}/logo.png`;
+    const logoTag = `<img src="${logoUrl}" alt="Campo do Bosque" style="height:48px;" />`;
 
     const descricao =
       textoEditavel && textoEditavel.trim().length > 0
@@ -761,7 +761,7 @@ export class NotificacaoRecorrenteService {
     const vencimentoFormatado = cobranca
       ? new Date(cobranca.vencimento).toLocaleDateString('pt-BR')
       : '—';
-    const urlBase = `https://${tenant}.planvita.com.br`;
+    const urlBase = this.getUrlBase(tenant);
     const urlCobranca = cobranca?.paymentUrl || `${urlBase}/cliente`;
 
     const highlight =
@@ -828,10 +828,12 @@ export class NotificacaoRecorrenteService {
     `;
   }
 
-  private getDisplayName(tenant: string) {
-    if (tenant === 'bosque') return 'PLANO FAMILIAR CAMPO DO BOSQUE LTDA';
-    if (tenant === 'pax') return 'PAX PLANVITA';
-    return 'LIDER PLANVITA';
+  private getDisplayName(_tenant: string) {
+    return 'Campo do Bosque';
+  }
+
+  private getUrlBase(_tenant: string) {
+    return 'https://app.planvita.com.br';
   }
 
   private buildDefaultWhatsappText({
@@ -845,7 +847,7 @@ export class NotificacaoRecorrenteService {
   }) {
     const tenant = this.tenantId.toLowerCase();
     const displayName = this.getDisplayName(tenant);
-    const urlBase = `https://${tenant}.planvita.com.br`;
+    const urlBase = this.getUrlBase(tenant);
     const urlCobranca = cobranca?.paymentUrl || `${urlBase}/cliente`;
     const valor = cobranca
       ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
@@ -1120,7 +1122,7 @@ export class NotificacaoRecorrenteService {
   ) {
     const tenant = this.tenantId.toLowerCase();
     const displayName = this.getDisplayName(tenant);
-    const urlBase = `https://${tenant}.planvita.com.br`;
+    const urlBase = this.getUrlBase(tenant);
     const urlCobranca = cobranca?.paymentUrl || `${urlBase}/cliente`;
     const valor = cobranca
       ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(

@@ -13,6 +13,7 @@ router.put('/me/pagamento', authenticateCliente, controller.alterarPagamentoMe.b
 router.get('/me/foto/arquivo', authenticateCliente, controller.downloadFotoPerfilMe.bind(controller));
 router.post('/me/foto', authenticateCliente, controller.uploadFotoPerfilMe.bind(controller));
 router.delete('/me/foto', authenticateCliente, controller.deleteFotoPerfilMe.bind(controller));
+router.delete('/me', authenticateCliente, controller.solicitarExclusaoConta.bind(controller));
 router.get('/me/assinaturas', authenticateCliente, controller.getAssinaturasMe.bind(controller));
 router.post('/me/assinaturas', authenticateCliente, controller.salvarAssinaturaMe.bind(controller));
 router.get('/me/contrato/arquivo', authenticateCliente, controller.downloadContratoMe.bind(controller));

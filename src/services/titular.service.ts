@@ -2699,4 +2699,43 @@ export class TitularService {
   private corresponsavelContaNaComposicaoDoPlano(relacionamento?: string | null) {
     return canonicalizeRelationship(relacionamento) === 'conjuge';
   }
+
+  async inativarConta(titularId: number): Promise<void> {
+    const titular = await this.prisma.titular.findUnique({
+      where: { id: titularId },
+      select: { id: true, statusPlano: true },
+    });
+
+    if (!titular) {
+      const err: any = new Error('Titular não encontrado');
+      err.status = 404;
+      throw err;
+    }
+
+    if (titular.statusPlano === 'INATIVO') {
+      const err: any = new Error('Conta já está inativa');
+      err.status = 409;
+      throw err;
+    }
+
+    if (this.asaasIntegration.isEnabled()) {
+      try {
+        await this.asaasIntegration.cancelMonthlySubscriptionForTitular(titularId);
+      } catch (error: any) {
+        if (!error?.message?.includes('sem recorrência ativa')) {
+          this.logger.warn('Não foi possível cancelar recorrência no Asaas ao inativar conta', {
+            titularId,
+            error: error?.message,
+          });
+        }
+      }
+    }
+
+    await this.prisma.titular.update({
+      where: { id: titularId },
+      data: { statusPlano: 'INATIVO' },
+    });
+
+    this.logger.info('Conta inativada', { titularId });
+  }
 }

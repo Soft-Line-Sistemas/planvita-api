@@ -46,11 +46,15 @@ jest.mock('../utils/prisma', () => ({
   },
 }));
 
+const asaasMock = {
+  ensureCustomerForTitular: jest.fn().mockResolvedValue(null),
+  ensureMonthlySubscriptionForTitular: jest.fn().mockResolvedValue(null),
+  isEnabled: jest.fn().mockReturnValue(false),
+  cancelMonthlySubscriptionForTitular: jest.fn().mockResolvedValue('sub-123'),
+};
+
 jest.mock('./asaas-integration.service', () => ({
-  AsaasIntegrationService: jest.fn().mockImplementation(() => ({
-    ensureCustomerForTitular: jest.fn().mockResolvedValue(null),
-    ensureMonthlySubscriptionForTitular: jest.fn().mockResolvedValue(null),
-  })),
+  AsaasIntegrationService: jest.fn().mockImplementation(() => asaasMock),
 }));
 
 const pricingServiceMock = {
@@ -107,6 +111,8 @@ const makePayload = (overrides: Record<string, unknown> = {}) => ({
 describe('TitularService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    asaasMock.isEnabled.mockReturnValue(false);
+    asaasMock.cancelMonthlySubscriptionForTitular.mockResolvedValue('sub-123');
     prismaMock.businessRules.findFirst.mockResolvedValue({ limiteBeneficiarios: 8 });
     prismaMock.titular.findFirst.mockResolvedValue(null);
     prismaMock.titular.findMany.mockResolvedValue([]);
@@ -1519,6 +1525,103 @@ describe('TitularService', () => {
       const payload = makeCardPayload({ holderCpf: '123.456.789-01' });
       const result = await service.createFull(payload as any);
       expect(result).toBeDefined();
+    });
+  });
+
+  // ── inativarConta ──────────────────────────────────────────────────────────
+  describe('inativarConta', () => {
+    it('lança 404 quando titular não existe', async () => {
+      prismaMock.titular.findUnique.mockResolvedValue(null);
+      const service = new TitularService('tenant-123');
+
+      await expect(service.inativarConta(99)).rejects.toMatchObject({
+        status: 404,
+        message: 'Titular não encontrado',
+      });
+    });
+
+    it('lança 409 quando conta já está inativa', async () => {
+      prismaMock.titular.findUnique.mockResolvedValue({ id: 1, statusPlano: 'INATIVO' });
+      const service = new TitularService('tenant-123');
+
+      await expect(service.inativarConta(1)).rejects.toMatchObject({
+        status: 409,
+        message: 'Conta já está inativa',
+      });
+    });
+
+    it('inativa titular sem chamar Asaas quando integração desabilitada', async () => {
+      prismaMock.titular.findUnique.mockResolvedValue({ id: 1, statusPlano: 'ATIVO' });
+      prismaMock.titular.update.mockResolvedValue({ id: 1, statusPlano: 'INATIVO' });
+      asaasMock.isEnabled.mockReturnValue(false);
+
+      const service = new TitularService('tenant-123');
+      await service.inativarConta(1);
+
+      expect(prismaMock.titular.update).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: { statusPlano: 'INATIVO' },
+      });
+      expect(asaasMock.cancelMonthlySubscriptionForTitular).not.toHaveBeenCalled();
+    });
+
+    it('inativa titular e cancela recorrência no Asaas quando integração habilitada', async () => {
+      prismaMock.titular.findUnique.mockResolvedValue({ id: 2, statusPlano: 'ATIVO' });
+      prismaMock.titular.update.mockResolvedValue({ id: 2, statusPlano: 'INATIVO' });
+      asaasMock.isEnabled.mockReturnValue(true);
+      asaasMock.cancelMonthlySubscriptionForTitular.mockResolvedValue('sub-456');
+
+      const service = new TitularService('tenant-123');
+      await service.inativarConta(2);
+
+      expect(asaasMock.cancelMonthlySubscriptionForTitular).toHaveBeenCalledWith(2);
+      expect(prismaMock.titular.update).toHaveBeenCalledWith({
+        where: { id: 2 },
+        data: { statusPlano: 'INATIVO' },
+      });
+    });
+
+    it('inativa titular mesmo quando Asaas lança "sem recorrência ativa"', async () => {
+      prismaMock.titular.findUnique.mockResolvedValue({ id: 3, statusPlano: 'ATIVO' });
+      prismaMock.titular.update.mockResolvedValue({ id: 3, statusPlano: 'INATIVO' });
+      asaasMock.isEnabled.mockReturnValue(true);
+      asaasMock.cancelMonthlySubscriptionForTitular.mockRejectedValue(
+        new Error('Titular sem recorrência ativa no Asaas'),
+      );
+
+      const service = new TitularService('tenant-123');
+      await expect(service.inativarConta(3)).resolves.toBeUndefined();
+
+      expect(prismaMock.titular.update).toHaveBeenCalledWith({
+        where: { id: 3 },
+        data: { statusPlano: 'INATIVO' },
+      });
+    });
+
+    it('inativa titular mesmo quando Asaas lança erro genérico (falha silenciosa)', async () => {
+      prismaMock.titular.findUnique.mockResolvedValue({ id: 4, statusPlano: 'ATIVO' });
+      prismaMock.titular.update.mockResolvedValue({ id: 4, statusPlano: 'INATIVO' });
+      asaasMock.isEnabled.mockReturnValue(true);
+      asaasMock.cancelMonthlySubscriptionForTitular.mockRejectedValue(
+        new Error('Timeout ao conectar com Asaas'),
+      );
+
+      const service = new TitularService('tenant-123');
+      await expect(service.inativarConta(4)).resolves.toBeUndefined();
+
+      expect(prismaMock.titular.update).toHaveBeenCalledWith({
+        where: { id: 4 },
+        data: { statusPlano: 'INATIVO' },
+      });
+    });
+
+    it('propaga erro do prisma.update', async () => {
+      prismaMock.titular.findUnique.mockResolvedValue({ id: 5, statusPlano: 'ATIVO' });
+      asaasMock.isEnabled.mockReturnValue(false);
+      prismaMock.titular.update.mockRejectedValue(new Error('DB connection failed'));
+
+      const service = new TitularService('tenant-123');
+      await expect(service.inativarConta(5)).rejects.toThrow('DB connection failed');
     });
   });
 });
