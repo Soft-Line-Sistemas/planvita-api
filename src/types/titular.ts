@@ -2,6 +2,13 @@ export interface CadastroTitularRequest {
   consultorId?: number | null;
   consultorTenantId?: string | null;
   targetTenantId?: string | null;
+  consents?: {
+    privacyPolicyAccepted?: boolean;
+    privacyPolicyVersion?: string | null;
+    serviceContractAccepted?: boolean;
+    serviceContractVersion?: string | null;
+    origin?: string | null;
+  };
   step1: {
     nomeCompleto: string;
     cpf: string;

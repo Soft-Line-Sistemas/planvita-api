@@ -514,6 +514,51 @@ export class TitularController {
     }
   }
 
+  async solicitarExclusaoContaPublico(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const { email } = req.body as { email?: unknown };
+      if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+        return res.status(400).json({ message: 'E-mail inválido ou não informado.' });
+      }
+
+      const { AccountDeletionService } = await import('../services/account-deletion.service');
+      const service = new AccountDeletionService(req.tenantId);
+      await service.requestDeletion(email.trim());
+
+      // Sempre 200 — não revela se o e-mail existe ou não
+      res.status(200).json({ message: 'Se o e-mail estiver cadastrado, você receberá um link de confirmação.' });
+    } catch (error) {
+      this.logger.error('Falha ao processar solicitação pública de exclusão de conta', error);
+      const status = (error as any)?.status ?? 500;
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      res.status(status).json({ message });
+    }
+  }
+
+  async confirmarExclusaoContaPublico(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const { token } = req.body as { token?: unknown };
+      if (!token || typeof token !== 'string' || token.trim().length < 10) {
+        return res.status(400).json({ message: 'Token inválido ou não informado.' });
+      }
+
+      const { AccountDeletionService } = await import('../services/account-deletion.service');
+      const service = new AccountDeletionService(req.tenantId);
+      await service.confirmDeletion(token.trim());
+
+      res.status(200).json({ message: 'Conta excluída com sucesso.' });
+    } catch (error) {
+      this.logger.error('Falha ao confirmar exclusão pública de conta', error);
+      const status = (error as any)?.status ?? 500;
+      const message = error instanceof Error ? error.message : 'Internal server error';
+      res.status(status).json({ message });
+    }
+  }
+
   async solicitarExclusaoConta(req: TenantRequest & ClienteAuthRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
@@ -627,7 +672,11 @@ export class TitularController {
         (Array.isArray(forwarded) && forwarded[0]?.trim()) ||
         req.socket?.remoteAddress ||
         null;
-      const result = await service.createFull(data, { requestIp });
+      const result = await service.createFull(data, {
+        requestIp,
+        requireConsents: false,
+        consentOrigin: 'titular_full_backoffice',
+      });
 
       res.status(201).json(result);
     } catch (error: any) {

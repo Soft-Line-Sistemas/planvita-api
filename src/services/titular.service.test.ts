@@ -9,6 +9,9 @@ const prismaMock = {
   documento: {
     deleteMany: jest.fn(),
   },
+  consentAcceptance: {
+    createMany: jest.fn(),
+  },
   titular: {
     findFirst: jest.fn(),
     findMany: jest.fn(),
@@ -122,6 +125,7 @@ describe('TitularService', () => {
     prismaMock.comissao.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.pagamento.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.documento.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.consentAcceptance.createMany.mockResolvedValue({ count: 0 });
     prismaMock.dependente.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.corresponsavel.delete.mockResolvedValue({ id: 99 });
     prismaMock.corresponsavel.deleteMany.mockResolvedValue({ count: 0 });
@@ -135,6 +139,7 @@ describe('TitularService', () => {
           comissao: prismaMock.comissao,
           pagamento: prismaMock.pagamento,
           documento: prismaMock.documento,
+          consentAcceptance: prismaMock.consentAcceptance,
           titular: {
             create: jest.fn().mockResolvedValue({
               id: 1,
@@ -173,6 +178,62 @@ describe('TitularService', () => {
 
   // ── createFull ──────────────────────────────────────────────────────────────
   describe('createFull', () => {
+    it('exige aceite de politica e contrato quando o contexto requer consentimento', async () => {
+      const service = new TitularService('tenant-123');
+
+      await expect(
+        service.createFull(makePayload() as any, {
+          requestIp: '203.0.113.10',
+          requireConsents: true,
+          consentOrigin: 'auth_register',
+        }),
+      ).rejects.toMatchObject({
+        status: 400,
+        code: 'CONSENT_REQUIRED',
+      });
+    });
+
+    it('persiste trilha auditavel dos aceites quando enviados no cadastro', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({
+        consents: {
+          privacyPolicyAccepted: true,
+          privacyPolicyVersion: '2025-06',
+          serviceContractAccepted: true,
+          serviceContractVersion: '2025-06',
+          origin: 'cliente_mobile_cadastro_publico',
+        },
+      });
+
+      await service.createFull(payload as any, {
+        requestIp: '198.51.100.27',
+        requireConsents: true,
+        consentOrigin: 'auth_register',
+      });
+
+      expect(prismaMock.consentAcceptance.createMany).toHaveBeenCalledTimes(1);
+      expect(prismaMock.consentAcceptance.createMany).toHaveBeenCalledWith({
+        data: expect.arrayContaining([
+          expect.objectContaining({
+            titularId: 1,
+            tenantId: 'tenant-123',
+            termType: 'PRIVACY_POLICY',
+            termVersion: '2025-06',
+            origin: 'cliente_mobile_cadastro_publico',
+            ipAddress: '198.51.100.27',
+          }),
+          expect.objectContaining({
+            titularId: 1,
+            tenantId: 'tenant-123',
+            termType: 'SERVICE_CONTRACT',
+            termVersion: '2025-06',
+            origin: 'cliente_mobile_cadastro_publico',
+            ipAddress: '198.51.100.27',
+          }),
+        ]),
+      });
+    });
+
     it('deve rejeitar cadastro quando faltarem campos obrigatórios do titular (email, cpf)', async () => {
       const service = new TitularService('tenant-123');
 
