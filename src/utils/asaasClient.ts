@@ -129,11 +129,58 @@ export interface AsaasWebhookEvent {
   account?: string;
 }
 
-export function resolveAsaasCredentials(_tenantId: string): AsaasCredentials {
-  const enabled = process.env.ASAAS_ENABLED !== 'false';
-  const apiKey = process.env.ASAAS_API_KEY || process.env.ASAAS_TOKEN || '';
-  const webhookSecret = process.env.ASAAS_WEBHOOK_SECRET;
-  const baseUrl = process.env.ASAAS_BASE_URL || 'https://sandbox.asaas.com/api/v3';
+function normalizeTenantEnvSuffix(tenantId: string): string {
+  return String(tenantId || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase();
+}
+
+function firstDefinedEnv(names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function resolveScopedEnv(baseName: string, tenantId: string, preferDevelopment: boolean): string | undefined {
+  const tenantSuffix = normalizeTenantEnvSuffix(tenantId);
+  const scopedNames = tenantSuffix
+    ? [
+        `${baseName}_DEVELOPMENT_${tenantSuffix}`,
+        `${baseName}_DEV_${tenantSuffix}`,
+        `${baseName}_${tenantSuffix}`,
+      ]
+    : [];
+  const globalNames = preferDevelopment
+    ? [`${baseName}_DEVELOPMENT`, `${baseName}_DEV`, baseName]
+    : [baseName];
+
+  const names = preferDevelopment
+    ? [...scopedNames, ...globalNames]
+    : tenantSuffix
+      ? [`${baseName}_${tenantSuffix}`, ...globalNames]
+      : globalNames;
+
+  return firstDefinedEnv(names);
+}
+
+export function resolveAsaasCredentials(tenantId: string): AsaasCredentials {
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  const enabledValue = resolveScopedEnv('ASAAS_ENABLED', tenantId, isDevelopment);
+  const enabled = enabledValue !== 'false';
+  const apiKey =
+    resolveScopedEnv('ASAAS_API_KEY', tenantId, isDevelopment) ||
+    resolveScopedEnv('ASAAS_TOKEN', tenantId, isDevelopment) ||
+    '';
+  const webhookSecret = resolveScopedEnv('ASAAS_WEBHOOK_SECRET', tenantId, isDevelopment);
+  const baseUrl =
+    resolveScopedEnv('ASAAS_BASE_URL', tenantId, isDevelopment) ||
+    'https://sandbox.asaas.com/api/v3';
 
   const timeoutMs = Number(process.env.ASAAS_TIMEOUT_MS || 8000);
   const maxRetries = Number(process.env.ASAAS_MAX_RETRIES || 3);
