@@ -169,6 +169,8 @@ export class AuthController {
       const service = new TitularService(targetTenant);
       const novoTitular = await service.createFull(req.body, {
         requestIp: this.resolveRequestIp(req),
+        requireConsents: true,
+        consentOrigin: 'auth_register',
       });
 
       const auth = new ClienteAuthService(targetTenant);

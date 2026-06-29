@@ -170,6 +170,7 @@ model Titular {
   titularAnteriorCpf String? @map("titular_anterior_cpf")
 
   paymentChangeRequests PaymentMethodChangeRequest[]
+  consentAcceptances   ConsentAcceptance[]
 }
 
 model PaymentMethodChangeRequest {
@@ -191,6 +192,24 @@ model PaymentMethodChangeRequest {
 
   @@index([titularId, status])
   @@map("payment_method_change_requests")
+}
+
+model ConsentAcceptance {
+  id          Int      @id @default(autoincrement())
+  titularId    Int
+  tenantId     String
+  termType     String
+  termVersion  String
+  origin       String
+  ipAddress    String?
+  acceptedAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  titular Titular @relation(fields: [titularId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([titularId, termType, acceptedAt])
+  @@index([tenantId, acceptedAt])
+  @@map("consent_acceptances")
 }
 
 // ----------------- AUTH CLIENTE -----------------

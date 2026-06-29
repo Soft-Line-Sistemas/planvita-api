@@ -41,6 +41,25 @@ type CreateFullResult = {
   recurring: CreateFullRecurringResult;
 };
 
+type ConsentAcceptanceRecord = {
+  tenantId: string;
+  termType: 'PRIVACY_POLICY' | 'SERVICE_CONTRACT';
+  termVersion: string;
+  origin: string;
+  ipAddress: string | null;
+  acceptedAt: Date;
+};
+
+type CreateFullContext = {
+  requestIp?: string | null;
+  requireConsents?: boolean;
+  consentOrigin?: string | null;
+};
+
+const DEFAULT_PRIVACY_POLICY_VERSION = process.env.PRIVACY_POLICY_VERSION?.trim() || '2025-06';
+const DEFAULT_SERVICE_CONTRACT_VERSION = process.env.SERVICE_CONTRACT_VERSION?.trim() || '2025-06';
+const DEFAULT_CONSENT_ORIGIN = 'cadastro_publico';
+
 const TITULAR_BASE_SCALARS = {
   id: true,
   nome: true,
@@ -278,6 +297,80 @@ export class TitularService {
   private normalizarWhatsapp(value?: string | null): string | null {
     const digits = String(value ?? '').replace(/\D/g, '');
     return digits.length >= 10 ? digits : null;
+  }
+
+  private normalizeText(value?: string | null): string | null {
+    const normalized = String(value ?? '').trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  private extractConsentAcceptances(
+    data: CadastroTitularRequest,
+    context?: CreateFullContext,
+  ): ConsentAcceptanceRecord[] {
+    const consents = data.consents ?? {};
+    const privacyAccepted = consents.privacyPolicyAccepted === true;
+    const serviceContractAccepted = consents.serviceContractAccepted === true;
+
+    if (context?.requireConsents && (!privacyAccepted || !serviceContractAccepted)) {
+      throw Object.assign(
+        new Error('É obrigatório aceitar a Política de Privacidade e o Contrato de Prestação de Serviços para concluir o cadastro.'),
+        {
+          status: 400,
+          code: 'CONSENT_REQUIRED',
+        },
+      );
+    }
+
+    const acceptedAt = new Date();
+    const ipAddress = this.normalizeText(this.resolveRequestIp(context?.requestIp));
+    const origin =
+      this.normalizeText(consents.origin) ??
+      this.normalizeText(context?.consentOrigin) ??
+      DEFAULT_CONSENT_ORIGIN;
+
+    const records: ConsentAcceptanceRecord[] = [];
+
+    if (privacyAccepted) {
+      records.push({
+        tenantId: this.tenantId,
+        termType: 'PRIVACY_POLICY',
+        termVersion:
+          this.normalizeText(consents.privacyPolicyVersion) ?? DEFAULT_PRIVACY_POLICY_VERSION,
+        origin,
+        ipAddress,
+        acceptedAt,
+      });
+    }
+
+    if (serviceContractAccepted) {
+      records.push({
+        tenantId: this.tenantId,
+        termType: 'SERVICE_CONTRACT',
+        termVersion:
+          this.normalizeText(consents.serviceContractVersion) ?? DEFAULT_SERVICE_CONTRACT_VERSION,
+        origin,
+        ipAddress,
+        acceptedAt,
+      });
+    }
+
+    return records;
+  }
+
+  private async persistConsentAcceptances(
+    tx: any,
+    titularId: number,
+    records: ConsentAcceptanceRecord[],
+  ): Promise<void> {
+    if (!records.length || !tx.consentAcceptance) return;
+
+    await tx.consentAcceptance.createMany({
+      data: records.map((record) => ({
+        ...record,
+        titularId,
+      })),
+    });
   }
 
   private async notificarConsultorNovoCadastro(params: {
@@ -940,6 +1033,14 @@ export class TitularService {
     return titular ? this.comporGradeFamiliarComCorresponsavel(titular as any) : titular;
   }
 
+  async getByEmail(email: string) {
+    const emailNormalizado = email.trim().toLowerCase();
+    return this.prisma.titular.findFirst({
+      where: { email: emailNormalizado },
+      select: { id: true, statusPlano: true, email: true },
+    });
+  }
+
   async getByCpfExact(cpf: string) {
     const cpfNormalizado = this.normalizeCpf(cpf);
     if (
@@ -1034,10 +1135,11 @@ export class TitularService {
 
   async createFull(
     data: CadastroTitularRequest,
-    context?: { requestIp?: string | null },
+    context?: CreateFullContext,
   ): Promise<CreateFullResult> {
     const { step1, step2, step3, dependentes, step5 } = data;
     const dataContratacao = new Date();
+    const consentAcceptances = this.extractConsentAcceptances(data, context);
 
     if (!step1 || typeof step1 !== 'object') {
       throw Object.assign(new Error('step1 é obrigatório'), { status: 400 });
@@ -1338,6 +1440,8 @@ export class TitularService {
             corresponsaveis: true,
           },
         });
+
+        await this.persistConsentAcceptances(tx, titular.id, consentAcceptances);
 
         return { titular, consultor };
       });
