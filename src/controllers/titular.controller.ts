@@ -514,20 +514,39 @@ export class TitularController {
     }
   }
 
-  async solicitarExclusaoContaPublico(req: TenantRequest, res: Response) {
+  async buscarTenantsPorEmail(req: TenantRequest, res: Response) {
     try {
-      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
-
       const { email } = req.body as { email?: unknown };
       if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
         return res.status(400).json({ message: 'E-mail inválido ou não informado.' });
       }
 
       const { AccountDeletionService } = await import('../services/account-deletion.service');
-      const service = new AccountDeletionService(req.tenantId);
-      await service.requestDeletion(email.trim());
+      const service = new AccountDeletionService();
+      const tenants = await service.findTenantsForEmail(email.trim());
 
-      // Sempre 200 — não revela se o e-mail existe ou não
+      // Sempre 200 com lista (vazia se não encontrado) — não revela presença/ausência
+      res.status(200).json({ tenants });
+    } catch (error) {
+      this.logger.error('Falha ao buscar tenants por email para exclusão', error);
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
+  async solicitarExclusaoContaPublico(req: TenantRequest, res: Response) {
+    try {
+      const { email, tenantId } = req.body as { email?: unknown; tenantId?: unknown };
+      if (!email || typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+        return res.status(400).json({ message: 'E-mail inválido ou não informado.' });
+      }
+      if (!tenantId || typeof tenantId !== 'string') {
+        return res.status(400).json({ message: 'Plano não identificado.' });
+      }
+
+      const { AccountDeletionService } = await import('../services/account-deletion.service');
+      const service = new AccountDeletionService();
+      await service.requestDeletion(email.trim(), tenantId.trim().toLowerCase());
+
       res.status(200).json({ message: 'Se o e-mail estiver cadastrado, você receberá um link de confirmação.' });
     } catch (error) {
       this.logger.error('Falha ao processar solicitação pública de exclusão de conta', error);
@@ -539,16 +558,17 @@ export class TitularController {
 
   async confirmarExclusaoContaPublico(req: TenantRequest, res: Response) {
     try {
-      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
-
-      const { token } = req.body as { token?: unknown };
+      const { token, tenantId } = req.body as { token?: unknown; tenantId?: unknown };
       if (!token || typeof token !== 'string' || token.trim().length < 10) {
         return res.status(400).json({ message: 'Token inválido ou não informado.' });
       }
+      if (!tenantId || typeof tenantId !== 'string') {
+        return res.status(400).json({ message: 'Plano não identificado.' });
+      }
 
       const { AccountDeletionService } = await import('../services/account-deletion.service');
-      const service = new AccountDeletionService(req.tenantId);
-      await service.confirmDeletion(token.trim());
+      const service = new AccountDeletionService();
+      await service.confirmDeletion(token.trim(), tenantId.trim().toLowerCase());
 
       res.status(200).json({ message: 'Conta excluída com sucesso.' });
     } catch (error) {

@@ -8,6 +8,7 @@ const controller = new TitularController();
 
 // Rotas públicas (sem auth — devem vir antes das rotas parametrizadas)
 router.get('/public/search', controller.publicSearch.bind(controller));
+router.post('/public/buscar-tenants-email', controller.buscarTenantsPorEmail.bind(controller));
 router.post('/public/solicitar-exclusao', controller.solicitarExclusaoContaPublico.bind(controller));
 router.post('/public/confirmar-exclusao', controller.confirmarExclusaoContaPublico.bind(controller));
 router.get('/me', authenticateAdminOrCliente, controller.me.bind(controller));

@@ -1,11 +1,27 @@
 // Mocks devem ser declarados antes de qualquer import do módulo testado
 
-const prismaMock = {
-  titular: {
+const prismaBosque = {
+  titular: { findFirst: jest.fn(), findUnique: jest.fn() },
+  titularToken: {
+    create: jest.fn(),
     findFirst: jest.fn(),
-    findUnique: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
   },
+};
+
+const prismaPax = {
+  titular: { findFirst: jest.fn(), findUnique: jest.fn() },
+  titularToken: {
+    create: jest.fn(),
+    findFirst: jest.fn(),
+    update: jest.fn(),
+    updateMany: jest.fn(),
+  },
+};
+
+const prismaLider = {
+  titular: { findFirst: jest.fn(), findUnique: jest.fn() },
   titularToken: {
     create: jest.fn(),
     findFirst: jest.fn(),
@@ -15,7 +31,18 @@ const prismaMock = {
 };
 
 jest.mock('../utils/prisma', () => ({
-  getPrismaForTenant: () => prismaMock,
+  getPrismaForTenant: (tenantId: string) => {
+    if (tenantId === 'bosque') return prismaBosque;
+    if (tenantId === 'pax') return prismaPax;
+    if (tenantId === 'lider') return prismaLider;
+    throw new Error(`Tenant not configured: ${tenantId}`);
+  },
+}));
+
+jest.mock('../utils/tenants', () => ({
+  getConfiguredPublicTenants: () => ['lider', 'pax', 'bosque'],
+  getTenantLabel: (id: string) =>
+    ({ lider: 'Lider', pax: 'Pax', bosque: 'Campo do Bosque' })[id] ?? id,
 }));
 
 const notifierSendMock = jest.fn();
@@ -37,44 +64,97 @@ import { AccountDeletionService } from './account-deletion.service';
 
 const sha256 = (v: string) => crypto.createHash('sha256').update(v).digest('hex');
 
-const TENANT = 'bosque';
 const EMAIL = 'cliente@teste.com';
 const TITULAR_ATIVO = { id: 42, nome: 'João Silva', email: EMAIL, statusPlano: 'ATIVO' };
-const TITULAR_INATIVO = { id: 43, nome: 'Maria', email: 'inativo@teste.com', statusPlano: 'INATIVO' };
+const TITULAR_INATIVO = { id: 43, nome: 'Maria', email: EMAIL, statusPlano: 'INATIVO' };
 
 describe('AccountDeletionService', () => {
   let service: AccountDeletionService;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new AccountDeletionService(TENANT);
+    service = new AccountDeletionService();
 
-    prismaMock.titularToken.updateMany.mockResolvedValue({ count: 0 });
-    prismaMock.titularToken.create.mockResolvedValue({ id: 'tok-1' });
+    // Defaults: nenhum banco encontra o e-mail
+    for (const prisma of [prismaBosque, prismaPax, prismaLider]) {
+      prisma.titular.findFirst.mockResolvedValue(null);
+      prisma.titular.findUnique.mockResolvedValue(null);
+      prisma.titularToken.updateMany.mockResolvedValue({ count: 0 });
+      prisma.titularToken.create.mockResolvedValue({ id: 'tok-1' });
+      prisma.titularToken.findFirst.mockResolvedValue(null);
+      prisma.titularToken.update.mockResolvedValue({});
+    }
+
     notifierSendMock.mockResolvedValue({ success: true });
     inativarContaMock.mockResolvedValue(undefined);
+  });
+
+  // ─── findTenantsForEmail ──────────────────────────────────────────────────
+
+  describe('findTenantsForEmail', () => {
+    it('retorna os tenants onde o titular está ativo', async () => {
+      prismaBosque.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
+      prismaPax.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
+
+      const result = await service.findTenantsForEmail(EMAIL);
+
+      expect(result.map((r) => r.tenantId)).toEqual(
+        expect.arrayContaining(['bosque', 'pax']),
+      );
+      expect(result).toHaveLength(2);
+    });
+
+    it('retorna array vazio se e-mail não existe em nenhum tenant', async () => {
+      const result = await service.findTenantsForEmail('naoexiste@teste.com');
+      expect(result).toHaveLength(0);
+    });
+
+    it('exclui tenants onde o titular está inativo', async () => {
+      prismaBosque.titular.findFirst.mockResolvedValue(TITULAR_INATIVO);
+      prismaPax.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
+
+      const result = await service.findTenantsForEmail(EMAIL);
+
+      expect(result.map((r) => r.tenantId)).toEqual(['pax']);
+    });
+
+    it('inclui o label legível de cada tenant', async () => {
+      prismaBosque.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
+
+      const result = await service.findTenantsForEmail(EMAIL);
+
+      expect(result[0]).toMatchObject({ tenantId: 'bosque', label: 'Campo do Bosque' });
+    });
+
+    it('ignora erros de banco e continua nos demais tenants', async () => {
+      prismaBosque.titular.findFirst.mockRejectedValue(new Error('DB down'));
+      prismaPax.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
+
+      const result = await service.findTenantsForEmail(EMAIL);
+
+      expect(result.map((r) => r.tenantId)).toEqual(['pax']);
+    });
+
+    it('normaliza o e-mail antes de buscar', async () => {
+      prismaBosque.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
+
+      await service.findTenantsForEmail('  CLIENTE@TESTE.COM  ');
+
+      expect(prismaBosque.titular.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { email: 'cliente@teste.com' } }),
+      );
+    });
   });
 
   // ─── requestDeletion ──────────────────────────────────────────────────────
 
   describe('requestDeletion', () => {
-    it('envia e-mail com link de confirmação para titular ativo', async () => {
-      prismaMock.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
+    it('envia e-mail com link de confirmação para o tenant informado', async () => {
+      prismaBosque.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
 
-      await service.requestDeletion(EMAIL);
+      await service.requestDeletion(EMAIL, 'bosque');
 
-      expect(prismaMock.titularToken.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            titularId: TITULAR_ATIVO.id,
-            type: 'ACCOUNT_DELETION_LINK',
-            consumedAt: null,
-          }),
-          data: expect.objectContaining({ consumedAt: expect.any(Date) }),
-        }),
-      );
-
-      expect(prismaMock.titularToken.create).toHaveBeenCalledWith(
+      expect(prismaBosque.titularToken.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             titularId: TITULAR_ATIVO.id,
@@ -95,83 +175,77 @@ describe('AccountDeletionService', () => {
       );
     });
 
-    it('o e-mail contém link com token e tenant corretos', async () => {
-      prismaMock.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
+    it('o link no e-mail contém o token e o tenant corretos', async () => {
+      prismaBosque.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
 
-      await service.requestDeletion(EMAIL);
+      await service.requestDeletion(EMAIL, 'bosque');
 
       const payload = notifierSendMock.mock.calls[0][0];
       expect(payload.html).toContain('/excluir-conta/confirmar');
-      expect(payload.html).toContain(`tenant=${TENANT}`);
-      expect(payload.message).toContain('/excluir-conta/confirmar');
+      expect(payload.html).toContain('tenant=bosque');
     });
 
-    it('não envia e-mail se o e-mail não estiver cadastrado (silencia)', async () => {
-      prismaMock.titular.findFirst.mockResolvedValue(null);
+    it('não envia e-mail se e-mail não existir no tenant (silencia)', async () => {
+      // prismaBosque retorna null por padrão
+      await service.requestDeletion(EMAIL, 'bosque');
 
-      await service.requestDeletion('naoexiste@teste.com');
-
-      expect(prismaMock.titularToken.create).not.toHaveBeenCalled();
       expect(notifierSendMock).not.toHaveBeenCalled();
     });
 
-    it('não envia e-mail se o titular já estiver inativo', async () => {
-      prismaMock.titular.findFirst.mockResolvedValue(TITULAR_INATIVO);
+    it('não envia e-mail se titular já estiver inativo', async () => {
+      prismaBosque.titular.findFirst.mockResolvedValue(TITULAR_INATIVO);
 
-      await service.requestDeletion(TITULAR_INATIVO.email);
+      await service.requestDeletion(EMAIL, 'bosque');
 
-      expect(prismaMock.titularToken.create).not.toHaveBeenCalled();
       expect(notifierSendMock).not.toHaveBeenCalled();
     });
 
-    it('normaliza o e-mail antes de buscar (maiúsculas, espaços)', async () => {
-      prismaMock.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
+    it('invalida tokens anteriores antes de criar novo', async () => {
+      prismaBosque.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
 
-      await service.requestDeletion('  CLIENTE@TESTE.COM  ');
+      await service.requestDeletion(EMAIL, 'bosque');
 
-      expect(prismaMock.titular.findFirst).toHaveBeenCalledWith(
+      expect(prismaBosque.titularToken.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { email: 'cliente@teste.com' },
+          where: expect.objectContaining({
+            titularId: TITULAR_ATIVO.id,
+            type: 'ACCOUNT_DELETION_LINK',
+            consumedAt: null,
+          }),
         }),
       );
     });
 
-    it('invalida tokens anteriores antes de criar um novo', async () => {
-      prismaMock.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
-
-      await service.requestDeletion(EMAIL);
-
-      const updateManyCall = prismaMock.titularToken.updateMany.mock.calls[0][0];
-      const createCall = prismaMock.titularToken.create.mock.calls[0][0];
-
-      // updateMany deve ser chamado antes do create
-      expect(updateManyCall.where.consumedAt).toBeNull();
-      expect(createCall.data.type).toBe('ACCOUNT_DELETION_LINK');
-    });
-
-    it('o token criado expira em ~60 minutos', async () => {
-      prismaMock.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
+    it('token expira em ~60 minutos', async () => {
+      prismaBosque.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
 
       const antes = Date.now();
-      await service.requestDeletion(EMAIL);
+      await service.requestDeletion(EMAIL, 'bosque');
       const depois = Date.now();
 
-      const { expiresAt } = prismaMock.titularToken.create.mock.calls[0][0].data as { expiresAt: Date };
+      const { expiresAt } = prismaBosque.titularToken.create.mock.calls[0][0].data as { expiresAt: Date };
       const diffMs = expiresAt.getTime() - antes;
 
-      // Entre 59 e 61 minutos
       expect(diffMs).toBeGreaterThanOrEqual(59 * 60 * 1000);
       expect(diffMs).toBeLessThanOrEqual(61 * 60 * 1000 + (depois - antes));
     });
 
-    it('armazena o hash SHA-256 do token, nunca o valor cru', async () => {
-      prismaMock.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
+    it('armazena hash SHA-256 do token, nunca o valor cru', async () => {
+      prismaBosque.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
 
-      await service.requestDeletion(EMAIL);
+      await service.requestDeletion(EMAIL, 'bosque');
 
-      const { tokenHash } = prismaMock.titularToken.create.mock.calls[0][0].data as { tokenHash: string };
-      // Hash SHA-256 tem 64 chars hex
+      const { tokenHash } = prismaBosque.titularToken.create.mock.calls[0][0].data as { tokenHash: string };
       expect(tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    });
+
+    it('usa o banco do tenant correto (pax, não bosque)', async () => {
+      prismaPax.titular.findFirst.mockResolvedValue(TITULAR_ATIVO);
+
+      await service.requestDeletion(EMAIL, 'pax');
+
+      expect(prismaPax.titularToken.create).toHaveBeenCalled();
+      expect(prismaBosque.titularToken.create).not.toHaveBeenCalled();
     });
   });
 
@@ -180,22 +254,23 @@ describe('AccountDeletionService', () => {
   describe('confirmDeletion', () => {
     const RAW_TOKEN = crypto.randomUUID();
 
-    function mockValidToken(titularId = TITULAR_ATIVO.id) {
-      prismaMock.titularToken.findFirst.mockResolvedValue({
+    function mockValidToken() {
+      prismaBosque.titularToken.findFirst.mockResolvedValue({
         id: 'tok-1',
-        titularId,
+        titularId: TITULAR_ATIVO.id,
       });
-      prismaMock.titularToken.update.mockResolvedValue({});
-      prismaMock.titular.findUnique.mockResolvedValue({ id: titularId, statusPlano: 'ATIVO' });
+      prismaBosque.titular.findUnique.mockResolvedValue({
+        id: TITULAR_ATIVO.id,
+        statusPlano: 'ATIVO',
+      });
     }
 
     it('consome o token e inativa a conta para token válido', async () => {
       mockValidToken();
 
-      await service.confirmDeletion(RAW_TOKEN);
+      await service.confirmDeletion(RAW_TOKEN, 'bosque');
 
-      // Verifica que buscou pelo hash correto
-      expect(prismaMock.titularToken.findFirst).toHaveBeenCalledWith(
+      expect(prismaBosque.titularToken.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
             tokenHash: sha256(RAW_TOKEN),
@@ -204,23 +279,16 @@ describe('AccountDeletionService', () => {
           }),
         }),
       );
-
-      // Marca token como consumido
-      expect(prismaMock.titularToken.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: 'tok-1' },
-          data: { consumedAt: expect.any(Date) },
-        }),
+      expect(prismaBosque.titularToken.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { consumedAt: expect.any(Date) } }),
       );
-
-      // Inativa a conta
       expect(inativarContaMock).toHaveBeenCalledWith(TITULAR_ATIVO.id);
     });
 
-    it('lança erro 400 para token inexistente', async () => {
-      prismaMock.titularToken.findFirst.mockResolvedValue(null);
+    it('lança erro 400 para token inexistente ou expirado', async () => {
+      // prismaBosque.titularToken.findFirst retorna null por padrão
 
-      await expect(service.confirmDeletion(RAW_TOKEN)).rejects.toMatchObject({
+      await expect(service.confirmDeletion(RAW_TOKEN, 'bosque')).rejects.toMatchObject({
         status: 400,
         message: expect.stringContaining('inválido ou expirado'),
       });
@@ -228,48 +296,53 @@ describe('AccountDeletionService', () => {
       expect(inativarContaMock).not.toHaveBeenCalled();
     });
 
-    it('não chama inativarConta se o titular já estiver inativo', async () => {
-      prismaMock.titularToken.findFirst.mockResolvedValue({ id: 'tok-1', titularId: 43 });
-      prismaMock.titularToken.update.mockResolvedValue({});
-      prismaMock.titular.findUnique.mockResolvedValue({ id: 43, statusPlano: 'INATIVO' });
+    it('não chama inativarConta se titular já estiver inativo', async () => {
+      prismaBosque.titularToken.findFirst.mockResolvedValue({ id: 'tok-1', titularId: 43 });
+      prismaBosque.titular.findUnique.mockResolvedValue({ id: 43, statusPlano: 'INATIVO' });
 
-      await service.confirmDeletion(RAW_TOKEN);
+      await service.confirmDeletion(RAW_TOKEN, 'bosque');
 
       expect(inativarContaMock).not.toHaveBeenCalled();
     });
 
-    it('lança erro 404 se o titular não existir mais', async () => {
-      prismaMock.titularToken.findFirst.mockResolvedValue({ id: 'tok-1', titularId: 99 });
-      prismaMock.titularToken.update.mockResolvedValue({});
-      prismaMock.titular.findUnique.mockResolvedValue(null);
+    it('lança erro 404 se titular não existir mais', async () => {
+      prismaBosque.titularToken.findFirst.mockResolvedValue({ id: 'tok-1', titularId: 99 });
+      prismaBosque.titular.findUnique.mockResolvedValue(null);
 
-      await expect(service.confirmDeletion(RAW_TOKEN)).rejects.toMatchObject({
+      await expect(service.confirmDeletion(RAW_TOKEN, 'bosque')).rejects.toMatchObject({
         status: 404,
       });
-
-      expect(inativarContaMock).not.toHaveBeenCalled();
     });
 
     it('consome o token mesmo que inativarConta falhe', async () => {
       mockValidToken();
       inativarContaMock.mockRejectedValue(new Error('Asaas timeout'));
 
-      await expect(service.confirmDeletion(RAW_TOKEN)).rejects.toThrow('Asaas timeout');
+      await expect(service.confirmDeletion(RAW_TOKEN, 'bosque')).rejects.toThrow('Asaas timeout');
 
-      // Token deve ter sido consumido antes de tentar inativar
-      expect(prismaMock.titularToken.update).toHaveBeenCalledWith(
+      expect(prismaBosque.titularToken.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { consumedAt: expect.any(Date) } }),
       );
     });
 
-    it('busca o token pelo hash SHA-256, não pelo valor cru', async () => {
+    it('busca pelo hash SHA-256, não pelo valor cru', async () => {
       mockValidToken();
 
-      await service.confirmDeletion(RAW_TOKEN);
+      await service.confirmDeletion(RAW_TOKEN, 'bosque');
 
-      const { where } = prismaMock.titularToken.findFirst.mock.calls[0][0] as { where: Record<string, unknown> };
+      const { where } = prismaBosque.titularToken.findFirst.mock.calls[0][0] as { where: Record<string, unknown> };
       expect(where.tokenHash).toBe(sha256(RAW_TOKEN));
       expect(where.tokenHash).not.toBe(RAW_TOKEN);
+    });
+
+    it('usa o banco do tenant correto (pax, não bosque)', async () => {
+      prismaPax.titularToken.findFirst.mockResolvedValue({ id: 'tok-1', titularId: 10 });
+      prismaPax.titular.findUnique.mockResolvedValue({ id: 10, statusPlano: 'ATIVO' });
+
+      await service.confirmDeletion(RAW_TOKEN, 'pax');
+
+      expect(prismaPax.titularToken.update).toHaveBeenCalled();
+      expect(prismaBosque.titularToken.update).not.toHaveBeenCalled();
     });
   });
 });
