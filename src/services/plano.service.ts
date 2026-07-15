@@ -181,6 +181,23 @@ export class PlanoService {
     return Array.from(unicos.values());
   }
 
+  // Resumo público (sem autenticação) para telas de marketing/onboarding.
+  // Expõe apenas o essencial do plano mais barato ativo — nada sensível.
+  async getPublicSummary(): Promise<{ nome: string; valorMensal: number } | null> {
+    const planoMaisBarato = await this.prisma.plano.findFirst({
+      where: { ativo: true },
+      orderBy: { valorMensal: 'asc' },
+      select: { nome: true, valorMensal: true },
+    });
+
+    if (!planoMaisBarato) return null;
+
+    return {
+      nome: planoMaisBarato.nome,
+      valorMensal: planoMaisBarato.valorMensal,
+    };
+  }
+
   async getAll(): Promise<PlanoType[]> {
     const planos = await this.prisma.plano.findMany({
       include: {

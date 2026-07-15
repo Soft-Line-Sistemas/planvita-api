@@ -22,6 +22,25 @@ export class PlanoController {
     return res.status(500).json({ message: 'Internal server error' });
   }
 
+  async getPublicSummary(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const service = new PlanoService(req.tenantId);
+      const result = await service.getPublicSummary();
+
+      if (!result) {
+        return res.status(404).json({ message: 'Nenhum plano disponível' });
+      }
+
+      this.logger.info('getPublicSummary executed successfully', { tenant: req.tenantId });
+      res.json(result);
+    } catch (error) {
+      this.logger.error('Failed to get public plano summary', error);
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
   async getAll(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
