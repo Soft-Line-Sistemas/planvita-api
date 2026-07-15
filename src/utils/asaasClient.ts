@@ -168,17 +168,42 @@ function resolveScopedEnv(baseName: string, tenantId: string, preferDevelopment:
   return firstDefinedEnv(names);
 }
 
+function resolveDevelopmentPreference(tenantId: string): boolean {
+  if (process.env.NODE_ENV === 'development') {
+    return true;
+  }
+
+  const tenantSuffix = normalizeTenantEnvSuffix(tenantId);
+  const tenantNames = tenantSuffix
+    ? [
+        `ASAAS_ENABLED_DEVELOPMENT_${tenantSuffix}`,
+        `ASAAS_ENABLED_DEV_${tenantSuffix}`,
+      ]
+    : [];
+  const value = firstDefinedEnv([
+    ...tenantNames,
+    'ASAAS_ENABLED_DEVELOPMENT',
+    'ASAAS_ENABLED_DEV',
+  ]);
+
+  return value === 'true';
+}
+
 export function resolveAsaasCredentials(tenantId: string): AsaasCredentials {
-  const isDevelopment = process.env.NODE_ENV === 'development';
-  const enabledValue = resolveScopedEnv('ASAAS_ENABLED', tenantId, isDevelopment);
+  const preferDevelopment = resolveDevelopmentPreference(tenantId);
+  const enabledValue = resolveScopedEnv('ASAAS_ENABLED', tenantId, preferDevelopment);
   const enabled = enabledValue !== 'false';
   const apiKey =
-    resolveScopedEnv('ASAAS_API_KEY', tenantId, isDevelopment) ||
-    resolveScopedEnv('ASAAS_TOKEN', tenantId, isDevelopment) ||
+    resolveScopedEnv('ASAAS_API_KEY', tenantId, preferDevelopment) ||
+    resolveScopedEnv('ASAAS_TOKEN', tenantId, preferDevelopment) ||
     '';
-  const webhookAuthToken = resolveScopedEnv('ASAAS_WEBHOOK_AUTH_TOKEN', tenantId, isDevelopment);
+  const webhookAuthToken = resolveScopedEnv(
+    'ASAAS_WEBHOOK_AUTH_TOKEN',
+    tenantId,
+    preferDevelopment,
+  );
   const baseUrl =
-    resolveScopedEnv('ASAAS_BASE_URL', tenantId, isDevelopment) ||
+    resolveScopedEnv('ASAAS_BASE_URL', tenantId, preferDevelopment) ||
     'https://sandbox.asaas.com/api/v3';
 
   const timeoutMs = Number(process.env.ASAAS_TIMEOUT_MS || 8000);
@@ -199,8 +224,8 @@ export function resolveAsaasCredentials(tenantId: string): AsaasCredentials {
 }
 
 export function resolveAsaasWebhookAuthToken(tenantId: string): string | undefined {
-  const isDevelopment = process.env.NODE_ENV === 'development';
-  return resolveScopedEnv('ASAAS_WEBHOOK_AUTH_TOKEN', tenantId, isDevelopment);
+  const preferDevelopment = resolveDevelopmentPreference(tenantId);
+  return resolveScopedEnv('ASAAS_WEBHOOK_AUTH_TOKEN', tenantId, preferDevelopment);
 }
 
 export class AsaasClient {
