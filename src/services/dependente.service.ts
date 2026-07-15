@@ -97,6 +97,52 @@ export class DependenteService {
     };
   }
 
+  private calcularIdade(dataNascimento: Date): number | null {
+    if (!(dataNascimento instanceof Date) || Number.isNaN(dataNascimento.getTime())) {
+      return null;
+    }
+
+    const hoje = new Date();
+    let idade = hoje.getFullYear() - dataNascimento.getFullYear();
+    const deltaMes = hoje.getMonth() - dataNascimento.getMonth();
+
+    if (deltaMes < 0 || (deltaMes === 0 && hoje.getDate() < dataNascimento.getDate())) {
+      idade -= 1;
+    }
+
+    return idade >= 0 ? idade : null;
+  }
+
+  private async validarIdadeMaximaDependente(dataNascimento: Date) {
+    const regras = await this.prisma.businessRules.findFirst({
+      where: { tenantId: this.tenantId },
+      select: { idadeMaximaDependente: true },
+    });
+
+    const idadeMaximaDependente = regras?.idadeMaximaDependente ?? null;
+    if (!Number.isFinite(idadeMaximaDependente) || idadeMaximaDependente === null || idadeMaximaDependente < 0) {
+      return;
+    }
+
+    const idadeInformada = this.calcularIdade(dataNascimento);
+    if (idadeInformada === null) {
+      throw this.invalidDateError();
+    }
+
+    if (idadeInformada > idadeMaximaDependente) {
+      const err: any = new Error(
+        `Dependente excede a idade máxima permitida (${idadeMaximaDependente} anos).`,
+      );
+      err.status = 400;
+      err.code = 'IDADE_MAXIMA_DEPENDENTE_EXCEDIDA';
+      err.meta = {
+        idadeMaximaDependente,
+        idadeInformada,
+      };
+      throw err;
+    }
+  }
+
   private async validarLimiteBeneficiarios(
     titularId: number,
     novosDependentes = 1,
@@ -170,6 +216,7 @@ export class DependenteService {
     }
 
     await this.validarLimiteBeneficiarios(titularId);
+    await this.validarIdadeMaximaDependente((normalizedData as any).dataNascimento);
     const dependente = await this.prisma.dependente.create({ data: normalizedData });
 
     await this.pricingService.recalcularDependentesDoTitular(titularId);
@@ -196,6 +243,13 @@ export class DependenteService {
         throw err;
       }
       await this.validarLimiteBeneficiarios(titularId, 1, Number(id));
+    }
+
+    const currentDataNascimento = (normalizedData as any)?.dataNascimento;
+    if (currentDataNascimento instanceof Date) {
+      await this.validarIdadeMaximaDependente(currentDataNascimento);
+    } else if (currentDataNascimento?.set instanceof Date) {
+      await this.validarIdadeMaximaDependente(currentDataNascimento.set);
     }
 
     const dependente = await this.prisma.dependente.update({
