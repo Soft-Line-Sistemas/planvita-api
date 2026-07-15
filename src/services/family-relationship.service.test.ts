@@ -1,7 +1,15 @@
-jest.mock('fs', () => ({
+const mockFs = {
   existsSync: jest.fn().mockReturnValue(false),
   readFileSync: jest.fn(),
+};
+
+jest.mock('fs', () => ({
+  __esModule: true,
+  default: mockFs,
+  ...mockFs,
 }));
+
+const fs = require('fs').default;
 
 // Reset module cache to clear the cached maps between tests
 beforeEach(() => {
@@ -47,6 +55,37 @@ describe('family-relationship.service', () => {
       const result1 = canonicalizeRelationship('FILHO');
       const result2 = canonicalizeRelationship('filho');
       expect(result1).toBe(result2);
+    });
+
+    it('classifica tio, sobrinho e primo como outro quando o mapa configurado assim', () => {
+      fs.existsSync.mockReturnValue(true);
+      fs.readFileSync.mockReturnValue(
+        JSON.stringify({
+          primeiro_grau: ['1 grau', '1° grau', '1º grau', '1o grau'],
+          segundo_grau: ['2 grau', '2° grau', '2º grau', '2o grau'],
+          outro: [
+            'outro',
+            'tio',
+            'tia',
+            'tio(a)',
+            'sobrinho',
+            'sobrinha',
+            'sobrinho(a)',
+            'primo',
+            'prima',
+            'primo(a)',
+          ],
+        }),
+      );
+
+      jest.isolateModules(() => {
+        const mod = require('./family-relationship.service');
+        expect(mod.canonicalizeRelationship('Tio(a)')).toBe('outro');
+        expect(mod.canonicalizeRelationship('Sobrinho(a)')).toBe('outro');
+        expect(mod.canonicalizeRelationship('Primo(a)')).toBe('outro');
+        expect(mod.canonicalizeRelationship('1° Grau')).toBe('primeiro_grau');
+        expect(mod.canonicalizeRelationship('2° Grau')).toBe('segundo_grau');
+      });
     });
   });
 
@@ -126,8 +165,13 @@ describe('family-relationship.service', () => {
       expect(isRelationshipInGrade('irmao', ['irmaos'])).toBe(true);
     });
 
-    it('trata "sobrinhos ate 50 anos" como grupo cobrindo sobrinho', () => {
-      expect(isRelationshipInGrade('sobrinho', ['sobrinhos ate 50 anos'])).toBe(true);
+    it('nao enquadra sobrinho em grade especifica quando ele passa a seguir a regra de outro', () => {
+      expect(isRelationshipInGrade('sobrinho', ['sobrinhos ate 50 anos'])).toBe(false);
+    });
+
+    it('considera 1° e 2° grau como vínculos familiares válidos para grade resumida', () => {
+      expect(isRelationshipInGrade('1° Grau', ['Titular'])).toBe(true);
+      expect(isRelationshipInGrade('2° Grau', ['Titular'])).toBe(true);
     });
 
     it('trata "esposo a ate 55 anos" como grupo cobrindo conjuge', () => {
