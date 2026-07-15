@@ -91,6 +91,12 @@ export const isRelationshipInGrade = (
     .filter((value) => value.length > 0);
 
   if (rawBeneficiaries.length === 0) return true;
+  if (
+    normalizedDependent === 'primeiro_grau' ||
+    normalizedDependent === 'segundo_grau'
+  ) {
+    return true;
+  }
 
   const matchesGroupedBeneficiary = (rawBeneficiary: string): boolean => {
     const normalizedBeneficiary = normalizeText(rawBeneficiary);

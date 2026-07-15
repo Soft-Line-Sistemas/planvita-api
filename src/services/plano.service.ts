@@ -483,31 +483,48 @@ export class PlanoService {
     maiorIdade: number,
     permitirSocialEssencial: boolean,
   ): T[] {
-    const faixas = planos
-      .filter((plano) => typeof plano.idadeMaxima === 'number' && Number.isFinite(plano.idadeMaxima))
-      .sort((a, b) => (a.idadeMaxima as number) - (b.idadeMaxima as number));
-    const planoSemLimite = planos.filter((plano) => plano.idadeMaxima == null);
-    const faixaCompativel = faixas.find((plano) => maiorIdade <= (plano.idadeMaxima as number));
-    const idadeFaixa = faixaCompativel?.idadeMaxima ?? null;
-
-    let compativeis = idadeFaixa == null
-      ? planoSemLimite
-      : planos.filter((plano) => plano.idadeMaxima === idadeFaixa);
+    const planosOrdenados = [...planos].sort((a, b) => {
+      const idadeA = a.idadeMaxima ?? Number.POSITIVE_INFINITY;
+      const idadeB = b.idadeMaxima ?? Number.POSITIVE_INFINITY;
+      return idadeA - idadeB;
+    });
 
     if (permitirSocialEssencial) {
-      const socialEssencial = planos.filter(
+      const socialEssencial = planosOrdenados.filter(
         (plano) => this.isPlanoSocial(plano.nome) || this.isPlanoEssencial(plano.nome),
       );
       if (socialEssencial.length > 0) {
-        compativeis = socialEssencial;
+        return socialEssencial;
       }
     }
 
-    if (!permitirSocialEssencial) {
-      compativeis = compativeis.filter((plano) => !this.isPlanoSocial(plano.nome));
+    const candidatosPorFaixa = planosOrdenados.filter((plano) => {
+      if (plano.idadeMaxima == null) return true;
+      return maiorIdade <= plano.idadeMaxima;
+    });
+
+    const candidatosSemSocial = permitirSocialEssencial
+      ? candidatosPorFaixa
+      : candidatosPorFaixa.filter((plano) => !this.isPlanoSocial(plano.nome));
+
+    if (candidatosSemSocial.length === 0) {
+      return [];
     }
 
-    return compativeis;
+    const menorFaixaCompativel =
+      candidatosSemSocial.find(
+        (plano) =>
+          typeof plano.idadeMaxima === 'number' &&
+          Number.isFinite(plano.idadeMaxima),
+      )?.idadeMaxima ?? null;
+
+    if (menorFaixaCompativel == null) {
+      return candidatosSemSocial.filter((plano) => plano.idadeMaxima == null);
+    }
+
+    return candidatosSemSocial.filter(
+      (plano) => plano.idadeMaxima === menorFaixaCompativel,
+    );
   }
 
   private elegivelPorComposicao(
