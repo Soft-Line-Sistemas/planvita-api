@@ -5,6 +5,7 @@ import { authenticate, authorize } from '../middlewares/auth.middleware';
 const router = Router();
 const controller = new PlanoController();
 
+router.get('/public/summary', (req, res) => controller.getPublicSummary(req as any, res));
 router.get('/', authenticate, (req, res) => controller.getAll(req as any, res));
 router.get('/:id', authenticate, (req, res) => controller.getById(req as any, res));
 router.post('/', authenticate, authorize(['plano.create']), (req, res) =>
