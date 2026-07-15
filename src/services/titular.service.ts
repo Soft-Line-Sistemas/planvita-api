@@ -563,6 +563,53 @@ export class TitularService {
     }
   }
 
+  private async obterIdadeMaximaDependente(): Promise<number | null> {
+    const regras = await this.prisma.businessRules.findFirst({
+      where: { tenantId: this.tenantId },
+      select: { idadeMaximaDependente: true },
+    });
+
+    const idadeMaximaDependente = regras?.idadeMaximaDependente ?? null;
+    if (idadeMaximaDependente === null || idadeMaximaDependente === undefined) {
+      return null;
+    }
+
+    return Number.isFinite(idadeMaximaDependente) && idadeMaximaDependente >= 0
+      ? idadeMaximaDependente
+      : null;
+  }
+
+  private async validarIdadeMaximaDependente(
+    dataNascimento: string | Date,
+    dependenteNome?: string,
+  ) {
+    const idadeMaximaDependente = await this.obterIdadeMaximaDependente();
+    if (idadeMaximaDependente === null) return;
+
+    const idadeInformada = this.calcularIdade(dataNascimento);
+    if (idadeInformada === null) {
+      const err: any = new Error('Data de nascimento do dependente inválida.');
+      err.status = 400;
+      err.code = 'DEPENDENTE_DATA_NASCIMENTO_INVALIDA';
+      throw err;
+    }
+
+    if (idadeInformada > idadeMaximaDependente) {
+      const complemento = dependenteNome ? ` ${dependenteNome}` : '';
+      const err: any = new Error(
+        `Dependente${complemento} excede a idade máxima permitida (${idadeMaximaDependente} anos).`,
+      );
+      err.status = 400;
+      err.code = 'IDADE_MAXIMA_DEPENDENTE_EXCEDIDA';
+      err.meta = {
+        dependenteNome: dependenteNome || null,
+        idadeMaximaDependente,
+        idadeInformada,
+      };
+      throw err;
+    }
+  }
+
   private validarCpfUnicoNoCadastro(data: CadastroTitularRequest) {
     const titularCpf = String(data?.step1?.cpf ?? '').replace(/\D/g, '');
     const responsavelCpf = String(data?.step3?.cpf ?? '').replace(/\D/g, '');
@@ -1325,6 +1372,12 @@ export class TitularService {
       excluirCobrancaAdicional: false,
     })) ?? []),
     ];
+    for (const dependente of dependentesData) {
+      await this.validarIdadeMaximaDependente(
+        dependente.dataNascimento,
+        String(dependente.nome ?? '').trim() || undefined,
+      );
+    }
     await this.validarLimiteBeneficiariosCadastro(
       (dependentesData?.length ?? 0) + (corresponsavelContaNaGrade ? 1 : 0),
     );

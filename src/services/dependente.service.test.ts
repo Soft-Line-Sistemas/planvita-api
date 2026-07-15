@@ -146,6 +146,31 @@ describe('DependenteService', () => {
       } as any)).rejects.toMatchObject({ status: 400 });
     });
 
+    it('rejeita create quando dependente excede a idade máxima configurada', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-06-18T12:00:00.000Z'));
+      (prismaMock.businessRules.findFirst as jest.Mock).mockResolvedValue({
+        limiteBeneficiarios: 8,
+        idadeMaximaDependente: 21,
+      });
+      (prismaMock.dependente.count as jest.Mock).mockResolvedValue(0);
+
+      await expect(
+        service.create({
+          titularId: 1,
+          nome: 'Dependente Adulto',
+          tipoDependente: 'Filho(a)',
+          dataNascimento: '2000-01-01',
+        } as any),
+      ).rejects.toMatchObject({
+        status: 400,
+        code: 'IDADE_MAXIMA_DEPENDENTE_EXCEDIDA',
+        meta: { idadeMaximaDependente: 21, idadeInformada: 26 },
+      });
+
+      expect(prismaMock.dependente.create).not.toHaveBeenCalled();
+      jest.useRealTimers();
+    });
+
     it('permite criação quando count < limite', async () => {
       (prismaMock.businessRules.findFirst as jest.Mock).mockResolvedValue({ limiteBeneficiarios: 5 });
       (prismaMock.dependente.count as jest.Mock).mockResolvedValue(3);
@@ -299,6 +324,27 @@ describe('DependenteService', () => {
 
       await expect(service.update(1, { nome: 'X' } as any)).rejects.toThrow();
       // recalcular pode ou não ter sido chamado dependendo da ordem — verificamos só que não lança erro secundário
+    });
+
+    it('rejeita update quando nova data excede a idade máxima configurada', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-06-18T12:00:00.000Z'));
+      (prismaMock.dependente.findUnique as jest.Mock).mockResolvedValue({ id: 1, titularId: 1 });
+      (prismaMock.businessRules.findFirst as jest.Mock).mockResolvedValue({
+        limiteBeneficiarios: 10,
+        idadeMaximaDependente: 21,
+      });
+      (prismaMock.dependente.count as jest.Mock).mockResolvedValue(0);
+
+      await expect(
+        service.update(1, { dataNascimento: '2000-01-01' } as any),
+      ).rejects.toMatchObject({
+        status: 400,
+        code: 'IDADE_MAXIMA_DEPENDENTE_EXCEDIDA',
+        meta: { idadeMaximaDependente: 21, idadeInformada: 26 },
+      });
+
+      expect(prismaMock.dependente.update).not.toHaveBeenCalled();
+      jest.useRealTimers();
     });
   });
 

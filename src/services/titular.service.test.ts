@@ -488,6 +488,40 @@ describe('TitularService', () => {
       jest.useRealTimers();
     });
 
+    it('deve rejeitar cadastro quando dependente excede a idade máxima configurada', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-06-18T12:00:00.000Z'));
+      prismaMock.businessRules.findFirst.mockResolvedValue({
+        limiteBeneficiarios: 8,
+        idadeMaximaDependente: 21,
+      });
+      const service = new TitularService('tenant-123');
+
+      const payload = makePayload({
+        dependentes: [
+          {
+            nome: 'Dependente Adulto',
+            idade: 26,
+            dataNascimento: '2000-01-01',
+            parentesco: 'Filho(a)',
+            telefone: '',
+            cpf: '',
+          },
+        ],
+      });
+
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({
+        status: 400,
+        code: 'IDADE_MAXIMA_DEPENDENTE_EXCEDIDA',
+        meta: expect.objectContaining({
+          dependenteNome: 'Dependente Adulto',
+          idadeMaximaDependente: 21,
+          idadeInformada: 26,
+        }),
+      });
+
+      jest.useRealTimers();
+    });
+
     it('deve rejeitar cadastro quando faltarem campos obrigatórios do corresponsável', async () => {
       const service = new TitularService('tenant-123');
 
