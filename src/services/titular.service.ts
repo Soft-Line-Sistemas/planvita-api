@@ -931,6 +931,78 @@ export class TitularService {
     return { atualizadosAtivo, atualizadosSuspenso };
   }
 
+  private async cleanupPotentialOrphanDataForFreshTitular(tx: any, titularId: number) {
+    const contasReceber = await tx.contaReceber.findMany({
+      where: { clienteId: titularId },
+      select: { id: true },
+    });
+    const contaReceberIds = contasReceber
+      .map((item: { id: number }) => item.id)
+      .filter((id: number) => Number.isInteger(id) && id > 0);
+
+    const comissoes = await tx.comissao.findMany({
+      where: { titularId },
+      select: { contaPagarId: true },
+    });
+    const contaPagarIds = comissoes
+      .map((item: { contaPagarId: number | null }) => item.contaPagarId)
+      .filter((id: number | null): id is number => Number.isInteger(id) && Number(id) > 0);
+
+    if (tx.notificationLog) {
+      await tx.notificationLog.deleteMany({
+        where: { titularId },
+      });
+    }
+
+    if (tx.whatsappAutomationDispatch) {
+      await tx.whatsappAutomationDispatch.deleteMany({
+        where: { titularId },
+      });
+      if (contaReceberIds.length > 0) {
+        await tx.whatsappAutomationDispatch.deleteMany({
+          where: { contaReceberId: { in: contaReceberIds } },
+        });
+      }
+    }
+
+    if (tx.financialAudit && contaReceberIds.length > 0) {
+      await tx.financialAudit.deleteMany({
+        where: {
+          entityType: 'ContaReceber',
+          entityId: { in: contaReceberIds },
+        },
+      });
+    }
+
+    if (tx.paymentMethodChangeRequest) {
+      await tx.paymentMethodChangeRequest.deleteMany({
+        where: { titularId },
+      });
+    }
+
+    await tx.$executeRawUnsafe(`DELETE FROM consent_acceptances WHERE titularId = ${titularId}`);
+    await tx.titularCredential.deleteMany({ where: { titularId } });
+    await tx.titularOtp.deleteMany({ where: { titularId } });
+    await tx.titularToken.deleteMany({ where: { titularId } });
+    await tx.assinaturaDigital.deleteMany({ where: { titularId } });
+    await tx.documento.deleteMany({ where: { titularId } });
+    await tx.parceriaVantagemResgate.deleteMany({ where: { titularId } });
+    await tx.dependente.deleteMany({ where: { titularId } });
+    await tx.corresponsavel.deleteMany({ where: { titularId } });
+    await tx.pagamento.deleteMany({ where: { titularId } });
+    await tx.comissao.deleteMany({ where: { titularId } });
+
+    if (contaPagarIds.length > 0) {
+      await tx.contaPagar.deleteMany({
+        where: { id: { in: contaPagarIds } },
+      });
+    }
+
+    await tx.contaReceber.deleteMany({ where: { clienteId: titularId } });
+    await tx.orcamento.deleteMany({ where: { clienteId: titularId } });
+    await tx.recibo.deleteMany({ where: { clienteId: titularId } });
+  }
+
   async sincronizarStatusPlanoLote(batchSize = 500): Promise<{
     totalProcessados: number;
     atualizadosAtivo: number;
@@ -1483,10 +1555,6 @@ export class TitularService {
                   },
                 }
               : undefined,
-            dependentes: dependentesData?.length
-              ? { create: dependentesData }
-              : undefined,
-            corresponsaveis: { create: [corresponsavelData] },
           },
           include: {
             dependentes: true,
@@ -1494,9 +1562,34 @@ export class TitularService {
           },
         });
 
-        await this.persistConsentAcceptances(tx, titular.id, consentAcceptances);
+        await this.cleanupPotentialOrphanDataForFreshTitular(tx, titular.id);
 
-        return { titular, consultor };
+        if (dependentesData?.length) {
+          await tx.dependente.createMany({
+            data: dependentesData.map((dependente) => ({
+              ...dependente,
+              titularId: titular.id,
+            })),
+          });
+        }
+
+        await tx.corresponsavel.create({
+          data: {
+            ...corresponsavelData,
+            titularId: titular.id,
+          },
+        });
+
+        await this.persistConsentAcceptances(tx, titular.id, consentAcceptances);
+        const titularCompleto = await tx.titular.findUniqueOrThrow({
+          where: { id: titular.id },
+          include: {
+            dependentes: true,
+            corresponsaveis: true,
+          },
+        });
+
+        return { titular: titularCompleto, consultor };
       });
 
       const novoTitular = cadastroCriado.titular;
