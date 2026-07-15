@@ -28,6 +28,7 @@ router.get('/relatorios', authenticate, controller.getRelatorioFinanceiro.bind(c
 router.get('/metricas/recorrencia', authenticate, controller.getMetricasRecorrencia.bind(controller));
 router.get('/recorrencias', authenticate, controller.getRecorrencias.bind(controller));
 router.post('/recorrencias/sincronizar', authenticate, controller.syncRecorrencias.bind(controller));
+router.post('/asaas/sync-now', authenticate, controller.syncAsaasNow.bind(controller));
 router.post(
   '/recorrencias/titular/:titularId/gerar',
   authenticate,

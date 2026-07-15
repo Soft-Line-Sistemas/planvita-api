@@ -1,6 +1,12 @@
 import { Request, Response } from 'express';
 import { AsaasIntegrationService } from '../services/asaas-integration.service';
-import { AsaasClient, AsaasWebhookEvent, resolveTenantForWebhook } from '../utils/asaasClient';
+import {
+  AsaasClient,
+  AsaasWebhookEvent,
+  resolveAsaasWebhookAuthToken,
+  resolveTenantForWebhook,
+} from '../utils/asaasClient';
+import { getPrismaForTenant } from '../utils/prisma';
 import Logger from '../utils/logger';
 
 export class AsaasController {
@@ -14,56 +20,163 @@ export class AsaasController {
     const bodyTenant = (req.body as any)?.tenantId as string | undefined;
     const tenantId = resolveTenantForWebhook(tenantHeader, queryTenant || bodyTenant);
 
-    if (!tenantId) {
-      this.logger.warn('Webhook Asaas rejeitado: tenant ausente');
-      return res.status(400).json({ message: 'Tenant não informado' });
-    }
-
     if (!req.body || typeof req.body !== 'object' || !Object.keys(req.body).length) {
       this.logger.warn('Webhook Asaas rejeitado: payload vazio', { tenantId });
       return res.status(400).json({ message: 'Payload inválido' });
     }
 
+    const webhookEvent = req.body as AsaasWebhookEvent;
+    const resolvedTenantId =
+      tenantId ?? (await this.resolveTenantFromWebhookEvent(webhookEvent, (req as any).requestId));
+
+    if (!resolvedTenantId) {
+      this.logger.warn('Webhook Asaas rejeitado: tenant não resolvido pelo payload', {
+        paymentId: webhookEvent.payment?.id,
+        subscriptionId: webhookEvent.payment?.subscription ?? webhookEvent.subscription?.id,
+        customerId: this.extractCustomerId(webhookEvent),
+      });
+      return res.status(400).json({ message: tenantId ? 'Tenant não identificado para o evento' : 'Tenant não informado' });
+    }
+
     let client: AsaasClient;
     try {
-      client = new AsaasClient(tenantId, (req as any).requestId);
+      client = new AsaasClient(resolvedTenantId, (req as any).requestId);
     } catch (error: any) {
-      this.logger.error('Falha ao inicializar client Asaas', error, { tenantId });
+      this.logger.error('Falha ao inicializar client Asaas', error, { tenantId: resolvedTenantId });
       return res.status(400).json({ message: 'Tenant sem configuração Asaas' });
     }
 
-    const rawBody = (req as any).rawBody || JSON.stringify(req.body || {});
-    const signature =
-      (req.headers['x-signature'] as string | undefined) ||
-      (req.headers['asaas-signature'] as string | undefined) ||
-      (req.headers['x-asaas-signature'] as string | undefined) ||
-      (req.headers['x-hub-signature'] as string | undefined);
+    const authTokenHeader = req.headers['asaas-access-token'] as string | undefined;
+    const expectedAuthToken = resolveAsaasWebhookAuthToken(resolvedTenantId);
 
-    if (!client.validateWebhookSignature(rawBody, signature)) {
-      this.logger.warn('Assinatura Asaas inválida', {
-        tenantId,
-        signaturePresent: !!signature,
+    if (expectedAuthToken && authTokenHeader !== expectedAuthToken) {
+      this.logger.warn('Token de autenticação do webhook Asaas inválido', {
+        tenantId: resolvedTenantId,
+        authTokenPresent: !!authTokenHeader,
       });
-      return res.status(401).json({ message: 'Assinatura inválida' });
+      return res.status(401).json({ message: 'Token de autenticação inválido' });
     }
 
-    const integration = new AsaasIntegrationService(tenantId, (req as any).requestId);
+    const integration = new AsaasIntegrationService(resolvedTenantId, (req as any).requestId);
 
     try {
-      const result = await integration.handleWebhook(req.body as AsaasWebhookEvent);
+      const result = await integration.handleWebhook(webhookEvent);
       this.logger.info('Webhook Asaas processado', {
-        tenantId,
-        paymentId: (req.body as any)?.payment?.id,
-        subscriptionId: (req.body as any)?.subscription?.id,
+        tenantId: resolvedTenantId,
+        paymentId: webhookEvent?.payment?.id,
+        subscriptionId: webhookEvent?.subscription?.id,
         status: result.status,
       });
       return res.status(200).json({ ok: true });
     } catch (error: any) {
       this.logger.error('Erro ao processar webhook Asaas', error, {
-        tenantId,
-        event: (req.body as any)?.event,
+        tenantId: resolvedTenantId,
+        event: webhookEvent?.event,
       });
       return res.status(500).json({ message: 'Erro ao processar webhook' });
     }
+  }
+
+  private async resolveTenantFromWebhookEvent(
+    event: AsaasWebhookEvent,
+    requestId?: string,
+  ): Promise<string | null> {
+    const paymentId = event.payment?.id ?? null;
+    const subscriptionId = event.payment?.subscription ?? event.subscription?.id ?? null;
+    const customerId = this.extractCustomerId(event);
+    const configuredTenants = Object.keys(process.env)
+      .filter((key) => key.startsWith('DATABASE_URL_') && process.env[key])
+      .map((key) => key.replace(/^DATABASE_URL_/, '').toLowerCase())
+      .filter(Boolean);
+
+    if (!configuredTenants.length) {
+      this.logger.warn('Nenhum tenant configurado para resolver webhook Asaas', { requestId });
+      return null;
+    }
+
+    const matches = new Set<string>();
+
+    for (const tenantId of configuredTenants) {
+      try {
+        const prisma = getPrismaForTenant(tenantId);
+
+        if (paymentId) {
+          const conta = await prisma.contaReceber.findUnique({
+            where: { asaasPaymentId: paymentId },
+            select: { id: true },
+          });
+          if (conta) {
+            matches.add(tenantId);
+            continue;
+          }
+
+          const pagamento = await prisma.pagamento.findUnique({
+            where: { asaasPaymentId: paymentId },
+            select: { id: true },
+          });
+          if (pagamento) {
+            matches.add(tenantId);
+            continue;
+          }
+        }
+
+        if (subscriptionId) {
+          const [conta, pagamento] = await Promise.all([
+            prisma.contaReceber.findFirst({
+              where: { asaasSubscriptionId: subscriptionId },
+              select: { id: true },
+            }),
+            prisma.pagamento.findFirst({
+              where: { asaasSubscriptionId: subscriptionId },
+              select: { id: true },
+            }),
+          ]);
+          if (conta || pagamento) {
+            matches.add(tenantId);
+            continue;
+          }
+        }
+
+        if (customerId) {
+          const titular = await prisma.titular.findFirst({
+            where: { asaasCustomerId: customerId },
+            select: { id: true },
+          });
+          if (titular) {
+            matches.add(tenantId);
+          }
+        }
+      } catch (error: any) {
+        this.logger.warn('Falha ao inspecionar tenant para webhook Asaas', {
+          tenantId,
+          requestId,
+          error: error?.message,
+        });
+      }
+    }
+
+    if (matches.size > 1) {
+      this.logger.error('Webhook Asaas ambíguo: evento encontrado em múltiplos tenants', {
+        requestId,
+        paymentId,
+        subscriptionId,
+        customerId,
+        tenants: Array.from(matches),
+      });
+      return null;
+    }
+
+    return Array.from(matches)[0] ?? null;
+  }
+
+  private extractCustomerId(event: AsaasWebhookEvent): string | null {
+    const paymentCustomer = event.payment?.customer;
+    if (typeof paymentCustomer === 'string' && paymentCustomer.trim()) {
+      return paymentCustomer.trim();
+    }
+    if (paymentCustomer && typeof paymentCustomer === 'object' && paymentCustomer.id?.trim()) {
+      return paymentCustomer.id.trim();
+    }
+    return event.customer?.id?.trim() ?? null;
   }
 }

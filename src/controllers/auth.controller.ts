@@ -20,6 +20,29 @@ export class AuthController {
   private logger = new Logger({ service: 'AuthController' });
   private readonly clienteTenantFallback = ['lider', 'pax', 'bosque'];
 
+  private getCookieDomain(req: Request): string | undefined {
+    if (config.server.nodeEnv !== 'production') return undefined;
+
+    const forwardedHost = req.headers['x-forwarded-host'];
+    const rawHost =
+      (typeof forwardedHost === 'string' && forwardedHost) ||
+      req.headers.host ||
+      '';
+    const hostname = rawHost.split(',')[0]?.trim().split(':')[0]?.toLowerCase();
+
+    if (!hostname || hostname === 'localhost') return undefined;
+
+    const parts = hostname.split('.');
+    if (parts.length < 2) return undefined;
+
+    const baseDomain =
+      parts.length >= 3 && parts.slice(-2).join('.') === 'com.br'
+        ? parts.slice(-3).join('.')
+        : parts.slice(-2).join('.');
+
+    return `.${baseDomain}`;
+  }
+
   private resolveRequestIp(req: Request): string | null {
     const forwarded = req.headers['x-forwarded-for'];
     if (typeof forwarded === 'string' && forwarded.trim()) return forwarded;
@@ -27,13 +50,13 @@ export class AuthController {
     return req.socket?.remoteAddress ?? null;
   }
 
-  private getClienteTenantCookieOptions() {
+  private getClienteTenantCookieOptions(req: Request) {
     const isProd = config.server.nodeEnv === 'production';
     return {
       httpOnly: false as const,
       secure: isProd,
       sameSite: 'lax' as const,
-      domain: isProd ? '.planvita.com.br' : undefined,
+      domain: this.getCookieDomain(req),
       maxAge: 1000 * 60 * 60 * 24 * 30,
       path: '/',
     };
@@ -47,13 +70,13 @@ export class AuthController {
     return Array.from(new Set(ordered));
   }
 
-  private getClienteCookieOptions() {
+  private getClienteCookieOptions(req: Request) {
     const isProd = config.server.nodeEnv === 'production';
     return {
       httpOnly: true as const,
       secure: isProd,
       sameSite: (isProd ? 'none' : 'lax') as 'none' | 'lax',
-      domain: isProd ? '.planvita.com.br' : undefined,
+      domain: this.getCookieDomain(req),
       maxAge: 1000 * 60 * 60 * 24 * 30, // 30 dias (sessão cliente)
       path: '/',
     };
@@ -100,8 +123,8 @@ export class AuthController {
               email: result.email,
             });
 
-            res.cookie('cliente_token', clienteToken, this.getClienteCookieOptions());
-            res.cookie('tenant', tenant, this.getClienteTenantCookieOptions());
+            res.cookie('cliente_token', clienteToken, this.getClienteCookieOptions(req));
+            res.cookie('tenant', tenant, this.getClienteTenantCookieOptions(req));
 
             return res.json(result);
           } catch (error) {
@@ -141,11 +164,12 @@ export class AuthController {
 
       const token = service.generateToken(user);
 
+      const cookieDomain = this.getCookieDomain(req);
       res.cookie('auth_token', token, {
         httpOnly: true,
         secure: true,
         sameSite: 'none',
-        domain: process.env.NODE_ENV === 'production' ? '.planvita.com.br' : undefined,
+        domain: cookieDomain,
         maxAge: 1000 * 60 * 60 * 24, // 1 dia
       });
 
@@ -191,7 +215,7 @@ export class AuthController {
         }
       }
 
-      res.cookie('tenant', targetTenant, this.getClienteTenantCookieOptions());
+      res.cookie('tenant', targetTenant, this.getClienteTenantCookieOptions(req));
 
       res.status(201).json({
         titularId: novoTitular.titular.id,
@@ -430,12 +454,11 @@ export class AuthController {
   }
 
   async logout(req: Request, res: Response) {
-    const isProd = config.server.nodeEnv === 'production';
-    const domain = isProd ? '.planvita.com.br' : undefined;
+    const domain = this.getCookieDomain(req);
 
     res.cookie('auth_token', '', { maxAge: -1, path: '/', domain });
     res.cookie('cliente_token', '', {
-      ...this.getClienteCookieOptions(),
+      ...this.getClienteCookieOptions(req),
       maxAge: -1,
     });
     res.json({ message: 'Logout realizado com sucesso' });
