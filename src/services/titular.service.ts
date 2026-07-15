@@ -148,7 +148,7 @@ const TITULAR_FULL_SELECT = Prisma.validator<Prisma.TitularSelect>()({
       nome: true,
     },
   },
-  assinaturas: { select: { tipo: true } },
+  assinaturas: { select: { tipo: true, createdAt: true } },
 });
 
 const TITULAR_LIST_SELECT = Prisma.validator<Prisma.TitularSelect>()({

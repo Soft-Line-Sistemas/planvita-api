@@ -100,6 +100,11 @@ export interface ContaReceberInput {
   billingType?: 'PIX' | 'BOLETO' | 'CREDIT_CARD';
 }
 
+export interface SyncAsaasOptions {
+  maxPages?: number;
+  onlyOpen?: boolean;
+}
+
 export interface FinanceiroCatalogosDTO {
   bancos: BancoFinanceiroType[];
   tiposContabeis: TipoContabilFinanceiroType[];
@@ -1403,11 +1408,13 @@ export class FinanceiroService {
     ];
   }
 
-  async sincronizarRecorrenciasAsaas() {
+  async sincronizarRecorrenciasAsaas(opts?: SyncAsaasOptions) {
     if (!this.asaasIntegration.isEnabled()) {
       return { processed: 0, inserted: 0, updated: 0 };
     }
-    return this.asaasIntegration.syncRecurringPaymentsFromProvider({ maxPages: 1, onlyOpen: true });
+    const maxPages = Math.max(1, Math.min(Number(opts?.maxPages ?? 1), 20));
+    const onlyOpen = opts?.onlyOpen !== false;
+    return this.asaasIntegration.syncRecurringPaymentsFromProvider({ maxPages, onlyOpen });
   }
 
   async listarRecorrencias(): Promise<RecorrenciaFinanceiraDTO[]> {

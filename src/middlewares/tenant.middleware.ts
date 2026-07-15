@@ -61,8 +61,15 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
       // Se for um domínio da Vercel ou o domínio principal, não tentamos extrair o tenant do hostname
       // a menos que haja um subdomínio explícito antes do nome do projeto.
       const isVercel = hostname.includes('vercel.app');
-      const isMainDomain = hostname === 'planvita.com.br' || hostname === 'localhost';
-      const isGenericSubdomain = hostname === 'app.planvita.com.br' || hostname === 'api.planvita.com.br';
+      const isMainDomain =
+        hostname === 'planvita.com.br' ||
+        hostname === 'campodobosque.com.br' ||
+        hostname === 'localhost';
+      const isGenericSubdomain =
+        hostname === 'app.planvita.com.br' ||
+        hostname === 'api.planvita.com.br' ||
+        hostname === 'app.campodobosque.com.br' ||
+        hostname === 'api.campodobosque.com.br';
 
       if (!isVercel && !isMainDomain && !isGenericSubdomain) {
         const parts = hostname.split('.');

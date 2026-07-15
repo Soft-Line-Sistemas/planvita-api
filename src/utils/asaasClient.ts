@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import { Logger } from './logger';
 import { retry } from './helpers';
 
@@ -6,7 +5,7 @@ type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 export interface AsaasCredentials {
   apiKey: string;
-  webhookSecret?: string;
+  webhookAuthToken?: string;
   baseUrl: string;
   enabled: boolean;
   timeoutMs: number;
@@ -177,7 +176,7 @@ export function resolveAsaasCredentials(tenantId: string): AsaasCredentials {
     resolveScopedEnv('ASAAS_API_KEY', tenantId, isDevelopment) ||
     resolveScopedEnv('ASAAS_TOKEN', tenantId, isDevelopment) ||
     '';
-  const webhookSecret = resolveScopedEnv('ASAAS_WEBHOOK_SECRET', tenantId, isDevelopment);
+  const webhookAuthToken = resolveScopedEnv('ASAAS_WEBHOOK_AUTH_TOKEN', tenantId, isDevelopment);
   const baseUrl =
     resolveScopedEnv('ASAAS_BASE_URL', tenantId, isDevelopment) ||
     'https://sandbox.asaas.com/api/v3';
@@ -191,12 +190,17 @@ export function resolveAsaasCredentials(tenantId: string): AsaasCredentials {
 
   return {
     apiKey,
-    webhookSecret,
+    webhookAuthToken,
     baseUrl: baseUrl.replace(/\/$/, ''),
     enabled,
     timeoutMs,
     maxRetries,
   };
+}
+
+export function resolveAsaasWebhookAuthToken(tenantId: string): string | undefined {
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  return resolveScopedEnv('ASAAS_WEBHOOK_AUTH_TOKEN', tenantId, isDevelopment);
 }
 
 export class AsaasClient {
@@ -307,21 +311,6 @@ export class AsaasClient {
     return this.request<any>('DELETE', `/subscriptions/${id}`, undefined, {
       context: { subscriptionId: id },
     });
-  }
-
-  validateWebhookSignature(rawBody: string | Buffer, signature?: string | null): boolean {
-    if (!signature || !this.credentials.webhookSecret) return false;
-    const computed = crypto
-      .createHmac('sha256', this.credentials.webhookSecret)
-      .update(rawBody)
-      .digest('hex');
-
-    try {
-      return crypto.timingSafeEqual(Buffer.from(computed, 'hex'), Buffer.from(signature, 'hex'));
-    } catch {
-      // fallback in case of malformed input
-      return computed === signature;
-    }
   }
 
   private async request<T>(

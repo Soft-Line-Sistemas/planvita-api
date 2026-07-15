@@ -7,6 +7,7 @@ import {
   CentroResultadoFinanceiroInput,
   ContaPagarInput,
   ContaReceberInput,
+  SyncAsaasOptions,
 } from '../services/financeiro.service';
 import Logger from '../utils/logger';
 import { TenantRequest } from '../middlewares/tenant.middleware';
@@ -538,6 +539,30 @@ export class FinanceiroController {
     }
   }
 
+  async syncAsaasNow(req: TenantRequest, res: Response) {
+    try {
+      const service = this.resolveService(req);
+      const options = this.parseSyncAsaasOptions(req.body, req.query);
+      const result = await service.sincronizarRecorrenciasAsaas(options);
+      this.logger.info('Sincronização manual do Asaas executada', {
+        tenant: req.tenantId,
+        ...options,
+        ...result,
+      });
+      res.json({
+        success: true,
+        mode: 'manual',
+        ...options,
+        ...result,
+      });
+    } catch (error) {
+      this.logger.error('Falha ao executar sincronização manual do Asaas', error);
+      res.status(this.shouldReturnTenantError(error) ? 400 : 500).json({
+        message: this.shouldReturnTenantError(error) ? 'Tenant unknown' : 'Internal server error',
+      });
+    }
+  }
+
   async gerarRecorrenciaTitular(req: TenantRequest, res: Response) {
     try {
       const titularId = Number(req.params.titularId);
@@ -618,6 +643,23 @@ export class FinanceiroController {
       payload.billingType = String(payload.billingType).toUpperCase();
     }
     return payload;
+  }
+
+  private parseSyncAsaasOptions(
+    body: Record<string, unknown> | undefined,
+    query: TenantRequest['query'],
+  ): SyncAsaasOptions {
+    const maxPagesRaw = body?.maxPages ?? query?.maxPages;
+    const onlyOpenRaw = body?.onlyOpen ?? query?.onlyOpen;
+    const maxPages = Number(maxPagesRaw);
+
+    return {
+      maxPages: Number.isFinite(maxPages) ? maxPages : 3,
+      onlyOpen:
+        onlyOpenRaw === undefined
+          ? true
+          : !['false', '0', 'no'].includes(String(onlyOpenRaw).trim().toLowerCase()),
+    };
   }
 
   private shouldReturnTenantError(error: unknown): boolean {
