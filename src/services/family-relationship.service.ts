@@ -91,11 +91,15 @@ export const isRelationshipInGrade = (
     .filter((value) => value.length > 0);
 
   if (rawBeneficiaries.length === 0) return true;
-  if (
-    normalizedDependent === 'primeiro_grau' ||
-    normalizedDependent === 'segundo_grau'
-  ) {
-    return true;
+  if (normalizedDependent === 'primeiro_grau') {
+    return ['conjuge', 'filho', 'pai', 'mae'].some((relationship) =>
+      isRelationshipInGrade(relationship, rawBeneficiaries),
+    );
+  }
+  if (normalizedDependent === 'segundo_grau') {
+    return ['irmao', 'avo', 'neto', 'tio'].some((relationship) =>
+      isRelationshipInGrade(relationship, rawBeneficiaries),
+    );
   }
 
   const matchesGroupedBeneficiary = (rawBeneficiary: string): boolean => {
@@ -130,6 +134,14 @@ export const isRelationshipInGrade = (
 
     if (normalizedBeneficiary.includes('irmaos')) {
       return normalizedDependent === 'irmao';
+    }
+
+    if (normalizedBeneficiary.includes('sogro')) {
+      return normalizedDependent === 'pai' || normalizedDependent === 'mae';
+    }
+
+    if (normalizedBeneficiary.includes('tio')) {
+      return normalizedDependent === 'tio';
     }
 
     return false;
