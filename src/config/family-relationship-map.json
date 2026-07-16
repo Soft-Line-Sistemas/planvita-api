@@ -1,15 +1,16 @@
 {
   "titular": ["titular", "responsavel", "responsável", "contratante"],
-  "primeiro_grau": ["1 grau", "1° grau", "1º grau", "1o grau"],
-  "segundo_grau": ["2 grau", "2° grau", "2º grau", "2o grau"],
-  "conjuge": ["conjuge", "cônjuge", "esposa", "esposo", "marido", "companheira", "companheiro", "parceira", "parceiro"],
+  "conjuge": ["conjuge", "cônjuge", "esposa", "esposo", "marido", "companheira", "companheiro", "companheiro(a)", "parceira", "parceiro"],
   "filho": ["filho", "filha", "filho(a)", "enteado", "enteada", "enteado(a)", "menor", "crianca", "criança"],
   "pai": ["pai", "genitor", "padrasto", "sogro", "sogro(a)"],
   "mae": ["mae", "mãe", "genitora", "madrasta", "sogra", "sogro(a)"],
   "irmao": ["irmao", "irmão", "irma", "irmã", "irmão(ã)"],
   "avo": ["avo", "avô", "avó", "avô/avó", "avos", "avós", "bisavo", "bisavô", "bisavoa", "bisavó"],
   "neto": ["neto", "neta", "neto(a)", "bisneto", "bisneta"],
+  "tio": ["tio", "tia", "tio(a)"],
   "genro": ["genro", "nora", "genro/nora"],
   "cunhado": ["cunhado", "cunhada", "cunhado(a)"],
-  "outro": ["outro", "outra", "agregado", "amigo", "amiga", "vizinho", "vizinha", "sem parentesco", "nao familiar", "não familiar", "tio", "tia", "tio(a)", "sobrinho", "sobrinha", "sobrinho(a)", "primo", "prima", "primo(a)"]
+  "primeiro_grau": ["1 grau", "1° grau", "1º grau", "1o grau"],
+  "segundo_grau": ["2 grau", "2° grau", "2º grau", "2o grau"],
+  "outro": ["outro", "outra", "agregado", "amigo", "amiga", "vizinho", "vizinha", "sem parentesco", "nao familiar", "não familiar", "sobrinho", "sobrinha", "sobrinho(a)", "primo", "prima", "primo(a)"]
 }

@@ -61,13 +61,11 @@ describe('family-relationship.service', () => {
       fs.existsSync.mockReturnValue(true);
       fs.readFileSync.mockReturnValue(
         JSON.stringify({
+          tio: ['tio', 'tia', 'tio(a)'],
           primeiro_grau: ['1 grau', '1° grau', '1º grau', '1o grau'],
           segundo_grau: ['2 grau', '2° grau', '2º grau', '2o grau'],
           outro: [
             'outro',
-            'tio',
-            'tia',
-            'tio(a)',
             'sobrinho',
             'sobrinha',
             'sobrinho(a)',
@@ -80,7 +78,7 @@ describe('family-relationship.service', () => {
 
       jest.isolateModules(() => {
         const mod = require('./family-relationship.service');
-        expect(mod.canonicalizeRelationship('Tio(a)')).toBe('outro');
+        expect(mod.canonicalizeRelationship('Tio(a)')).toBe('tio');
         expect(mod.canonicalizeRelationship('Sobrinho(a)')).toBe('outro');
         expect(mod.canonicalizeRelationship('Primo(a)')).toBe('outro');
         expect(mod.canonicalizeRelationship('1° Grau')).toBe('primeiro_grau');
@@ -169,9 +167,9 @@ describe('family-relationship.service', () => {
       expect(isRelationshipInGrade('sobrinho', ['sobrinhos ate 50 anos'])).toBe(false);
     });
 
-    it('considera 1° e 2° grau como vínculos familiares válidos para grade resumida', () => {
-      expect(isRelationshipInGrade('1° Grau', ['Titular'])).toBe(true);
-      expect(isRelationshipInGrade('2° Grau', ['Titular'])).toBe(true);
+    it('mantem compatibilidade legada de 1° e 2° grau com a grade familiar', () => {
+      expect(isRelationshipInGrade('1° Grau', ['Pai e Mãe'])).toBe(true);
+      expect(isRelationshipInGrade('2° Grau', ['Irmãos'])).toBe(true);
     });
 
     it('trata "esposo a ate 55 anos" como grupo cobrindo conjuge', () => {
@@ -180,6 +178,10 @@ describe('family-relationship.service', () => {
 
     it('trata "neto e bisnetos" como grupo cobrindo neto', () => {
       expect(isRelationshipInGrade('neto', ['neto e bisnetos'])).toBe(true);
+    });
+
+    it('trata "tio" como beneficiário direto quando o plano cobre esse parentesco', () => {
+      expect(isRelationshipInGrade('tio', ['Tio(a)'])).toBe(true);
     });
 
     it('retorna false para null como dependente', () => {

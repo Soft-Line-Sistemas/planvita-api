@@ -266,16 +266,16 @@ describe('PlanoService.sugerirPlano', () => {
     expect((resultado as any).id).toBeGreaterThanOrEqual(1);
   });
 
-  it('participante com categoria resumida "1° Grau" não é elegível Social, mas continua com plano compatível', async () => {
+  it('participante com parentesco direto fora da regra do Social permanece com plano compatível', async () => {
     mockPrisma.plano.findMany.mockResolvedValue([
       makePlano({ id: 1, nome: 'Bosque Social', valorMensal: 50, idadeMaxima: 55, beneficiarios: [{ id: 1, nome: 'Titular' }] }),
-      makePlano({ id: 2, nome: 'Bosque Essencial', valorMensal: 70, idadeMaxima: 60, beneficiarios: [{ id: 2, nome: 'Titular' }] }),
-      makePlano({ id: 3, nome: 'Bosque Plus', valorMensal: 80, idadeMaxima: 70, beneficiarios: [{ id: 3, nome: 'Titular' }] }),
+      makePlano({ id: 2, nome: 'Bosque Essencial', valorMensal: 70, idadeMaxima: 60, beneficiarios: [{ id: 2, nome: 'Titular' }, { id: 4, nome: 'Irmãos' }] }),
+      makePlano({ id: 3, nome: 'Bosque Plus', valorMensal: 80, idadeMaxima: 70, beneficiarios: [{ id: 3, nome: 'Titular' }, { id: 5, nome: 'Irmãos' }] }),
     ]);
 
     const resultado = await service.listarPlanosCompativeis([
       { idade: 35, parentesco: 'Titular' },
-      { idade: 10, parentesco: '1° Grau' },
+      { idade: 10, parentesco: 'Irmão(ã)' },
     ]);
 
     expect(resultado).toMatchObject([{ id: 2, nome: 'Bosque Essencial' }]);
