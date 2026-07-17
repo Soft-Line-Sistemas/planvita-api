@@ -84,6 +84,7 @@ const TITULAR_BASE_SCALARS = {
   pontoReferencia: true,
   formaPagamentoAdesao: true,
   pagamentoConfirmadoEm: true,
+  atualizacaoCadastralPendenteAssinatura: true,
   asaasCustomerId: true,
   asaasCardLast4: true,
   asaasCardBrand: true,
@@ -2498,7 +2499,11 @@ export class TitularService {
     const [titular, assinaturas, pagamentoConfirmado] = await Promise.all([
       this.prisma.titular.findUnique({
         where: { id: titularId },
-        select: { id: true, statusPlano: true },
+        select: {
+          id: true,
+          statusPlano: true,
+          atualizacaoCadastralPendenteAssinatura: true,
+        },
       }),
       (this.prisma as any).assinaturaDigital.findMany({
         where: { titularId },
@@ -2531,10 +2536,26 @@ export class TitularService {
           ? STATUS_PLANO_PENDENTE_ASSINATURA
           : titular.statusPlano;
 
+    const limparAtualizacaoCadastral =
+      titular.atualizacaoCadastralPendenteAssinatura && todosTiposAssinados;
+
     if (proximoStatus && proximoStatus !== titular.statusPlano) {
       await this.prisma.titular.update({
         where: { id: titularId },
-        data: { statusPlano: proximoStatus },
+        data: {
+          statusPlano: proximoStatus,
+          ...(limparAtualizacaoCadastral
+            ? { atualizacaoCadastralPendenteAssinatura: false }
+            : {}),
+        },
+      });
+      return;
+    }
+
+    if (limparAtualizacaoCadastral) {
+      await this.prisma.titular.update({
+        where: { id: titularId },
+        data: { atualizacaoCadastralPendenteAssinatura: false },
       });
     }
   }

@@ -165,6 +165,7 @@ model Titular {
 
   // Timestamp do primeiro pagamento confirmado pelo Asaas (carência conta a partir daqui)
   pagamentoConfirmadoEm DateTime? @map("pagamento_confirmado_em")
+  atualizacaoCadastralPendenteAssinatura Boolean @default(false) @map("atualizacao_cadastral_pendente_assinatura")
   sucessaoTitularidadeEm DateTime? @map("sucessao_titularidade_em")
   titularAnteriorNome String? @map("titular_anterior_nome")
   titularAnteriorCpf String? @map("titular_anterior_cpf")

@@ -6,6 +6,7 @@ type DependenteType = Prisma.DependenteGetPayload<{}>;
 type DependenteCreateInput = Prisma.DependenteUncheckedCreateInput;
 type DependenteUpdateInput = Prisma.DependenteUncheckedUpdateInput;
 const MAX_DEPENDENTES_POR_TITULAR = 8;
+const STATUS_PLANO_PENDENTE_ASSINATURA = 'PENDENTE_ASSINATURA';
 
 export class DependenteService {
   private prisma;
@@ -217,7 +218,25 @@ export class DependenteService {
 
     await this.validarLimiteBeneficiarios(titularId);
     await this.validarIdadeMaximaDependente((normalizedData as any).dataNascimento);
-    const dependente = await this.prisma.dependente.create({ data: normalizedData });
+    const dependente = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.dependente.create({ data: normalizedData });
+
+      await (tx as any).assinaturaDigital.deleteMany({
+        where: { titularId },
+      });
+
+      await tx.titular.update({
+        where: { id: titularId },
+        data: {
+          atualizacaoCadastralPendenteAssinatura: true,
+          statusPlano: {
+            set: STATUS_PLANO_PENDENTE_ASSINATURA,
+          },
+        },
+      });
+
+      return created;
+    });
 
     await this.pricingService.recalcularDependentesDoTitular(titularId);
     return dependente;

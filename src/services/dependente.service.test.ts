@@ -1,6 +1,10 @@
 const prismaMock = {
+  $transaction: jest.fn(),
   businessRules: {
     findFirst: jest.fn(),
+  },
+  assinaturaDigital: {
+    deleteMany: jest.fn(),
   },
   dependente: {
     findMany: jest.fn(),
@@ -12,6 +16,7 @@ const prismaMock = {
   },
   titular: {
     findUnique: jest.fn(),
+    update: jest.fn(),
   },
 };
 
@@ -34,6 +39,9 @@ describe('DependenteService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    prismaMock.$transaction.mockImplementation(async (callback: any) =>
+      callback(prismaMock),
+    );
     (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
       nome: 'Titular Teste',
       cpf: '12345678901',
@@ -82,6 +90,16 @@ describe('DependenteService', () => {
         }),
       });
       expect(pricingServiceMock.recalcularDependentesDoTitular).toHaveBeenCalledWith(9);
+      expect(prismaMock.assinaturaDigital.deleteMany).toHaveBeenCalledWith({
+        where: { titularId: 9 },
+      });
+      expect(prismaMock.titular.update).toHaveBeenCalledWith({
+        where: { id: 9 },
+        data: {
+          atualizacaoCadastralPendenteAssinatura: true,
+          statusPlano: { set: 'PENDENTE_ASSINATURA' },
+        },
+      });
       expect(result).toEqual(expect.objectContaining({ id: 11, titularId: 9 }));
     });
 
