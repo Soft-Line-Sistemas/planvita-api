@@ -2198,6 +2198,24 @@ export class TitularService {
     return `data:${mimeType};base64,${buffer.toString('base64')}`;
   }
 
+  private resolveChromeExecutablePath(): string | undefined {
+    const candidates = [
+      process.env.PUPPETEER_EXECUTABLE_PATH,
+      process.env.CHROME_BIN,
+      process.env.GOOGLE_CHROME_BIN,
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+      '/snap/bin/chromium',
+    ].filter(Boolean) as string[];
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) return candidate;
+    }
+
+    return undefined;
+  }
+
   private buildCheckMarkup(checked: boolean, extraClass = ''): string {
     return `<span class="cb ${extraClass} ${checked ? 'filled' : ''}"></span>`;
   }
@@ -2557,8 +2575,10 @@ export class TitularService {
 </html>`;
 
     const puppeteer = await import('puppeteer');
+    const executablePath = this.resolveChromeExecutablePath();
     const browser = await puppeteer.default.launch({
       headless: true,
+      executablePath,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
 
