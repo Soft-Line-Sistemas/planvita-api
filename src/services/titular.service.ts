@@ -1922,8 +1922,8 @@ export class TitularService {
     }
 
     const basePdfBuffer = await this.convertDocxBufferToPdf(templateBuffer, `${filenameBase}-base`);
-    const fichaAdesaoPdfBuffer = await this.convertDocxBufferToPdf(
-      fichaAdesaoBuffer,
+    const fichaAdesaoPdfBuffer = await this.buildFichaAdesaoPagePdfBuffer(
+      titularId,
       `${filenameBase}-ficha-adesao`,
     );
     const assinaturasPdfBuffer = await this.buildAssinaturasPagePdfBuffer(titularId);
@@ -2166,6 +2166,419 @@ export class TitularService {
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = String(date.getFullYear());
     return `${day}/${month}/${year}`;
+  }
+
+  private escapeHtml(value?: string | number | null): string {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  private resolveAdesaoAssetPath(filename: string): string | null {
+    const candidates = [
+      path.resolve(process.cwd(), '../frontend/public/adesao-cb', filename),
+      path.resolve(process.cwd(), 'frontend/public/adesao-cb', filename),
+      path.resolve(process.cwd(), 'public/adesao-cb', filename),
+      path.resolve(__dirname, '../../public/adesao-cb', filename),
+      path.resolve(__dirname, '../../../frontend/public/adesao-cb', filename),
+    ];
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) return candidate;
+    }
+
+    return null;
+  }
+
+  private fileToDataUrl(filePath: string, mimeType: string): string {
+    const buffer = fs.readFileSync(filePath);
+    return `data:${mimeType};base64,${buffer.toString('base64')}`;
+  }
+
+  private buildCheckMarkup(checked: boolean, extraClass = ''): string {
+    return `<span class="cb ${extraClass} ${checked ? 'filled' : ''}"></span>`;
+  }
+
+  private buildRuledLineMarkup(value?: string | number | null, tick = false): string {
+    return `<div class="ruled-line${tick ? ' tick' : ''}"><span class="filled-text">${this.escapeHtml(value)}</span></div>`;
+  }
+
+  private buildSegmentedLineMarkup(
+    value: string | null | undefined,
+    spansMarkup: string,
+    className = '',
+  ): string {
+    return `<div class="segmented ${className}">${spansMarkup}<span class="filled-text">${this.escapeHtml(value)}</span></div>`;
+  }
+
+  private getPlanModality(value?: string | null): 'social' | 'essencial' | 'multi' | 'plus' | '' {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized.includes('social')) return 'social';
+    if (normalized.includes('essencial')) return 'essencial';
+    if (normalized.includes('multi')) return 'multi';
+    if (normalized.includes('plus')) return 'plus';
+    return '';
+  }
+
+  private formatCurrencyPtBr(value?: number | null): string {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    }).format(value);
+  }
+
+  private inferAddressType(value?: string | null): 'RUA' | 'PRAÇA' | 'AVENIDA' | 'RODOVIA' {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized.startsWith('av')) return 'AVENIDA';
+    if (normalized.startsWith('pra')) return 'PRAÇA';
+    if (normalized.startsWith('rod')) return 'RODOVIA';
+    return 'RUA';
+  }
+
+  private async buildFichaAdesaoPagePdfBuffer(
+    titularId: number,
+    filenameBase: string,
+  ): Promise<Buffer> {
+    const titular = await this.prisma.titular.findUnique({
+      where: { id: titularId },
+      include: {
+        plano: {
+          include: {
+            coberturas: true,
+            beneficios: {
+              include: {
+                beneficio: true,
+              },
+            },
+          },
+        },
+        dependentes: true,
+        corresponsaveis: true,
+        vendedor: true,
+        pagamentos: {
+          orderBy: {
+            dataPagamento: 'desc',
+          },
+          take: 1,
+        },
+        assinaturas: {
+          select: {
+            tipo: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    if (!titular) {
+      const err: any = new Error('Titular não encontrado.');
+      err.status = 404;
+      throw err;
+    }
+
+    const corresponsavel = titular.corresponsaveis?.[0] ?? null;
+    const servicosAdicionais = this.normalizarServicosAdicionaisFromJson(
+      titular.servicosAdicionaisJson,
+    );
+    const beneficiosInclusos = [
+      'Clube de Beneficios',
+      ...((titular.plano?.beneficios ?? [])
+        .map((item: any) => item.beneficio?.nome)
+        .filter(Boolean)),
+    ];
+    const beneficiosOpcionais = servicosAdicionais.includes('telemedicina')
+      ? ['Telemedicina']
+      : [];
+    const pagamentoMaisRecente = titular.pagamentos?.[0] ?? null;
+    const titularComGrade = this.comporGradeFamiliarComCorresponsavel(titular as any);
+    const dependentesGrade = titularComGrade.dependentes ?? [];
+    const dependentesDaGrade = dependentesGrade.filter((dep: any) => !dep.foraGradeFamiliar);
+    const beneficiariosAdicionais = dependentesGrade.filter((dep: any) => dep.foraGradeFamiliar);
+    const modality = this.getPlanModality(titular.plano?.nome);
+    const planValue = this.formatCurrencyPtBr(Number(titular.plano?.valorMensal ?? 0));
+    const totalContrato =
+      titular.valorTotalContrato != null
+        ? this.formatCurrencyPtBr(Number(titular.valorTotalContrato))
+        : planValue;
+    const coberturasText =
+      titular.plano?.coberturas?.map((item: any) => item.tipo || item.descricao).filter(Boolean).join(' | ') ||
+      beneficiosInclusos.join(' | ');
+    const addressType = this.inferAddressType(titular.logradouro);
+    const hasAssinaturaTitular = (titular.assinaturas ?? []).some((item: any) =>
+      String(item.tipo ?? '').startsWith('TITULAR_ASSINATURA_'),
+    );
+
+    const logoPath = this.resolveAdesaoAssetPath('logo.png');
+    const pixPath = this.resolveAdesaoAssetPath('pix-banco-central.svg');
+    const logoSrc = logoPath ? this.fileToDataUrl(logoPath, 'image/png') : '';
+    const pixSrc = pixPath ? this.fileToDataUrl(pixPath, 'image/svg+xml') : '';
+    const today = this.formatDatePtBr(new Date());
+
+    const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<style>
+  :root{--verde-escuro:#40690B;--verde-musgo:#40690B;--verde-claro:#00A859;--vermelho:#ED3237;--preto:#1a1a1a;--cinza-linha:#2b2b2b;}
+  *{box-sizing:border-box;}
+  body{margin:0;padding:0;background:#e9e9e9;font-family:'Segoe UI',Calibri,Arial,sans-serif;color:var(--preto);}
+  .page{width:210mm;min-height:297mm;margin:10mm auto;background:#fff;padding:6mm 7mm;position:relative;}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid var(--preto);padding-bottom:4mm;margin-bottom:3mm;}
+  .header-left h1{margin:0 0 1mm 0;font-size:22pt;font-weight:700;color:var(--verde-escuro);}
+  .header-left p{margin:0;font-size:8.2pt;line-height:1.25;max-width:120mm;}
+  .logo-img{height:16mm;width:auto;object-fit:contain;}
+  .header-contact{display:flex;align-items:center;gap:2mm;margin-top:1mm;}
+  .qr-placeholder{width:16mm;height:16mm;border:1px solid #1a1a1a;border-radius:1mm;display:flex;align-items:center;justify-content:center;text-align:center;font-size:6pt;font-weight:700;padding:1mm;}
+  .contact-text .ct-title{font-size:8.5pt;font-weight:700;color:var(--verde-escuro);margin:0;}
+  .contact-text .ct-phone{font-size:15pt;font-weight:700;color:var(--verde-escuro);margin:0;line-height:1.1;}
+  .top-fields{display:grid;grid-template-columns:1fr 1fr;gap:2mm 6mm;margin-bottom:3mm;}
+  .field{display:flex;flex-direction:column;}
+  .field-label{font-size:7.5pt;font-weight:700;margin-bottom:0.8mm;display:block;}
+  .ruled-line{border-bottom:1.4px solid var(--cinza-linha);height:5mm;position:relative;}
+  .ruled-line.tick{border-left:2px solid var(--verde-claro);padding-left:2mm;}
+  .filled-text{position:absolute;left:2mm;right:1mm;bottom:.35mm;font-size:8pt;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .segmented{display:inline-flex;align-items:flex-end;border-bottom:1.4px solid var(--cinza-linha);height:6mm;position:relative;width:100%;}
+  .segmented::before{content:"";position:absolute;left:0;bottom:0;width:2px;height:100%;background:var(--verde-claro);}
+  .segmented.no-tick::before{content:none;}
+  .segmented span.seg{flex:0 0 auto;width:8mm;align-self:flex-end;border-right:1.2px solid var(--cinza-linha);height:12%;}
+  .segmented span.grp{border-right-width:1.6px;height:85%;}
+  .segmented span.seg:last-of-type{border-right:none;}
+  .segmented.end-bar span.seg:last-of-type{border-right:1.6px solid var(--cinza-linha);}
+  .segmented.start-bar span.seg:first-of-type{border-left:1.6px solid var(--cinza-linha);height:85%;}
+  .checks-row,.checks-inline{font-size:7.6pt;font-weight:700;}
+  .checks-row{display:flex;gap:4mm;align-items:center;flex-wrap:wrap;margin-top:1mm;}
+  .checks-inline{display:flex;flex-direction:column;gap:.5mm;}
+  .checkbox{display:inline-flex;align-items:center;gap:1.2mm;}
+  .cb{width:3mm;height:3mm;border:1.3px solid #333;border-radius:.7mm;display:inline-flex;align-items:center;justify-content:center;font-size:2.2mm;font-weight:700;}
+  .cb.filled::after{content:"✓";}
+  .cb.oval{width:5mm;height:3.2mm;border-radius:.8mm;}
+  .section-bar{background:var(--verde-musgo);color:#fff;font-size:10pt;font-weight:700;padding:1.6mm 3mm;margin:3mm 0 2mm;}
+  .sec1-block{padding:0 1mm 2mm;}
+  .field-with-checks{display:flex;gap:4mm;align-items:flex-start;}
+  .row-grid{display:grid;gap:3mm 6mm;margin-bottom:2mm;}
+  .row-grid.g4{grid-template-columns:1fr 1fr 1fr .5fr;}
+  .summary-item{display:flex;align-items:flex-start;gap:2.5mm;padding:1.3mm 1mm;border-bottom:.5px solid #ddd;}
+  .summary-item .cb{margin-top:1mm;flex-shrink:0;}
+  .summary-item .txt strong{font-size:8pt;display:block;margin-bottom:.5mm;}
+  .summary-item .txt span{font-size:7.6pt;line-height:1.35;}
+  .composicao-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1.3fr auto;gap:4mm;padding:2mm 1mm;align-items:end;}
+  .pay-checks{display:flex;flex-direction:column;gap:1mm;font-size:7.5pt;font-weight:700;}
+  .sec7-row{display:flex;align-items:flex-end;gap:5mm;padding:2mm 1mm 3mm;}
+  .sec7-row .checks-inline{min-width:26mm;}
+  .sec7-row .field{flex:1;}
+  .sec7-row .field.cpf{flex:0 0 45mm;}
+  .p2-topbar,.black-bar{background:#000;color:#fff;font-weight:700;}
+  .p2-topbar{font-size:11pt;padding:2mm 3mm;margin-bottom:2mm;}
+  .info-cols{display:grid;grid-template-columns:.85fr 2fr;border:1.2px solid #000;margin-bottom:2mm;}
+  .info-cols .col{padding:1.5mm 2.5mm;font-size:7.3pt;line-height:1.35;}
+  .info-cols .col1{border-right:1.2px solid #000;color:var(--vermelho);}
+  .parties-box{border:1.2px solid #000;border-top:none;padding:1.5mm 2.5mm;font-size:7.3pt;line-height:1.35;margin-bottom:2mm;}
+  .composicao-text,.body-text{font-size:8.3pt;line-height:1.5;margin-bottom:2mm;}
+  .black-bar{font-size:10pt;padding:1.8mm 3mm;margin:2mm 0;}
+  .modalidade-check{display:flex;align-items:center;gap:2.5mm;font-size:8.3pt;font-weight:700;margin-bottom:2.5mm;}
+  .recibo-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:1mm;}
+  .recibo-cell{padding:5mm 3mm 6mm;border-bottom:1px solid #000;min-height:18mm;}
+  .recibo-cell.br{border-right:1px solid #000;}
+  .recibo-label{font-size:7.8pt;font-weight:700;}
+  .recibo-note{margin-top:3mm;font-size:7.2pt;line-height:1.35;color:#333;}
+  .rs-row{display:flex;align-items:flex-end;gap:4mm;margin-top:3mm;}
+  .rs-box{font-size:11pt;font-weight:700;border-bottom:1.4px solid #000;padding:1mm 2mm;width:45mm;height:8mm;}
+  .pix-logo{height:7mm;width:auto;}
+  .brand-footer{display:flex;justify-content:space-between;align-items:center;margin-top:4mm;border-top:1px solid #ccc;padding-top:3mm;font-size:7pt;gap:5mm;}
+  .contact-footer{text-align:right;font-size:7pt;line-height:1.5;}
+  .icon-box{display:inline-flex;align-items:center;justify-content:center;width:4mm;height:4mm;background:#1a1a1a;border-radius:.7mm;font-size:6.5pt;line-height:1;color:#fff;}
+  .side-code{position:absolute;left:2mm;bottom:8mm;writing-mode:vertical-rl;font-size:6.5pt;color:#666;letter-spacing:1px;}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div class="header-left">
+      <h1>ANEXO I - PROPOSTA DE ADESÃO</h1>
+      <p>PARTE INTEGRANTE DAS CONDIÇÕES GERAIS DO CONTRATO DE<br>ASSISTÊNCIA FUNERAL CAMPO DO BOSQUE - LEI Nº 13.261/16</p>
+    </div>
+    ${logoSrc ? `<img class="logo-img" src="${logoSrc}" alt="Campo do Bosque" />` : ''}
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3mm;">
+    <div class="top-fields" style="flex:1;">
+      <div class="field"><span class="field-label">UNIDADE</span>${this.buildRuledLineMarkup(this.tenantId.toUpperCase(), true)}</div>
+      <div class="field"><span class="field-label">DATA DA ADESÃO</span>${this.buildSegmentedLineMarkup(today, '<span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg grp"></span>', 'end-bar')}</div>
+      <div class="field"><span class="field-label">PROMOTOR (A) COMERCIAL</span>${this.buildRuledLineMarkup(titular.vendedor?.nome, true)}</div>
+      <div class="field">
+        <span class="field-label">CANAL DE VENDAS</span>
+        <div class="checks-row" style="margin-top:2mm;">
+          <span class="checkbox">${this.buildCheckMarkup(false)}PAP</span>
+          <span class="checkbox">${this.buildCheckMarkup(true)}WEB</span>
+          <span class="checkbox">${this.buildCheckMarkup(false)}UND</span>
+          <span class="checkbox">${this.buildCheckMarkup(false)}PRO</span>
+          <span class="checkbox">${this.buildCheckMarkup(false)}IND</span>
+        </div>
+      </div>
+    </div>
+    <div class="header-contact">
+      <div class="qr-placeholder">QR<br>WhatsApp</div>
+      <div class="contact-text"><p class="ct-title">Central de Atendimento</p><p class="ct-phone">71<br>3266 0787</p></div>
+    </div>
+  </div>
+  <div class="section-bar">1. QUALIFICAÇÃO DO PROPONENTE TITULAR (CONTRATANTE)</div>
+  <div class="sec1-block">
+    <div class="field-with-checks" style="margin-bottom:2mm;">
+      <div class="checks-inline">
+        <span class="checkbox">${this.buildCheckMarkup(true)}P FÍSICA</span>
+        <span class="checkbox">${this.buildCheckMarkup(false)}P JURÍDICA</span>
+      </div>
+      <div style="flex:1;">
+        <span class="field-label">NOME COMPLETO <span style="font-weight:400;">(não abreviar o primeiro e o último nome)</span></span>
+        ${this.buildRuledLineMarkup(titular.nome)}
+      </div>
+      <div class="checks-inline">
+        <span class="checkbox">${this.buildCheckMarkup(titular.sexo === 'Masculino')}MAS</span>
+        <span class="checkbox">${this.buildCheckMarkup(titular.sexo === 'Feminino')}FEM</span>
+      </div>
+    </div>
+    <div style="display:flex;gap:4mm;align-items:flex-end;margin-bottom:2mm;">
+      <div class="field" style="flex:1.4;">
+        <span class="field-label">DATA DE NASCIMENTO</span>
+        ${this.buildSegmentedLineMarkup(this.formatDatePtBr(titular.dataNascimento), '<span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg grp"></span>', 'end-bar')}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:.8mm;">
+        ${this.buildCheckMarkup(Boolean(titular.telefone))}
+        ${this.buildCheckMarkup(Boolean(titular.telefone))}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:.8mm;"><span style="font-size:7pt;">WhatsApp</span><span style="font-size:7pt;">Ligação</span></div>
+      <div class="field" style="flex:0 0 auto;min-width:48mm;"><span class="field-label">CPF</span>${this.buildSegmentedLineMarkup(titular.cpf, '<span class="seg"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg"></span><span class="seg grp"></span>', 'end-bar')}</div>
+      <div class="field" style="flex:0 0 auto;min-width:24mm;"><span class="field-label">RG</span>${this.buildSegmentedLineMarkup(titular.rg, '<span class="seg"></span><span class="seg"></span><span class="seg grp"></span>', 'no-tick end-bar start-bar')}</div>
+    </div>
+    <div style="display:flex;gap:4mm;margin-bottom:2mm;align-items:flex-end;">
+      <div style="flex:0.58;">
+        <span class="field-label">CONTATOS</span>
+        <div class="checks-inline">
+          <span class="checkbox">${this.buildCheckMarkup(Boolean(titular.telefone))}WHATSAPP</span>
+          <span class="checkbox">${this.buildCheckMarkup(Boolean(titular.telefone))}LIGAÇÃO</span>
+        </div>
+      </div>
+      <div style="flex:0 0 auto;min-width:58mm;"><span class="field-label">TELEFONE</span>${this.buildSegmentedLineMarkup(titular.telefone, '<span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg grp"></span>', 'end-bar')}</div>
+      <div style="flex:1;"><span class="field-label">PREFERÊNCIA DE TRATAMENTO / COMO É CONHECIDO</span>${this.buildRuledLineMarkup(String(titular.nome ?? '').trim().split(/\s+/)[0] ?? '')}</div>
+    </div>
+    <div style="display:flex;gap:4mm;margin-bottom:2mm;align-items:flex-end;">
+      <div style="flex:1.6;">
+        <span class="field-label">ENDEREÇO DE MORADA HABITUAL</span>
+        <div class="checks-inline" style="flex-direction:row;gap:4mm;margin-bottom:1mm;">
+          <span class="checkbox">${this.buildCheckMarkup(addressType === 'RUA')}RUA</span>
+          <span class="checkbox">${this.buildCheckMarkup(addressType === 'PRAÇA')}PRAÇA</span>
+          <span class="checkbox">${this.buildCheckMarkup(addressType === 'AVENIDA')}AVENIDA</span>
+          <span class="checkbox">${this.buildCheckMarkup(addressType === 'RODOVIA')}RODOVIA</span>
+        </div>
+        ${this.buildRuledLineMarkup([titular.logradouro, titular.complemento].filter(Boolean).join(', '))}
+      </div>
+      <div class="field" style="flex:.5;"><span class="field-label">Nº</span>${this.buildRuledLineMarkup(titular.numero, true)}</div>
+    </div>
+    <div class="row-grid g4">
+      <div class="field"><span class="field-label">CEP</span>${this.buildSegmentedLineMarkup(titular.cep, '<span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg"></span><span class="seg grp"></span>', 'end-bar')}</div>
+      <div class="field"><span class="field-label">BAIRRO / DISTRITO</span>${this.buildRuledLineMarkup(titular.bairro, true)}</div>
+      <div class="field"><span class="field-label">CIDADE</span>${this.buildRuledLineMarkup(titular.cidade, true)}</div>
+      <div class="field"><span class="field-label">UF</span>${this.buildRuledLineMarkup(titular.uf, true)}</div>
+    </div>
+  </div>
+  <div class="section-bar">2. RESUMO DA ASSISTÊNCIA | OBJETO DO CONTRATO</div>
+  <div class="summary-item">${this.buildCheckMarkup(modality === 'social')}<div class="txt"><strong>MODALIDADE SOCIAL | ASSISTÊNCIA OBJETO DO CONTRATO</strong><span>A1) VEÍCULO FUNERAL | A2) URNA SEXTAVADA | A3) VESTIMENTA | A4) PARAMENTOS DE VELÓRIO | A5) TRASLADO LOCAL | A6) SEPULTAMENTO E TAXAS DE SERVIÇOS | EM CEMITÉRIO PÚBLICO</span></div></div>
+  <div class="summary-item">${this.buildCheckMarkup(['essencial','multi','plus'].includes(modality))}<div class="txt"><strong>MODALIDADE ESSENCIAL, MULTI OU PLUS | ASSISTÊNCIA OBJETO DO CONTRATO</strong><span>A1) VEÍCULO FUNERAL | A2) URNA SEXTAVADA | A3) VESTIMENTA | A4) PARAMENTOS DE VELÓRIO | A5) TRASLADO LOCAL | A6) SEPULTAMENTO E TAXAS DE SERVIÇOS | EM CEMITÉRIO PÚBLICO | A7) 01 CORA DE FLORES</span></div></div>
+  <div class="section-bar">3. RESUMO DOS BENEFÍCIOS COMPLEMENTARES</div>
+  <div class="summary-item">${this.buildCheckMarkup(['social','essencial','multi'].includes(modality))}<div class="txt"><strong>MODALIDADE SOCIAL, ESSENCIAL OU MULTI</strong><span>B1) TRANSPORTE COLETIVO | 01 VAN OU 01 MICRO-ÔNIBUS | B2) ORIENTAÇÃO PSICOSSOCIAL | B3) SERVIÇO DE COPA&CAFÉ</span></div></div>
+  <div class="summary-item">${this.buildCheckMarkup(modality === 'plus')}<div class="txt"><strong>MODALIDADE PLUS</strong><span>B1) TRANSPORTE COLETIVO | 01 VAN OU 01 MICRO-ÔNIBUS | B2) ORIENTAÇÃO PSICOSSOCIAL | B3) SERVIÇO DE COPA&CAFÉ | B4) ACOLHIMENTO PSICOSSOCIAL | B5) OPÇÃO DE CREMAÇÃO</span></div></div>
+  <div class="section-bar">4. RESUMO DAS COBERTURAS ADICIONAIS</div>
+  <div class="summary-item">${this.buildCheckMarkup(Boolean(titular.plano))}<div class="txt"><strong>MODALIDADE SOCIAL, ESSENCIAL, MULTI OU PLUS</strong><span>C1) AUXÍLIO FINANCEIRO DE ATÉ 20 VEZES A MENSALIDADE | C2) ATENDIMENTO NACIONAL | C3) LEMBRANÇA ON-LINE</span></div></div>
+  <div class="section-bar">5. RESUMO DOS DIFERENCIAIS</div>
+  <div class="summary-item">${this.buildCheckMarkup(['social','essencial'].includes(modality))}<div class="txt"><strong>MODALIDADE SOCIAL OU ESSENCIAL</strong><span>D1) SORTEIO SEMANAL | D2) PAGAMENTO ON-LINE E CLUBE FIDELIDADE</span></div></div>
+  <div class="summary-item">${this.buildCheckMarkup(['multi','plus'].includes(modality))}<div class="txt"><strong>MODALIDADE MULTI OU PLUS</strong><span>D1) SORTEIO SEMANAL | D2) PAGAMENTO ON-LINE E CLUBE FIDELIDADE | D3) ASSISTENCIA PET</span></div></div>
+  <div class="section-bar">6. COMPOSIÇÃO DA MENSALIDADE DO PLANO</div>
+  <div class="composicao-grid">
+    <div class="field"><span class="field-label">VALOR DO PLANO PADRÃO</span>${this.buildRuledLineMarkup(planValue, true)}</div>
+    <div class="field"><span class="field-label">COBERTURAS ESTENDIDAS</span>${this.buildRuledLineMarkup(coberturasText, true)}</div>
+    <div class="field"><span class="field-label">MENSALIDADE</span>${this.buildRuledLineMarkup(totalContrato, true)}</div>
+    <div class="field"><span class="field-label">DATA PRIMEIRO PAGTO / ADESÃO</span>${this.buildSegmentedLineMarkup(this.formatDatePtBr(titular.dataContratacao), '<span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg grp"></span>', 'end-bar')}</div>
+    <div class="pay-checks">
+      <span class="checkbox">${this.buildCheckMarkup(titular.formaPagamentoAdesao === 'PIX')}PIX</span>
+      <span class="checkbox">${this.buildCheckMarkup(titular.formaPagamentoAdesao === 'BOLETO')}BOLETO</span>
+      <span class="checkbox">${this.buildCheckMarkup(titular.formaPagamentoAdesao === 'CREDIT_CARD')}CARTÃO C/D</span>
+      <span class="checkbox">${this.buildCheckMarkup(false)}RECEBIMENTO</span>
+    </div>
+  </div>
+  <div class="section-bar">7. CORRESPONSÁVEL/RESPONSÁVEL FINANCEIRO</div>
+  <div class="sec7-row">
+    <div class="checks-inline">
+      <span class="checkbox">${this.buildCheckMarkup(!corresponsavel)}TITULAR</span>
+      <span class="checkbox">${this.buildCheckMarkup(Boolean(corresponsavel))}OUTRO</span>
+    </div>
+    <div class="field"><span class="field-label">NOME COMPLETO</span>${this.buildRuledLineMarkup(corresponsavel?.nome ?? titular.nome)}</div>
+    <div class="field cpf"><span class="field-label">CPF</span>${this.buildRuledLineMarkup(corresponsavel?.cpf ?? titular.cpf, true)}</div>
+  </div>
+</div>
+<div class="page">
+  <span class="side-code">CCAMKT2023</span>
+  <div class="p2-topbar">8. RESUMO DAS CONDIÇÕES GERAIS DO CONTRATO DE ADESÃO - PRESTAÇÃO DE SERVIÇO FUNERAL FUTURO</div>
+  <div class="info-cols">
+    <div class="col col1"><div>REGISTRO DAS CONDIÇÕES GERAIS</div><div>CONTRATO REGISTRADO SOB Nº821473</div><div>SERVIÇO NOTARIAL - SALVADOR - BA</div></div>
+    <div class="col col2"><b>BASE DO CONTRATO / CONDIÇÕES GERAIS</b>: CONTRATO DE ADESÃO - PRESTAÇÃO DE SERVIÇO PARA ASSISTÊNCIA FUNERAL MODALIDADE PREVENTIVO - CÓDIGO DEFESA DO CONSUMIDOR (LEI Nº 8.078) - ESTATUTO DO IDOSO (LEI Nº 10.741/2003) - LEI GERAL DE PROTEÇÃO DE DADOS ( LEI Nº 13.709/2018 - REGULAMENTAÇÃO DE PLANOS FUNERÁRIOS (LEI Nº 13.261/16) DECLARAÇÕES DO TITULAR AO PROMOTOR DE VENDAS DESCRITAS NESTE ANEXO E NO APLICATIVO DE ADESÃO.</div>
+  </div>
+  <div class="parties-box"><b>PARTES DO CONTRATO:</b> COMO CONTRATADO - CAMPO DO BOSQUE LTDA - CNPJ 51.121.484/0001-68 - COM SEDE NA AV CENTENÁRIO, 21 - GARCIA - SALVADOR -BA CEP: 40.100-180 - PESSOA JURÍDICA DE DIREITO PRIVADO E REGULARMENTE QUALIFICADA PARA A ADMINISTRAÇÃO DE PLANOS FUNERÁRIOS COM OPERAÇÃO PRÓPRIA OU ATRAVÉS DE PLATAFORMA CREDENCIADA. COMO CONTRATANTE, O PROPONENTE TITULAR QUALIFICADO NO ITEM 1 NO VERSO</div>
+  <div class="composicao-text"><b>COMPOSIÇÃO DA ASSISTÊNCIA QUANDO REALIZADA DIRETAMENTE PELA CONTRATADA EM SUA ÁREA DE ABRANGÊNCIA:</b> 1. <b>CENTRAL DE ATENDIMENTO:</b> PRESENCIAL NOS ENDEREÇOS DAS UNIDADES DE ATENDIMENTO DURANTE O EXPEDIENTE COMERCIAL DE SEG/SEX E TELEFÔNICO NO PLANTÃO DE ATENDIMENTO: 71. 3066.0787. <b>2. ORIENTAÇÃO FAMILIAR:</b> PROFISSIONAL PARA AUXILIAR NOS TRÂMITES BUROCRÁTICOS E DOCUMENTAÇÃO LEGAL E LOGÍSTICA DE LOCAL E HORÁRIO DA CERIMÔNIA, CORTEJO E SEPULTAMENTO. <b>PLANO SELECIONADO:</b> ${this.escapeHtml(titular.plano?.nome ?? 'Não informado')}.</div>
+  <div class="black-bar">9. ACEITAÇÃO E ENTENDIMENTO DAS CONDIÇÕES DE ADESÃO AO PLANO</div>
+  <div class="body-text">IMPORTANTE: ANTES DE VOCÊ ASSINAR A SUA ADESÃO, CONFIRME NO SEU CELULAR O RECEBIMENTO DO GUIA DO CLIENTE E CONDIÇÕES GERAIS. PERMITA QUE O PROMOTOR FAÇA REGISTRO DIGITAL DE DOCUMENTOS E DA PROPOSTA DE ADESÃO.</div>
+  <div class="black-bar">10. VALIDAÇÃO DA SUA ADESÃO E INCLUSÃO DE DEPENDENTES AO PLANO</div>
+  <div class="body-text">EM ATÉ 48H VOCÊ RECEBERÁ A CONFIRMAÇÃO DO SEU PLANO. PARA A INCLUSÃO DOS DEPENDENTES VOCÊ PODERÁ FAZER A QUALQUER TEMPO DURANTE A VIGÊNCIA DO CONTRATO PELA CENTRAL DE ATENDIMENTO AO CLIENTE.</div>
+  <div class="modalidade-check">${this.buildCheckMarkup(modality === 'social', 'oval')} MODALIDADE SOCIAL: CÔNJUGE ATÉ A IDADE DE 55 ANOS - FILHOS, NETOS E ENTEADOS DO TITULAR</div>
+  <div class="modalidade-check">${this.buildCheckMarkup(modality === 'essencial', 'oval')} MODALIDADE ESSENCIAL: CÔNJUGE ATÉ A IDADE DE 65 ANOS - FILHOS, NETOS E ENTEADOS - PAI E MÃE DO TITULAR</div>
+  <div class="modalidade-check">${this.buildCheckMarkup(modality === 'multi', 'oval')} MODALIDADE MULTI: CÔNJUGE - FILHOS, NETOS E ENTEADOS - PAI E MÃE - SOGRO E SOGRA DO TITULAR</div>
+  <div class="modalidade-check">${this.buildCheckMarkup(modality === 'plus', 'oval')} MODALIDADE PLUS: CÔNJUGE - FILHOS, NETOS E ENTEADOS - PAI E MÃE (OU SOGRO E SOGRA DO TITULAR)</div>
+  <div class="black-bar">RECIBO DA ADESÃO (PRIMEIRA MENSALIDADE DO PLANO)</div>
+  <div class="recibo-grid">
+    <div class="recibo-cell br"><span class="recibo-label">ASSINATURA</span>${hasAssinaturaTitular ? '<div class="recibo-note">Assinatura digital ao final desse documento</div>' : ''}</div>
+    <div class="recibo-cell"><span class="recibo-label">DATA E LOCAL</span><div style="margin-top:3mm;font-size:8pt;font-weight:700;">${this.escapeHtml(`${today} - Salvador/BA`)}</div></div>
+    <div class="recibo-cell br"><span class="recibo-label">TESTEMUNHA / NOME / CPF</span></div>
+    <div class="recibo-cell"><span class="recibo-label">ASSINATURA</span></div>
+  </div>
+  <div class="rs-row">
+    <span style="font-size:11pt;font-weight:700;">R$</span>
+    <div class="rs-box">${this.escapeHtml(String(totalContrato).replace(/^R\$\s*/, ''))}</div>
+    <div class="qr-placeholder" style="margin-left:10mm;">QR<br>Pix</div>
+    ${pixSrc ? `<img class="pix-logo" src="${pixSrc}" alt="Pix" />` : ''}
+  </div>
+  <div class="brand-footer">
+    <div>${logoSrc ? `<img class="logo-img" src="${logoSrc}" alt="Campo do Bosque" style="height:9mm;" />` : ''}</div>
+    <div class="contact-footer"><span class="icon-box">📍</span> AV. CENTENÁRIO, 21 - CEP: 40.100-180 - GARCIA &nbsp; <span class="icon-box">📞</span> 71 3266-0787<br>SALVADOR - BA<br><span class="icon-box">🌐</span> www.CAMPODOBOSQUE.com.br &nbsp; <span class="icon-box">✉</span> atendimento@campodobosque.com.br</div>
+  </div>
+</div>
+</body>
+</html>`;
+
+    const puppeteer = await import('puppeteer');
+    const browser = await puppeteer.default.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+
+    try {
+      const page = await browser.newPage();
+      await page.setContent(html, { waitUntil: 'networkidle0' });
+      return Buffer.from(
+        await page.pdf({
+          format: 'A4',
+          printBackground: true,
+          margin: { top: '0', right: '0', bottom: '0', left: '0' },
+        }),
+      );
+    } catch (error: any) {
+      throw new Error(
+        `Falha ao renderizar ficha de adesão em PDF: ${error?.message || error}`,
+      );
+    } finally {
+      await browser.close();
+    }
   }
 
   private async buildFichaAdesaoPageDocxBuffer(titularId: number): Promise<Buffer> {
