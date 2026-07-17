@@ -632,6 +632,9 @@ export class PlanoService {
       nome: pl.nome,
       valorMensal: pl.valorMensal,
       idadeMaxima: pl.idadeMaxima,
+      coberturaMaxima: pl.coberturaMaxima,
+      carenciaDias: pl.carenciaDias,
+      vigenciaMeses: pl.vigenciaMeses,
       ativo: pl.ativo,
       beneficios: (pl.beneficios ?? []).map((pb: any) => pb.beneficio),
       coberturas: pl.coberturas ?? [],
@@ -676,6 +679,9 @@ export class PlanoService {
       nome: string;
       valorMensal: number;
       idadeMaxima: number | null;
+      coberturaMaxima: number;
+      carenciaDias: number;
+      vigenciaMeses: number;
       ativo: boolean;
       beneficios: unknown[];
       coberturas: unknown[];
