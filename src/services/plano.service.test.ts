@@ -40,6 +40,9 @@ const makePlano = (overrides: Record<string, unknown> = {}) => ({
   nome: 'Plano Test',
   valorMensal: 100,
   idadeMaxima: 60,
+  coberturaMaxima: 5000,
+  carenciaDias: 180,
+  vigenciaMeses: 60,
   ativo: true,
   beneficios: [],
   coberturas: [],
@@ -304,6 +307,31 @@ describe('PlanoService.sugerirPlano', () => {
 
     const resultado = await service.sugerirPlano([{ idade: 30, parentesco: 'Titular' }], true) as any[];
     expect(resultado[0].beneficios).toMatchObject([expect.objectContaining({ id: 5, nome: 'Assistência 24h' })]);
+  });
+
+  it('sugerirPlano preserva carência, vigência e cobertura máxima no retorno', async () => {
+    mockPrisma.plano.findMany.mockResolvedValue([
+      makePlano({
+        id: 1,
+        nome: 'Plano Completo',
+        idadeMaxima: null,
+        coberturaMaxima: 3500,
+        carenciaDias: 180,
+        vigenciaMeses: 60,
+      }),
+    ]);
+
+    const resultado = await service.sugerirPlano(
+      [{ idade: 30, parentesco: 'Titular' }],
+      true,
+    ) as any[];
+
+    expect(resultado[0]).toMatchObject({
+      nome: 'Plano Completo',
+      coberturaMaxima: 3500,
+      carenciaDias: 180,
+      vigenciaMeses: 60,
+    });
   });
 
   it('sugerirPlano calcula assistenciaFuneral corretamente no score', async () => {
