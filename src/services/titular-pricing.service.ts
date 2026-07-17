@@ -146,6 +146,70 @@ export class TitularPricingService {
     return matriz[matriz.length - 1]?.valor ?? 0;
   }
 
+  private isCorresponsavelMesmoDoTitular(args: {
+    titularNome?: string | null;
+    titularCpf?: string | null;
+    corresponsavelNome?: string | null;
+    corresponsavelCpf?: string | null;
+    relacionamento?: string | null;
+  }): boolean {
+    const titularCpf = String(args.titularCpf ?? '').replace(/\D/g, '');
+    const corresponsavelCpf = String(args.corresponsavelCpf ?? '').replace(/\D/g, '');
+    if (titularCpf && corresponsavelCpf && titularCpf === corresponsavelCpf) {
+      return true;
+    }
+
+    const titularNome = String(args.titularNome ?? '').trim().toLowerCase();
+    const corresponsavelNome = String(args.corresponsavelNome ?? '').trim().toLowerCase();
+    if (titularNome && corresponsavelNome && titularNome === corresponsavelNome) {
+      return true;
+    }
+
+    return canonicalizeRelationship(args.relacionamento) === 'titular';
+  }
+
+  private isCorresponsavelSemAdicional(relacionamento?: string | null): boolean {
+    const parentescoNormalizado = canonicalizeRelationship(relacionamento);
+    return parentescoNormalizado === 'conjuge';
+  }
+
+  private calcularAdicionalCorresponsavel(
+    titular: {
+      nome?: string | null;
+      cpf?: string | null;
+      corresponsaveis?: Array<{
+        nome?: string | null;
+        cpf?: string | null;
+        relacionamento?: string | null;
+        dataNascimento?: Date | null;
+      }>;
+    },
+    matriz: FaixaTarifacaoDependente[],
+  ): number {
+    const corresponsavel = titular.corresponsaveis?.[0];
+    if (!corresponsavel) return 0;
+
+    if (
+      this.isCorresponsavelMesmoDoTitular({
+        titularNome: titular.nome,
+        titularCpf: titular.cpf,
+        corresponsavelNome: corresponsavel.nome,
+        corresponsavelCpf: corresponsavel.cpf,
+        relacionamento: corresponsavel.relacionamento,
+      })
+    ) {
+      return 0;
+    }
+
+    if (this.isCorresponsavelSemAdicional(corresponsavel.relacionamento)) {
+      return 0;
+    }
+
+    const idade = this.calcularIdade(corresponsavel.dataNascimento ?? null);
+    if (idade === null) return 0;
+    return this.obterValorAdicionalPorFaixaEtaria(idade, matriz);
+  }
+
   async recalcularDependente(dependenteId: number): Promise<void> {
     const dependente = await this.prisma.dependente.findUnique({
       where: { id: Number(dependenteId) },
@@ -223,10 +287,19 @@ export class TitularPricingService {
   }
 
   async recalcularFinanceiroTitular(titularId: number): Promise<number> {
+    const matrizTarifacao = await this.obterMatrizTarifacaoDependente();
     const titular = await this.prisma.titular.findUnique({
       where: { id: Number(titularId) },
       include: {
         plano: true,
+        corresponsaveis: {
+          select: {
+            nome: true,
+            cpf: true,
+            relacionamento: true,
+            dataNascimento: true,
+          },
+        },
         dependentes: {
           select: { valorAdicionalMensal: true },
         },
@@ -239,13 +312,17 @@ export class TitularPricingService {
     const valorAdicionais = titular.dependentes.reduce((acc: number, dep: { valorAdicionalMensal: number }) => {
       return acc + Number(dep.valorAdicionalMensal ?? 0);
     }, 0);
+    const valorAdicionalCorresponsavel = this.calcularAdicionalCorresponsavel(
+      titular,
+      matrizTarifacao,
+    );
 
     const telemedicinaContratada = this.normalizarServicosAdicionais(
       titular.servicosAdicionaisJson,
     ).includes('telemedicina');
     const valorTelemedicina = telemedicinaContratada ? 19.9 : 0;
     const valorTotalMensal = this.arredondarMoeda(
-      valorPlano + valorAdicionais + valorTelemedicina,
+      valorPlano + valorAdicionais + valorAdicionalCorresponsavel + valorTelemedicina,
     );
 
     await this.prisma.titular.update({

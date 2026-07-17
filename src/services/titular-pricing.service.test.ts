@@ -38,11 +38,19 @@ const makeTitularComDependentes = (deps: any[], plano: any = { beneficiarios: [{
   dependentes: deps,
 });
 
-const makeTitularValores = (deps: Array<{ valor: number }>, planoValor = 100) => ({
+const makeTitularValores = (
+  deps: Array<{ valor: number }>,
+  planoValor = 100,
+  extras: Record<string, unknown> = {},
+) => ({
   id: 1,
+  nome: 'Titular Teste',
+  cpf: '12345678901',
   plano: { valorMensal: planoValor },
   servicosAdicionaisJson: null,
+  corresponsaveis: [],
   dependentes: deps.map(d => ({ valorAdicionalMensal: d.valor })),
+  ...extras,
 });
 
 describe('TitularPricingService', () => {
@@ -574,6 +582,39 @@ describe('TitularPricingService', () => {
 
       await service.recalcularFinanceiroTitular(1);
       expect(prismaMock.contaReceber.update).not.toHaveBeenCalled();
+    });
+
+    it('soma adicional do corresponsável quando o relacionamento não é isento', async () => {
+      (prismaMock.businessRules.findFirst as jest.Mock).mockResolvedValue({
+        valorAdicionalDependenteForaGradeFaixasJson: JSON.stringify([
+          { idadeMaxima: 60, valor: 9.9 },
+          { idadeMaxima: 70, valor: 19.9 },
+          { idadeMaxima: 80, valor: 29.9 },
+          { idadeMaxima: null, valor: 49 },
+        ]),
+        valorAdicionalDependenteForaGrade: 14.9,
+      });
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue(
+        makeTitularValores([], 69.9, {
+          corresponsaveis: [
+            {
+              nome: 'Pai Teste',
+              cpf: '22233344455',
+              relacionamento: 'Pai',
+              dataNascimento: new Date('1985-01-01T00:00:00.000Z'),
+            },
+          ],
+        }),
+      );
+      (prismaMock.titular.update as jest.Mock).mockResolvedValue({ id: 1 });
+
+      const result = await service.recalcularFinanceiroTitular(1);
+
+      expect(result).toBe(79.8);
+      expect(prismaMock.titular.update).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: { valorTotalContrato: 79.8 },
+      });
     });
   });
 
