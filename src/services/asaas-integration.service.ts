@@ -1862,7 +1862,7 @@ export class AsaasIntegrationService {
 
     const paymentId = event.payment?.id;
     const subscriptionId = event.payment?.subscription ?? event.subscription?.id;
-    const status = this.mapStatus(event.event);
+    const status = this.resolveWebhookStatus(event);
     const statusConfirmado = this.isStatusPagamentoConfirmado(status);
     const dueDate = event.payment?.dueDate ? new Date(event.payment.dueDate) : undefined;
     const pixExpiration = event.payment?.pixExpirationDate
@@ -2232,6 +2232,20 @@ export class AsaasIntegrationService {
       default:
         return 'PENDENTE';
     }
+  }
+
+  private resolveWebhookStatus(event: AsaasWebhookEvent): string {
+    const providerPaymentStatus = String(event.payment?.status ?? '').trim();
+    if (providerPaymentStatus) {
+      return this.mapStatusFromProvider(providerPaymentStatus);
+    }
+
+    const providerSubscriptionStatus = String(event.subscription?.status ?? '').trim();
+    if (providerSubscriptionStatus) {
+      return this.mapStatusFromProvider(providerSubscriptionStatus);
+    }
+
+    return this.mapStatus(event.event);
   }
 
   async changePaymentMethod(args: {

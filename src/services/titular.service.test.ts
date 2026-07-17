@@ -1,6 +1,7 @@
 const prismaMock = {
   businessRules: { findFirst: jest.fn() },
   comissao: {
+    findMany: jest.fn(),
     deleteMany: jest.fn(),
   },
   pagamento: {
@@ -11,6 +12,24 @@ const prismaMock = {
   },
   consentAcceptance: {
     createMany: jest.fn(),
+  },
+  titularCredential: {
+    deleteMany: jest.fn(),
+  },
+  titularOtp: {
+    deleteMany: jest.fn(),
+  },
+  titularToken: {
+    deleteMany: jest.fn(),
+  },
+  assinaturaDigital: {
+    deleteMany: jest.fn(),
+  },
+  parceriaVantagemResgate: {
+    deleteMany: jest.fn(),
+  },
+  contaPagar: {
+    deleteMany: jest.fn(),
   },
   titular: {
     findFirst: jest.fn(),
@@ -111,6 +130,38 @@ const makePayload = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const buildCreateFullTxMock = (titularCreate?: jest.Mock) => ({
+  $executeRawUnsafe: jest.fn().mockResolvedValue(0),
+  consultor: { findFirst: jest.fn().mockResolvedValue(null) },
+  comissao: prismaMock.comissao,
+  pagamento: prismaMock.pagamento,
+  documento: prismaMock.documento,
+  consentAcceptance: prismaMock.consentAcceptance,
+  titularCredential: prismaMock.titularCredential,
+  titularOtp: prismaMock.titularOtp,
+  titularToken: prismaMock.titularToken,
+  assinaturaDigital: prismaMock.assinaturaDigital,
+  parceriaVantagemResgate: prismaMock.parceriaVantagemResgate,
+  contaPagar: prismaMock.contaPagar,
+  titular: {
+    create:
+      titularCreate ??
+      jest.fn().mockResolvedValue({
+        id: 1,
+        nome: 'Cliente Teste',
+        dependentes: [],
+        corresponsaveis: [],
+      }),
+    update: prismaMock.titular.update,
+    delete: prismaMock.titular.delete,
+  },
+  dependente: prismaMock.dependente,
+  corresponsavel: prismaMock.corresponsavel,
+  contaReceber: prismaMock.contaReceber,
+  orcamento: prismaMock.orcamento,
+  recibo: prismaMock.recibo,
+});
+
 describe('TitularService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -122,10 +173,17 @@ describe('TitularService', () => {
     prismaMock.titular.findUnique.mockResolvedValue(null);
     prismaMock.titular.update.mockResolvedValue({ id: 1 });
     prismaMock.contaReceber.findMany.mockResolvedValue([]);
+    prismaMock.comissao.findMany.mockResolvedValue([]);
     prismaMock.comissao.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.pagamento.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.documento.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.consentAcceptance.createMany.mockResolvedValue({ count: 0 });
+    prismaMock.titularCredential.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.titularOtp.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.titularToken.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.assinaturaDigital.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.parceriaVantagemResgate.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.contaPagar.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.dependente.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.corresponsavel.delete.mockResolvedValue({ id: 99 });
     prismaMock.corresponsavel.deleteMany.mockResolvedValue({ count: 0 });
@@ -134,28 +192,7 @@ describe('TitularService', () => {
     prismaMock.recibo.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.$transaction.mockImplementation(async (arg: any) => {
       if (typeof arg === 'function') {
-        return arg({
-          consultor: { findFirst: jest.fn().mockResolvedValue(null) },
-          comissao: prismaMock.comissao,
-          pagamento: prismaMock.pagamento,
-          documento: prismaMock.documento,
-          consentAcceptance: prismaMock.consentAcceptance,
-          titular: {
-            create: jest.fn().mockResolvedValue({
-              id: 1,
-              nome: 'Cliente Teste',
-              dependentes: [],
-              corresponsaveis: [],
-            }),
-            update: prismaMock.titular.update,
-            delete: prismaMock.titular.delete,
-          },
-          dependente: prismaMock.dependente,
-          corresponsavel: prismaMock.corresponsavel,
-          contaReceber: prismaMock.contaReceber,
-          orcamento: prismaMock.orcamento,
-          recibo: prismaMock.recibo,
-        });
+        return arg(buildCreateFullTxMock());
       }
       return [];
     });
@@ -403,7 +440,7 @@ describe('TitularService', () => {
       });
     });
 
-    it('não deve usar corresponsável não cônjuge na composição para sugerir plano', async () => {
+    it('deve usar corresponsável não titular na composição para sugerir plano', async () => {
       const service = new TitularService('tenant-123');
 
       const payload = makePayload({
@@ -435,6 +472,10 @@ describe('TitularService', () => {
         expect.objectContaining({
           dataNascimento: '1990-01-01',
           parentesco: 'Titular',
+        }),
+        expect.objectContaining({
+          dataNascimento: '1992-02-02',
+          parentesco: 'Primo(a)',
         }),
       ]);
     });
@@ -575,12 +616,7 @@ describe('TitularService', () => {
         corresponsaveis: [],
       });
       prismaMock.$transaction.mockImplementationOnce(async (callback: any) =>
-        callback({
-          consultor: { findFirst: jest.fn().mockResolvedValue(null) },
-          titular: { create: txCreate },
-          dependente: prismaMock.dependente,
-          corresponsavel: prismaMock.corresponsavel,
-        }),
+        callback(buildCreateFullTxMock(txCreate)),
       );
 
       const service = new TitularService('tenant-123');
@@ -1034,12 +1070,7 @@ describe('TitularService', () => {
         id: 1, nome: 'Titular', dependentes: [], corresponsaveis: [],
       });
       prismaMock.$transaction.mockImplementationOnce(async (callback: any) =>
-        callback({
-          consultor: { findFirst: jest.fn().mockResolvedValue(null) },
-          titular: { create: txCreate },
-          dependente: prismaMock.dependente,
-          corresponsavel: prismaMock.corresponsavel,
-        }),
+        callback(buildCreateFullTxMock(txCreate)),
       );
 
       const service = new TitularService('tenant-123');
