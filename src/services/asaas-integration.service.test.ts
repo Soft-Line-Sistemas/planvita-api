@@ -218,6 +218,151 @@ describe('AsaasIntegrationService', () => {
     });
   });
 
+  describe('resolveWebhookStatus', () => {
+    it('prioriza payment.status quando o evento é genérico', () => {
+      const status = (service as any).resolveWebhookStatus({
+        event: 'PAYMENT_UPDATED',
+        payment: {
+          id: 'pay_status_only',
+          status: 'RECEIVED',
+        },
+      });
+
+      expect(status).toBe('RECEBIDO');
+    });
+
+    it('usa subscription.status quando payment.status não vem no payload', () => {
+      const status = (service as any).resolveWebhookStatus({
+        event: 'SUBSCRIPTION_UPDATED',
+        subscription: {
+          id: 'sub_status_only',
+          status: 'CONFIRMED',
+        },
+      });
+
+      expect(status).toBe('CONFIRMADO');
+    });
+
+    it('mantém fallback para o nome do evento quando não há status no payload', () => {
+      const status = (service as any).resolveWebhookStatus({
+        event: 'PAYMENT_RECEIVED',
+      });
+
+      expect(status).toBe('RECEBIDO');
+    });
+  });
+
+  describe('handleWebhook', () => {
+    it('libera pagamento quando recebe PAYMENT_UPDATED com payment.status=RECEIVED', async () => {
+      const txMock: any = {
+        contaReceber: {
+          findUnique: jest.fn().mockResolvedValue({
+            id: 77,
+            clienteId: 12,
+            status: 'PENDENTE',
+            dataRecebimento: null,
+            paymentUrl: null,
+            pixQrCode: null,
+            pixExpiration: null,
+            asaasPaymentId: 'pay_real_status',
+            asaasSubscriptionId: 'sub_123',
+            metodoPagamento: 'PIX',
+            dataVencimento: new Date('2026-07-20T00:00:00.000Z'),
+            vencimento: new Date('2026-07-20T00:00:00.000Z'),
+            valor: 199.9,
+            descricao: 'Mensalidade',
+            cliente: {
+              id: 12,
+              nome: 'Cliente Teste',
+              email: 'cliente@teste.com',
+              telefone: '71999999999',
+            },
+          }),
+          findFirst: jest.fn(),
+          update: jest.fn().mockImplementation(async ({ data }: any) => ({
+            id: 77,
+            clienteId: 12,
+            status: data.status,
+            dataRecebimento: data.dataRecebimento,
+            paymentUrl: data.paymentUrl ?? null,
+            pixQrCode: data.pixQrCode ?? null,
+            pixExpiration: data.pixExpiration ?? null,
+            asaasPaymentId: data.asaasPaymentId ?? 'pay_real_status',
+            asaasSubscriptionId: data.asaasSubscriptionId ?? 'sub_123',
+            metodoPagamento: data.metodoPagamento ?? 'PIX',
+            dataVencimento: data.dataVencimento ?? new Date('2026-07-20T00:00:00.000Z'),
+            vencimento: new Date('2026-07-20T00:00:00.000Z'),
+            valor: data.valor ?? 199.9,
+            descricao: 'Mensalidade',
+            cliente: {
+              id: 12,
+              nome: 'Cliente Teste',
+              email: 'cliente@teste.com',
+              telefone: '71999999999',
+            },
+          })),
+        },
+        pagamento: {
+          upsert: jest.fn().mockResolvedValue({ id: 55 }),
+        },
+        titular: {
+          findUnique: jest.fn().mockResolvedValue({ pagamentoConfirmadoEm: null }),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        corresponsavel: {
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
+        dependente: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        assinaturaDigital: {
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+      };
+
+      prismaMock.$transaction.mockImplementation(async (fn: any) => fn(txMock));
+      (service as any).atualizarStatusContratoAposPagamentoTx = jest.fn().mockResolvedValue(undefined);
+      (service as any).gerarComissaoPrimeiroPagamentoTx = jest.fn().mockResolvedValue(undefined);
+      (service as any).enviarConfirmacaoAssinatura = jest.fn().mockResolvedValue(undefined);
+      (service as any).enviarLinkCriacaoSenha = jest.fn().mockResolvedValue(undefined);
+      (service as any).agendarNotificacaoContratoObrigatorio = jest.fn().mockResolvedValue(undefined);
+
+      const result = await service.handleWebhook({
+        event: 'PAYMENT_UPDATED',
+        payment: {
+          id: 'pay_real_status',
+          status: 'RECEIVED',
+          subscription: 'sub_123',
+          billingType: 'PIX',
+          value: 199.9,
+        },
+      } as any);
+
+      expect(txMock.contaReceber.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 77 },
+          data: expect.objectContaining({
+            status: 'RECEBIDO',
+          }),
+        }),
+      );
+      expect(txMock.pagamento.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({ status: 'RECEBIDO' }),
+          create: expect.objectContaining({ status: 'RECEBIDO' }),
+        }),
+      );
+      expect(txMock.titular.update).toHaveBeenCalledWith({
+        where: { id: 12 },
+        data: { pagamentoConfirmadoEm: expect.any(Date) },
+      });
+      expect(result).toEqual({
+        contaReceberId: 77,
+        status: 'RECEBIDO',
+      });
+    });
+  });
+
   // ── isEnabled ───────────────────────────────────────────────────────────────
   describe('isEnabled', () => {
     it('retorna true quando credenciais habilitadas', () => {

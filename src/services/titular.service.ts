@@ -2970,7 +2970,8 @@ export class TitularService {
   }
 
   private corresponsavelContaNaComposicaoDoPlano(relacionamento?: string | null) {
-    return canonicalizeRelationship(relacionamento) === 'conjuge';
+    const parentescoNormalizado = canonicalizeRelationship(relacionamento);
+    return Boolean(parentescoNormalizado) && parentescoNormalizado !== 'titular';
   }
 
   async inativarConta(titularId: number): Promise<void> {
