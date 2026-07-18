@@ -2239,12 +2239,58 @@ export class TitularService {
     return `<div class="ruled-line${tick ? ' tick' : ''}"><span class="filled-text">${this.escapeHtml(value)}</span></div>`;
   }
 
+  private normalizeSegmentedValue(
+    value: string | null | undefined,
+    maxLength: number,
+    mode: 'digits' | 'alphanumeric' | 'raw' = 'digits',
+  ): string[] {
+    const rawValue = String(value ?? '').trim().toUpperCase();
+
+    if (!rawValue) return [];
+
+    const normalized =
+      mode === 'digits'
+        ? rawValue.replace(/\D/g, '')
+        : mode === 'alphanumeric'
+          ? rawValue.replace(/[^0-9A-Z]/g, '')
+          : rawValue;
+
+    return normalized.slice(0, maxLength).split('');
+  }
+
   private buildSegmentedLineMarkup(
     value: string | null | undefined,
-    spansMarkup: string,
+    groups: number[],
     className = '',
+    options?: {
+      mode?: 'digits' | 'alphanumeric' | 'raw';
+    },
   ): string {
-    return `<div class="segmented ${className}">${spansMarkup}<span class="filled-text">${this.escapeHtml(value)}</span></div>`;
+    const totalSlots = groups.reduce((sum, groupSize) => sum + groupSize, 0);
+    const characters = this.normalizeSegmentedValue(
+      value,
+      totalSlots,
+      options?.mode ?? 'digits',
+    );
+    let cursor = 0;
+
+    const groupsMarkup = groups
+      .map((groupSize, index) => {
+        const slots = Array.from({ length: groupSize }, () => {
+          const character = characters[cursor] ?? '&nbsp;';
+          cursor += 1;
+          return `<span class="slot"><span class="slot-char">${
+            character === '&nbsp;' ? character : this.escapeHtml(character)
+          }</span></span>`;
+        }).join('');
+
+        return `<div class="segmented-group" style="grid-template-columns:repeat(${groupSize}, minmax(0, 1fr)); flex:${groupSize} 1 0;">${slots}</div>${
+          index < groups.length - 1 ? '<span class="group-separator"></span>' : ''
+        }`;
+      })
+      .join('');
+
+    return `<div class="segmented ${className}"><div class="segmented-content">${groupsMarkup}</div></div>`;
   }
 
   private getPlanModality(value?: string | null): 'social' | 'essencial' | 'multi' | 'plus' | '' {
@@ -2382,14 +2428,17 @@ export class TitularService {
   .ruled-line{border-bottom:1.4px solid var(--cinza-linha);height:5mm;position:relative;}
   .ruled-line.tick{border-left:2px solid var(--verde-claro);padding-left:2mm;}
   .filled-text{position:absolute;left:2mm;right:1mm;bottom:.35mm;font-size:8pt;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .segmented{display:inline-flex;align-items:flex-end;border-bottom:1.4px solid var(--cinza-linha);height:6mm;position:relative;width:100%;}
+  .segmented{display:inline-flex;align-items:stretch;border-bottom:1.4px solid var(--cinza-linha);height:6.2mm;position:relative;width:100%;}
   .segmented::before{content:"";position:absolute;left:0;bottom:0;width:2px;height:100%;background:var(--verde-claro);}
   .segmented.no-tick::before{content:none;}
-  .segmented span.seg{flex:0 0 auto;width:8mm;align-self:flex-end;border-right:1.2px solid var(--cinza-linha);height:12%;}
-  .segmented span.grp{border-right-width:1.6px;height:85%;}
-  .segmented span.seg:last-of-type{border-right:none;}
-  .segmented.end-bar span.seg:last-of-type{border-right:1.6px solid var(--cinza-linha);}
-  .segmented.start-bar span.seg:first-of-type{border-left:1.6px solid var(--cinza-linha);height:85%;}
+  .segmented-content{display:flex;align-items:stretch;width:100%;height:100%;}
+  .segmented.end-bar .segmented-content{border-right:1.6px solid var(--cinza-linha);}
+  .segmented.start-bar .segmented-content{border-left:1.6px solid var(--cinza-linha);}
+  .segmented-group{display:grid;align-items:stretch;min-width:0;height:100%;}
+  .slot{display:flex;align-items:flex-end;justify-content:center;min-width:0;height:100%;border-right:1.2px solid var(--cinza-linha);padding:0 .2mm .45mm;}
+  .segmented-group .slot:last-child{border-right:none;}
+  .slot-char{display:block;font-size:10pt;font-weight:800;line-height:1;}
+  .group-separator{flex:0 0 1.1mm;height:100%;border-right:1.6px solid var(--cinza-linha);}
   .checks-row,.checks-inline{font-size:7.6pt;font-weight:700;}
   .checks-row{display:flex;gap:4mm;align-items:center;flex-wrap:wrap;margin-top:1mm;}
   .checks-inline{display:flex;flex-direction:column;gap:.5mm;}
@@ -2453,7 +2502,7 @@ export class TitularService {
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3mm;">
     <div class="top-fields" style="flex:1;">
       <div class="field"><span class="field-label">UNIDADE</span>${this.buildRuledLineMarkup(this.tenantId.toUpperCase(), true)}</div>
-      <div class="field"><span class="field-label">DATA DA ADESÃO</span>${this.buildSegmentedLineMarkup(today, '<span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg grp"></span>', 'end-bar')}</div>
+      <div class="field"><span class="field-label">DATA DA ADESÃO</span>${this.buildSegmentedLineMarkup(today, [2, 2, 4], 'end-bar')}</div>
       <div class="field"><span class="field-label">PROMOTOR (A) COMERCIAL</span>${this.buildRuledLineMarkup(titular.vendedor?.nome, true)}</div>
       <div class="field">
         <span class="field-label">CANAL DE VENDAS</span>
@@ -2490,15 +2539,15 @@ export class TitularService {
     <div style="display:flex;gap:4mm;align-items:flex-end;margin-bottom:2mm;">
       <div class="field" style="flex:1.4;">
         <span class="field-label">DATA DE NASCIMENTO</span>
-        ${this.buildSegmentedLineMarkup(this.formatDatePtBr(titular.dataNascimento), '<span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg grp"></span>', 'end-bar')}
+        ${this.buildSegmentedLineMarkup(this.formatDatePtBr(titular.dataNascimento), [2, 2, 4], 'end-bar')}
       </div>
       <div style="display:flex;flex-direction:column;gap:.8mm;">
         ${this.buildCheckMarkup(Boolean(titular.telefone))}
         ${this.buildCheckMarkup(Boolean(titular.telefone))}
       </div>
       <div style="display:flex;flex-direction:column;gap:.8mm;"><span style="font-size:7pt;">WhatsApp</span><span style="font-size:7pt;">Ligação</span></div>
-      <div class="field" style="flex:0 0 auto;min-width:48mm;"><span class="field-label">CPF</span>${this.buildSegmentedLineMarkup(titular.cpf, '<span class="seg"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg"></span><span class="seg grp"></span>', 'end-bar')}</div>
-      <div class="field" style="flex:0 0 auto;min-width:24mm;"><span class="field-label">RG</span>${this.buildSegmentedLineMarkup(titular.rg, '<span class="seg"></span><span class="seg"></span><span class="seg grp"></span>', 'no-tick end-bar start-bar')}</div>
+      <div class="field" style="flex:0 0 auto;min-width:48mm;"><span class="field-label">CPF</span>${this.buildSegmentedLineMarkup(titular.cpf, [3, 3, 3, 2], 'end-bar')}</div>
+      <div class="field" style="flex:0 0 auto;min-width:24mm;"><span class="field-label">RG</span>${this.buildSegmentedLineMarkup(titular.rg, [2, 3, 2], 'no-tick end-bar start-bar', { mode: 'alphanumeric' })}</div>
     </div>
     <div style="display:flex;gap:4mm;margin-bottom:2mm;align-items:flex-end;">
       <div style="flex:0.58;">
@@ -2508,7 +2557,7 @@ export class TitularService {
           <span class="checkbox">${this.buildCheckMarkup(Boolean(titular.telefone))}LIGAÇÃO</span>
         </div>
       </div>
-      <div style="flex:0 0 auto;min-width:58mm;"><span class="field-label">TELEFONE</span>${this.buildSegmentedLineMarkup(titular.telefone, '<span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg grp"></span>', 'end-bar')}</div>
+      <div style="flex:0 0 auto;min-width:58mm;"><span class="field-label">TELEFONE</span>${this.buildSegmentedLineMarkup(titular.telefone, [2, 5, 4], 'end-bar')}</div>
       <div style="flex:1;"><span class="field-label">PREFERÊNCIA DE TRATAMENTO / COMO É CONHECIDO</span>${this.buildRuledLineMarkup(String(titular.nome ?? '').trim().split(/\s+/)[0] ?? '')}</div>
     </div>
     <div style="display:flex;gap:4mm;margin-bottom:2mm;align-items:flex-end;">
@@ -2525,7 +2574,7 @@ export class TitularService {
       <div class="field" style="flex:.5;"><span class="field-label">Nº</span>${this.buildRuledLineMarkup(titular.numero, true)}</div>
     </div>
     <div class="row-grid g4">
-      <div class="field"><span class="field-label">CEP</span>${this.buildSegmentedLineMarkup(titular.cep, '<span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg"></span><span class="seg grp"></span>', 'end-bar')}</div>
+      <div class="field"><span class="field-label">CEP</span>${this.buildSegmentedLineMarkup(titular.cep, [5, 3], 'end-bar')}</div>
       <div class="field"><span class="field-label">BAIRRO / DISTRITO</span>${this.buildRuledLineMarkup(titular.bairro, true)}</div>
       <div class="field"><span class="field-label">CIDADE</span>${this.buildRuledLineMarkup(titular.cidade, true)}</div>
       <div class="field"><span class="field-label">UF</span>${this.buildRuledLineMarkup(titular.uf, true)}</div>
@@ -2547,7 +2596,7 @@ export class TitularService {
     <div class="field"><span class="field-label">VALOR DO PLANO PADRÃO</span>${this.buildRuledLineMarkup(planValue, true)}</div>
     <div class="field"><span class="field-label">COBERTURAS ESTENDIDAS</span>${this.buildRuledLineMarkup(coberturasText, true)}</div>
     <div class="field"><span class="field-label">MENSALIDADE</span>${this.buildRuledLineMarkup(totalContrato, true)}</div>
-    <div class="field"><span class="field-label">DATA PRIMEIRO PAGTO / ADESÃO</span>${this.buildSegmentedLineMarkup(this.formatDatePtBr(titular.dataContratacao), '<span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg grp"></span><span class="seg"></span><span class="seg grp"></span>', 'end-bar')}</div>
+    <div class="field"><span class="field-label">DATA PRIMEIRO PAGTO / ADESÃO</span>${this.buildSegmentedLineMarkup(this.formatDatePtBr(titular.dataContratacao), [2, 2, 4], 'end-bar')}</div>
     <div class="pay-checks">
       <span class="checkbox">${this.buildCheckMarkup(titular.formaPagamentoAdesao === 'PIX')}PIX</span>
       <span class="checkbox">${this.buildCheckMarkup(titular.formaPagamentoAdesao === 'BOLETO')}BOLETO</span>
@@ -2562,7 +2611,7 @@ export class TitularService {
       <span class="checkbox">${this.buildCheckMarkup(Boolean(corresponsavel))}OUTRO</span>
     </div>
     <div class="field"><span class="field-label">NOME COMPLETO</span>${this.buildRuledLineMarkup(corresponsavel?.nome ?? titular.nome)}</div>
-    <div class="field cpf"><span class="field-label">CPF</span>${this.buildRuledLineMarkup(corresponsavel?.cpf ?? titular.cpf, true)}</div>
+    <div class="field cpf"><span class="field-label">CPF</span>${this.buildSegmentedLineMarkup(corresponsavel?.cpf ?? titular.cpf, [3, 3, 3, 2], 'end-bar')}</div>
   </div>
   <div class="p2-topbar">8. RESUMO DAS CONDIÇÕES GERAIS DO CONTRATO DE ADESÃO - PRESTAÇÃO DE SERVIÇO FUNERAL FUTURO</div>
   <div class="info-cols">
