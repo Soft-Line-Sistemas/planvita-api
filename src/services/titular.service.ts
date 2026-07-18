@@ -2397,7 +2397,12 @@ export class TitularService {
       this.resolveAdesaoAssetPath('logo.png');
     const pixPath = this.resolveAdesaoAssetPath('pix-banco-central.svg');
     const bankPath = this.resolveAdesaoAssetPath('banco-do-brasil.png');
-    const qrPath =
+    const qrWhatsappPath =
+      this.resolveAdesaoAssetPath('qr-whatsapp.png') ??
+      this.resolveAdesaoAssetPath('qr-code.png') ??
+      this.resolveAdesaoAssetPath('image 6.png');
+    const qrPixPath =
+      this.resolveAdesaoAssetPath('qr-pix.png') ??
       this.resolveAdesaoAssetPath('qr-code.png') ??
       this.resolveAdesaoAssetPath('image 6.png');
     const sindefPath = this.resolveAdesaoAssetPath('sindef.png');
@@ -2405,7 +2410,8 @@ export class TitularService {
     const logoDataUrl = logoPath ? this.fileToDataUrl(logoPath) : '';
     const pixDataUrl = pixPath ? this.fileToDataUrl(pixPath) : '';
     const bankDataUrl = bankPath ? this.fileToDataUrl(bankPath) : '';
-    const qrDataUrl = qrPath ? this.fileToDataUrl(qrPath) : '';
+    const qrWhatsappDataUrl = qrWhatsappPath ? this.fileToDataUrl(qrWhatsappPath) : '';
+    const qrPixDataUrl = qrPixPath ? this.fileToDataUrl(qrPixPath) : '';
     const sindefDataUrl = sindefPath ? this.fileToDataUrl(sindefPath) : '';
     const paxDataUrl = paxPath ? this.fileToDataUrl(paxPath) : '';
     const today = this.formatDatePtBr(new Date());
@@ -2527,7 +2533,7 @@ export class TitularService {
       </div>
     </div>
     <div class="header-contact">
-      ${qrDataUrl ? `<img class="qr-img" src="${qrDataUrl}" alt="QR WhatsApp" />` : ''}
+      ${qrWhatsappDataUrl ? `<img class="qr-img" src="${qrWhatsappDataUrl}" alt="QR WhatsApp" />` : ''}
       <div class="contact-text"><p class="ct-title">Central de Atendimento</p><p class="ct-phone">71<br>3266 0787</p></div>
     </div>
   </div>
@@ -2650,7 +2656,7 @@ export class TitularService {
     <span style="font-size:11pt;font-weight:700;">R$</span>
     <div class="rs-box">${this.escapeHtml(String(totalContrato).replace(/^R\$\s*/, ''))}</div>
     <div class="pix-block" style="margin-left:10mm;">
-      ${qrDataUrl ? `<img class="qr-img" src="${qrDataUrl}" alt="QR Pix" />` : ''}
+      ${qrPixDataUrl ? `<img class="qr-img" src="${qrPixDataUrl}" alt="QR Pix" />` : ''}
       ${pixDataUrl ? `<img class="pix-logo" src="${pixDataUrl}" alt="Pix" />` : ''}
     </div>
     ${bankDataUrl ? `<div class="bb-logo" style="margin-left:2mm;"><img class="bb-logo-img" src="${bankDataUrl}" alt="Banco do Brasil" /></div>` : ''}
