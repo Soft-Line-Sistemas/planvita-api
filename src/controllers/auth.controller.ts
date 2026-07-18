@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import { ClienteAuthService } from '../services/cliente-auth.service';
 import { TitularService } from '../services/titular.service';
+import { WhatsappNotificationService } from '../services/whatsapp-notification.service';
 import Logger from '../utils/logger';
 import { PrismaClient } from '@prisma/client';
 import { getPrismaForTenant } from '../utils/prisma';
@@ -302,6 +303,29 @@ export class AuthController {
       const status = error?.status ?? 500;
       const message = error?.message ?? 'Erro no primeiro acesso.';
       res.status(status).json({ message });
+    }
+  }
+
+  async firstAccessChannels(req: TenantRequest, res: Response) {
+    if (!req.tenantId) {
+      return res.status(400).json({ message: 'Tenant unknown' });
+    }
+
+    try {
+      const overview = await new WhatsappNotificationService(req.tenantId).getOverview();
+      return res.json({
+        email: true,
+        whatsapp: Boolean(overview?.connection?.ready),
+      });
+    } catch (error) {
+      this.logger.warn('Falha ao verificar disponibilidade de canais do primeiro acesso', {
+        tenant: req.tenantId,
+        reason: (error as Error)?.message,
+      });
+      return res.json({
+        email: true,
+        whatsapp: false,
+      });
     }
   }
 
