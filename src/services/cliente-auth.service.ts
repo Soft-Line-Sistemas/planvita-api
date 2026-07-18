@@ -365,8 +365,14 @@ export class ClienteAuthService {
     }
 
     const token =
-      (await this.consumeTokenByRawOrNull('VERIFY_FIRST_ACCESS', verificationTokenOrLinkToken)) ??
-      (await this.consumeTokenByRaw('FIRST_ACCESS_LINK', verificationTokenOrLinkToken));
+      (await this.findTokenByRaw('VERIFY_FIRST_ACCESS', verificationTokenOrLinkToken)) ??
+      (await this.findTokenByRaw('FIRST_ACCESS_LINK', verificationTokenOrLinkToken));
+
+    if (!token) {
+      const err: any = new Error('Token inválido ou expirado.');
+      err.status = 400;
+      throw err;
+    }
 
     const titular = await this.prisma.titular.findUnique({
       where: { id: token.titularId },
@@ -386,6 +392,8 @@ export class ClienteAuthService {
       where: { titularId: token.titularId },
       data: { senhaHash },
     });
+
+    await this.consumeTokenById(token.id);
   }
 
   async resetPassword(verificationTokenOrLinkToken: string, password: string): Promise<void> {
@@ -398,8 +406,14 @@ export class ClienteAuthService {
     }
 
     const token =
-      (await this.consumeTokenByRawOrNull('VERIFY_RESET_PASSWORD', verificationTokenOrLinkToken)) ??
-      (await this.consumeTokenByRaw('RESET_PASSWORD_LINK', verificationTokenOrLinkToken));
+      (await this.findTokenByRaw('VERIFY_RESET_PASSWORD', verificationTokenOrLinkToken)) ??
+      (await this.findTokenByRaw('RESET_PASSWORD_LINK', verificationTokenOrLinkToken));
+
+    if (!token) {
+      const err: any = new Error('Token inválido ou expirado.');
+      err.status = 400;
+      throw err;
+    }
 
     const senhaHash = await bcrypt.hash(password, 10);
     await this.ensureCredential(token.titularId);
@@ -407,6 +421,8 @@ export class ClienteAuthService {
       where: { titularId: token.titularId },
       data: { senhaHash },
     });
+
+    await this.consumeTokenById(token.id);
   }
 
   async changePassword(
@@ -788,24 +804,21 @@ export class ClienteAuthService {
     return record;
   }
 
-  private async consumeTokenByRawOrNull(type: TokenType, raw: string): Promise<{ id: string; titularId: number } | null> {
-    const tokenHash = sha256Hex(raw);
-    const record = await (this.prisma as any).titularToken.findFirst({
+  private async consumeTokenById(id: string): Promise<void> {
+    const updated = await (this.prisma as any).titularToken.updateMany({
       where: {
-        tokenHash,
-        type,
+        id,
         consumedAt: null,
         expiresAt: { gt: new Date() },
       },
-      select: { id: true, titularId: true },
-    });
-    if (!record) return null;
-
-    await (this.prisma as any).titularToken.update({
-      where: { id: record.id },
       data: { consumedAt: new Date() },
     });
 
-    return record;
+    if (!updated?.count) {
+      const err: any = new Error('Token inválido ou expirado.');
+      err.status = 400;
+      throw err;
+    }
   }
+
 }

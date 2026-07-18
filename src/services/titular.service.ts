@@ -2179,6 +2179,9 @@ export class TitularService {
 
   private resolveAdesaoAssetPath(filename: string): string | null {
     const candidates = [
+      path.resolve(process.cwd(), '../imagens-adesao', filename),
+      path.resolve(process.cwd(), 'imagens-adesao', filename),
+      path.resolve(__dirname, '../../../imagens-adesao', filename),
       path.resolve(process.cwd(), 'public/adesao-cb', filename),
       path.resolve(process.cwd(), 'dist/public/adesao-cb', filename),
       path.resolve(__dirname, '../../public/adesao-cb', filename),
@@ -2195,9 +2198,19 @@ export class TitularService {
     return null;
   }
 
-  private fileToDataUrl(filePath: string, mimeType: string): string {
+  private fileToDataUrl(filePath: string, mimeType?: string): string {
     const buffer = fs.readFileSync(filePath);
-    return `data:${mimeType};base64,${buffer.toString('base64')}`;
+    const resolvedMimeType =
+      mimeType ??
+      ({
+        '.svg': 'image/svg+xml',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp',
+      }[path.extname(filePath).toLowerCase()] || 'application/octet-stream');
+
+    return `data:${resolvedMimeType};base64,${buffer.toString('base64')}`;
   }
 
   private resolveChromeExecutablePath(): string | undefined {
@@ -2216,77 +2229,6 @@ export class TitularService {
     }
 
     return undefined;
-  }
-
-  private async renderSvgToPngBuffer(svgPath: string): Promise<Buffer> {
-    const svgContent = fs.readFileSync(svgPath, 'utf8');
-    const svgDataUrl = `data:image/svg+xml;base64,${Buffer.from(svgContent).toString('base64')}`;
-    const puppeteer = await import('puppeteer');
-    const executablePath = this.resolveChromeExecutablePath();
-    const browser = await puppeteer.default.launch({
-      headless: true,
-      executablePath,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
-
-    try {
-      const page = await browser.newPage();
-      await page.setViewport({ width: 420, height: 140, deviceScaleFactor: 2 });
-      await page.setContent(
-        `<html><body style="margin:0;background:white;display:flex;align-items:center;justify-content:center;"><img id="svg" src="${svgDataUrl}" style="width:360px;height:auto;" /></body></html>`,
-        { waitUntil: 'networkidle0' },
-      );
-      const element = await page.$('#svg');
-      if (!element) {
-        throw new Error('Elemento SVG não encontrado para conversão.');
-      }
-      const buffer = await element.screenshot({ type: 'png' });
-      return Buffer.from(buffer);
-    } finally {
-      await browser.close();
-    }
-  }
-
-  private async overlayAdesaoAssetsOnPdf(params: {
-    pdfBuffer: Buffer;
-    logoBuffer?: Buffer | null;
-    pixBuffer?: Buffer | null;
-  }): Promise<Buffer> {
-    const pdf = await PDFDocument.load(params.pdfBuffer);
-    const pages = pdf.getPages();
-    const logoImage = params.logoBuffer ? await pdf.embedPng(params.logoBuffer) : null;
-    const pixImage = params.pixBuffer ? await pdf.embedPng(params.pixBuffer) : null;
-
-    if (pages[0] && logoImage) {
-      pages[0].drawImage(logoImage, {
-        x: 418,
-        y: 768,
-        width: 118,
-        height: 34,
-      });
-    }
-
-    if (pages[1]) {
-      if (logoImage) {
-        pages[1].drawImage(logoImage, {
-          x: 34,
-          y: 34,
-          width: 92,
-          height: 26,
-        });
-      }
-
-      if (pixImage) {
-        pages[1].drawImage(pixImage, {
-          x: 322,
-          y: 92,
-          width: 70,
-          height: 24,
-        });
-      }
-    }
-
-    return Buffer.from(await pdf.save());
   }
 
   private buildCheckMarkup(checked: boolean, extraClass = ''): string {
@@ -2403,8 +2345,15 @@ export class TitularService {
       String(item.tipo ?? '').startsWith('TITULAR_ASSINATURA_'),
     );
 
-    const logoPath = this.resolveAdesaoAssetPath('logo.png');
+    const logoPath =
+      this.resolveAdesaoAssetPath('logo.svg') ??
+      this.resolveAdesaoAssetPath('logo-planvita.png') ??
+      this.resolveAdesaoAssetPath('logo.png');
     const pixPath = this.resolveAdesaoAssetPath('pix-banco-central.svg');
+    const bankPath = this.resolveAdesaoAssetPath('banco-do-brasil.png');
+    const logoDataUrl = logoPath ? this.fileToDataUrl(logoPath) : '';
+    const pixDataUrl = pixPath ? this.fileToDataUrl(pixPath) : '';
+    const bankDataUrl = bankPath ? this.fileToDataUrl(bankPath) : '';
     const today = this.formatDatePtBr(new Date());
 
     const html = `<!DOCTYPE html>
@@ -2414,10 +2363,12 @@ export class TitularService {
 <style>
   :root{--verde-escuro:#40690B;--verde-musgo:#40690B;--verde-claro:#00A859;--vermelho:#ED3237;--preto:#1a1a1a;--cinza-linha:#2b2b2b;}
   *{box-sizing:border-box;}
-  @page{size:A4;margin:0;}
+  @page{size:A4;margin:6mm 7mm;}
   body{margin:0;padding:0;background:#fff;font-family:'Segoe UI',Calibri,Arial,sans-serif;color:var(--preto);}
-  .page{width:210mm;min-height:297mm;margin:0;background:#fff;padding:6mm 7mm;position:relative;page-break-after:always;}
+  .document{margin:0;padding:0;}
+  .page-break-avoid,.header,.sec7-row,.recibo-grid,.footer-grid,.brand-footer{break-inside:avoid-page;page-break-inside:avoid;}
   .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid var(--preto);padding-bottom:4mm;margin-bottom:3mm;}
+  .header-right{display:flex;justify-content:flex-end;align-items:flex-start;min-width:42mm;padding-left:4mm;}
   .header-left h1{margin:0 0 1mm 0;font-size:22pt;font-weight:700;color:var(--verde-escuro);}
   .header-left p{margin:0;font-size:8.2pt;line-height:1.25;max-width:120mm;}
   .logo-img{height:16mm;width:auto;object-fit:contain;}
@@ -2477,20 +2428,27 @@ export class TitularService {
   .recibo-note{margin-top:3mm;font-size:7.2pt;line-height:1.35;color:#333;}
   .rs-row{display:flex;align-items:flex-end;gap:4mm;margin-top:3mm;}
   .rs-box{font-size:11pt;font-weight:700;border-bottom:1.4px solid #000;padding:1mm 2mm;width:45mm;height:8mm;}
-  .pix-logo{height:7mm;width:auto;}
+  .footer-grid{display:flex;justify-content:space-between;align-items:center;margin-top:4mm;gap:3mm;}
+  .pix-block{display:flex;align-items:center;gap:2.5mm;}
+  .pix-logo{height:7mm;width:auto;filter:grayscale(1) brightness(.18);}
+  .bank-info{font-size:7pt;line-height:1.4;font-weight:700;}
+  .bb-logo{display:flex;align-items:center;}
+  .bb-logo-img{height:9mm;width:auto;filter:grayscale(1) brightness(.3);}
   .brand-footer{display:flex;justify-content:space-between;align-items:center;margin-top:4mm;border-top:1px solid #ccc;padding-top:3mm;font-size:7pt;gap:5mm;}
+  .brand-footer .brands{display:flex;align-items:center;gap:5mm;}
+  .logo-img-footer{height:9mm;width:auto;filter:grayscale(1) brightness(.3);}
   .contact-footer{text-align:right;font-size:7pt;line-height:1.5;}
   .icon-box{display:inline-flex;align-items:center;justify-content:center;width:4mm;height:4mm;background:#1a1a1a;border-radius:.7mm;font-size:6.5pt;line-height:1;color:#fff;}
 </style>
 </head>
 <body>
-<div class="page">
+<div class="document">
   <div class="header">
     <div class="header-left">
       <h1>ANEXO I - PROPOSTA DE ADESÃO</h1>
       <p>PARTE INTEGRANTE DAS CONDIÇÕES GERAIS DO CONTRATO DE<br>ASSISTÊNCIA FUNERAL CAMPO DO BOSQUE - LEI Nº 13.261/16</p>
     </div>
-    
+    <div class="header-right">${logoDataUrl ? `<img class="logo-img" src="${logoDataUrl}" alt="Campo do Bosque" />` : ''}</div>
   </div>
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3mm;">
     <div class="top-fields" style="flex:1;">
@@ -2598,7 +2556,7 @@ export class TitularService {
     </div>
   </div>
   <div class="section-bar">7. CORRESPONSÁVEL/RESPONSÁVEL FINANCEIRO</div>
-  <div class="sec7-row">
+  <div class="sec7-row page-break-avoid">
     <div class="checks-inline">
       <span class="checkbox">${this.buildCheckMarkup(!corresponsavel)}TITULAR</span>
       <span class="checkbox">${this.buildCheckMarkup(Boolean(corresponsavel))}OUTRO</span>
@@ -2606,8 +2564,6 @@ export class TitularService {
     <div class="field"><span class="field-label">NOME COMPLETO</span>${this.buildRuledLineMarkup(corresponsavel?.nome ?? titular.nome)}</div>
     <div class="field cpf"><span class="field-label">CPF</span>${this.buildRuledLineMarkup(corresponsavel?.cpf ?? titular.cpf, true)}</div>
   </div>
-</div>
-<div class="page">
   <div class="p2-topbar">8. RESUMO DAS CONDIÇÕES GERAIS DO CONTRATO DE ADESÃO - PRESTAÇÃO DE SERVIÇO FUNERAL FUTURO</div>
   <div class="info-cols">
     <div class="col col1"><div>REGISTRO DAS CONDIÇÕES GERAIS</div><div>CONTRATO REGISTRADO SOB Nº821473</div><div>SERVIÇO NOTARIAL - SALVADOR - BA</div></div>
@@ -2630,14 +2586,17 @@ export class TitularService {
     <div class="recibo-cell br"><span class="recibo-label">TESTEMUNHA / NOME / CPF</span></div>
     <div class="recibo-cell"><span class="recibo-label">ASSINATURA</span></div>
   </div>
-  <div class="rs-row">
+  <div class="rs-row page-break-avoid">
     <span style="font-size:11pt;font-weight:700;">R$</span>
     <div class="rs-box">${this.escapeHtml(String(totalContrato).replace(/^R\$\s*/, ''))}</div>
-    <div class="qr-placeholder" style="margin-left:10mm;">QR<br>Pix</div>
-    
+    <div class="pix-block" style="margin-left:10mm;">
+      <div class="qr-placeholder">QR<br>Pix</div>
+      ${pixDataUrl ? `<img class="pix-logo" src="${pixDataUrl}" alt="Pix" />` : ''}
+    </div>
+    ${bankDataUrl ? `<div class="bb-logo" style="margin-left:2mm;"><img class="bb-logo-img" src="${bankDataUrl}" alt="Banco do Brasil" /></div>` : ''}
   </div>
-  <div class="brand-footer">
-    <div></div>
+  <div class="brand-footer page-break-avoid">
+    <div class="brands">${logoDataUrl ? `<img class="logo-img-footer" src="${logoDataUrl}" alt="Campo do Bosque" />` : ''}</div>
     <div class="contact-footer"><span class="icon-box">📍</span> AV. CENTENÁRIO, 21 - CEP: 40.100-180 - GARCIA &nbsp; <span class="icon-box">📞</span> 71 3266-0787<br>SALVADOR - BA<br><span class="icon-box">🌐</span> www.CAMPODOBOSQUE.com.br &nbsp; <span class="icon-box">✉</span> atendimento@campodobosque.com.br</div>
   </div>
 </div>
@@ -2662,9 +2621,7 @@ export class TitularService {
           margin: { top: '0', right: '0', bottom: '0', left: '0' },
         }),
       );
-      const logoBuffer = logoPath ? fs.readFileSync(logoPath) : null;
-      const pixBuffer = pixPath ? await this.renderSvgToPngBuffer(pixPath) : null;
-      return this.overlayAdesaoAssetsOnPdf({ pdfBuffer, logoBuffer, pixBuffer });
+      return pdfBuffer;
     } catch (error: any) {
       throw new Error(
         `Falha ao renderizar ficha de adesão em PDF: ${error?.message || error}`,
