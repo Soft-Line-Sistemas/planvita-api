@@ -1,4 +1,5 @@
 import Logger from '../utils/logger';
+import { buildStandardEmailTemplate, formatTextAsHtmlParagraphs } from '../utils/emailTemplate';
 import {
   AsaasClient,
   AsaasWebhookEvent,
@@ -352,11 +353,22 @@ export class AsaasIntegrationService {
           logId: `${logBaseId}:email`,
         });
       } else {
+        const html = buildStandardEmailTemplate({
+          title: `Olá, ${payload.nome}`,
+          intro: 'Seu pagamento foi confirmado com sucesso.',
+          sections: [
+            {
+              html: formatTextAsHtmlParagraphs(mensagemBase),
+            },
+          ],
+          footerNote: 'Se precisar, entre em contato com o suporte pelo aplicativo.',
+        });
         const response = await this.notificationClient.send({
           to: payload.email,
           channel: 'email',
           subject: assunto,
           message: mensagemBase,
+          html,
           metadata: {
             flow: 'assinatura-confirmada',
             paymentId: payload.paymentId,
@@ -497,6 +509,22 @@ export class AsaasIntegrationService {
       `Olá, ${payload.nome}! Seu pagamento foi confirmado com sucesso. ` +
       `Agora você pode criar sua senha e acessar o aplicativo. ` +
       `Clique no link para criar sua senha: ${link}`;
+    const htmlCriacaoSenha = buildStandardEmailTemplate({
+      title: `Olá, ${payload.nome}`,
+      intro: 'Seu pagamento foi confirmado e seu acesso já pode ser ativado.',
+      sections: [
+        {
+          html: formatTextAsHtmlParagraphs(
+            'Agora você pode criar sua senha e acessar o aplicativo normalmente.',
+          ),
+        },
+      ],
+      cta: {
+        label: 'Criar minha senha',
+        href: link,
+      },
+      footerNote: 'Se você não conseguir abrir o botão, use o link enviado também no texto deste e-mail.',
+    });
 
     const destinatarios: Array<{ canal: 'email' | 'whatsapp'; to: string; logSuffix: string }> = [];
 
@@ -527,6 +555,7 @@ export class AsaasIntegrationService {
         channel: dest.canal,
         subject: 'Pagamento confirmado — Crie sua senha de acesso',
         message: mensagem,
+        ...(dest.canal === 'email' ? { html: htmlCriacaoSenha } : {}),
         metadata: { flow: 'primeiro-pagamento-link-senha', titularId: payload.titularId },
       });
 

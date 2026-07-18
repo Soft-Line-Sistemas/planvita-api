@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { getPrismaForTenant } from '../utils/prisma';
 import { NotificationApiClient } from '../utils/notificationClient';
 import Logger from '../utils/logger';
+import { buildStandardEmailTemplate } from '../utils/emailTemplate';
 import { getConfiguredPublicTenants, getTenantLabel } from '../utils/tenants';
 
 const TOKEN_TTL_MINUTES = 60;
@@ -153,86 +154,33 @@ export class AccountDeletionService {
 }
 
 function buildDeletionEmail(nome: string, confirmUrl: string, ttlMinutes: number): string {
-  return `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Confirmação de exclusão de conta</title>
-</head>
-<body style="margin:0;padding:0;background:#f4f6f8;font-family:'Inter',Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:40px 16px;">
-    <tr>
-      <td align="center">
-        <table width="100%" style="max-width:520px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 16px rgba(0,0,0,0.07);">
-
-          <!-- Header -->
-          <tr>
-            <td style="background:linear-gradient(135deg,#2d7a1f 0%,#3a9b28 60%,#1eba4b 100%);padding:28px 32px;">
-              <p style="margin:0;font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-0.3px;">Campo do Bosque</p>
-              <p style="margin:4px 0 0;font-size:13px;color:rgba(255,255,255,0.8);">Plataforma de Assistência Funeral</p>
-            </td>
-          </tr>
-
-          <!-- Body -->
-          <tr>
-            <td style="padding:32px;">
-              <p style="margin:0 0 8px;font-size:17px;font-weight:700;color:#212121;">Olá, ${nome}</p>
-              <p style="margin:0 0 24px;font-size:14px;color:#616161;line-height:1.6;">
-                Recebemos uma solicitação para <strong>excluir sua conta</strong> na plataforma.
-                Se foi você quem solicitou, clique no botão abaixo para confirmar.
-              </p>
-
-              <!-- Warning box -->
-              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
-                <tr>
-                  <td style="background:#fff8e1;border:1px solid #ffe082;border-radius:10px;padding:14px 16px;">
-                    <p style="margin:0;font-size:13px;color:#7c5700;line-height:1.6;">
-                      ⚠️ <strong>Atenção:</strong> esta ação é <strong>irreversível</strong>.
-                      Seu acesso ao aplicativo será bloqueado e a cobrança do plano será cancelada.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-
-              <!-- CTA Button -->
-              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
-                <tr>
-                  <td align="center">
-                    <a href="${confirmUrl}"
-                       style="display:inline-block;background:#e53935;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:14px 36px;border-radius:999px;box-shadow:0 4px 14px rgba(229,57,53,0.35);">
-                      Confirmar exclusão da conta
-                    </a>
-                  </td>
-                </tr>
-              </table>
-
-              <p style="margin:0 0 8px;font-size:13px;color:#9e9e9e;text-align:center;">
-                O link expira em <strong>${ttlMinutes} minutos</strong>.
-              </p>
-
-              <hr style="border:none;border-top:1px solid #f0f0f0;margin:24px 0;" />
-
-              <p style="margin:0;font-size:12px;color:#bdbdbd;line-height:1.6;">
-                Se você <strong>não</strong> solicitou a exclusão da conta, ignore este e-mail —
-                sua conta permanecerá ativa. Em caso de dúvidas, acesse o suporte no aplicativo.
-              </p>
-            </td>
-          </tr>
-
-          <!-- Footer -->
-          <tr>
-            <td style="background:#f9f9f9;padding:16px 32px;border-top:1px solid #f0f0f0;text-align:center;">
-              <p style="margin:0;font-size:12px;color:#bdbdbd;">
-                Campo do Bosque &copy; ${new Date().getFullYear()} — Plataforma de Assistência Funeral
-              </p>
-            </td>
-          </tr>
-
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
+  return buildStandardEmailTemplate({
+    title: `Olá, ${nome}`,
+    intro:
+      'Recebemos uma solicitação para <strong>excluir sua conta</strong> na plataforma. Se foi você quem solicitou, clique no botão abaixo para confirmar.',
+    sections: [
+      {
+        html: `
+          <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+            <tr>
+              <td style="background:#fff8e1;border:1px solid #ffe082;border-radius:10px;padding:14px 16px;">
+                <p style="margin:0;font-size:13px;color:#7c5700;line-height:1.6;">
+                  <strong>Atenção:</strong> esta ação é <strong>irreversível</strong>.
+                  Seu acesso ao aplicativo será bloqueado e a cobrança do plano será cancelada.
+                </p>
+              </td>
+            </tr>
+          </table>
+        `,
+      },
+    ],
+    cta: {
+      label: 'Confirmar exclusão da conta',
+      href: confirmUrl,
+      backgroundColor: '#e53935',
+    },
+    note: `O link expira em <strong>${ttlMinutes} minutos</strong>.`,
+    footerNote:
+      'Se você <strong>não</strong> solicitou a exclusão da conta, ignore este e-mail. Sua conta permanecerá ativa.',
+  });
 }

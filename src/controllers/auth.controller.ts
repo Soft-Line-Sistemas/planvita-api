@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import { AuthService } from '../services/auth.service';
 import { ClienteAuthService } from '../services/cliente-auth.service';
 import { TitularService } from '../services/titular.service';
-import { WhatsappNotificationService } from '../services/whatsapp-notification.service';
 import Logger from '../utils/logger';
 import { PrismaClient } from '@prisma/client';
 import { getPrismaForTenant } from '../utils/prisma';
@@ -11,6 +10,7 @@ import jwt from 'jsonwebtoken';
 import config from '../config';
 import { ClienteAuthRequest } from '../middlewares/cliente-auth.middleware';
 import { normalizeTenantId } from '../utils/tenants';
+import { resolveWhatsappClientForSending } from '../services/whatsapp-client.service';
 
 export interface TenantRequest extends Request {
   tenantId?: string;
@@ -307,24 +307,25 @@ export class AuthController {
   }
 
   async firstAccessChannels(req: TenantRequest, res: Response) {
-    if (!req.tenantId) {
-      return res.status(400).json({ message: 'Tenant unknown' });
-    }
+    const normalizedTenant = normalizeTenantId(req.tenantId) ?? undefined;
 
     try {
-      const overview = await new WhatsappNotificationService(req.tenantId).getOverview();
+      const { tenant, client } = await resolveWhatsappClientForSending(normalizedTenant);
+      const status = await client.getQrStatus(250);
       return res.json({
         email: true,
-        whatsapp: Boolean(overview?.connection?.ready),
+        whatsapp: Boolean(status.ready || client.isReady()),
+        activeTenant: status.ready || client.isReady() ? tenant : null,
       });
     } catch (error) {
-      this.logger.warn('Falha ao verificar disponibilidade de canais do primeiro acesso', {
-        tenant: req.tenantId,
+      this.logger.warn('Falha ao verificar disponibilidade da sessão compartilhada de WhatsApp', {
+        tenant: normalizedTenant ?? null,
         reason: (error as Error)?.message,
       });
       return res.json({
         email: true,
         whatsapp: false,
+        activeTenant: null,
       });
     }
   }
