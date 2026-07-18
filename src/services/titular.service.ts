@@ -2397,9 +2397,17 @@ export class TitularService {
       this.resolveAdesaoAssetPath('logo.png');
     const pixPath = this.resolveAdesaoAssetPath('pix-banco-central.svg');
     const bankPath = this.resolveAdesaoAssetPath('banco-do-brasil.png');
+    const qrPath =
+      this.resolveAdesaoAssetPath('qr-code.png') ??
+      this.resolveAdesaoAssetPath('image 6.png');
+    const sindefPath = this.resolveAdesaoAssetPath('sindef.png');
+    const paxPath = this.resolveAdesaoAssetPath('pax.png');
     const logoDataUrl = logoPath ? this.fileToDataUrl(logoPath) : '';
     const pixDataUrl = pixPath ? this.fileToDataUrl(pixPath) : '';
     const bankDataUrl = bankPath ? this.fileToDataUrl(bankPath) : '';
+    const qrDataUrl = qrPath ? this.fileToDataUrl(qrPath) : '';
+    const sindefDataUrl = sindefPath ? this.fileToDataUrl(sindefPath) : '';
+    const paxDataUrl = paxPath ? this.fileToDataUrl(paxPath) : '';
     const today = this.formatDatePtBr(new Date());
 
     const html = `<!DOCTYPE html>
@@ -2419,7 +2427,7 @@ export class TitularService {
   .header-left p{margin:0;font-size:8.2pt;line-height:1.25;max-width:120mm;}
   .logo-img{height:16mm;width:auto;object-fit:contain;}
   .header-contact{display:flex;align-items:center;gap:2mm;margin-top:1mm;}
-  .qr-placeholder{width:16mm;height:16mm;border:1px solid #1a1a1a;border-radius:1mm;display:flex;align-items:center;justify-content:center;text-align:center;font-size:6pt;font-weight:700;padding:1mm;}
+  .qr-img{width:16mm;height:16mm;object-fit:contain;image-rendering:pixelated;flex-shrink:0;}
   .contact-text .ct-title{font-size:8.5pt;font-weight:700;color:var(--verde-escuro);margin:0;}
   .contact-text .ct-phone{font-size:15pt;font-weight:700;color:var(--verde-escuro);margin:0;line-height:1.1;}
   .top-fields{display:grid;grid-template-columns:1fr 1fr;gap:2mm 6mm;margin-bottom:3mm;}
@@ -2431,14 +2439,15 @@ export class TitularService {
   .segmented{display:inline-flex;align-items:stretch;border-bottom:1.4px solid var(--cinza-linha);height:6.2mm;position:relative;width:100%;}
   .segmented::before{content:"";position:absolute;left:0;bottom:0;width:2px;height:100%;background:var(--verde-claro);}
   .segmented.no-tick::before{content:none;}
-  .segmented-content{display:flex;align-items:stretch;width:100%;height:100%;}
-  .segmented.end-bar .segmented-content{border-right:1.6px solid var(--cinza-linha);}
-  .segmented.start-bar .segmented-content{border-left:1.6px solid var(--cinza-linha);}
+  .segmented-content{display:flex;align-items:stretch;width:100%;height:100%;position:relative;}
+  .segmented.end-bar .segmented-content::after{content:"";position:absolute;right:0;bottom:0;height:85%;border-right:1.6px solid var(--cinza-linha);}
+  .segmented.start-bar .segmented-content::before{content:"";position:absolute;left:0;bottom:0;height:85%;border-left:1.6px solid var(--cinza-linha);}
   .segmented-group{display:grid;align-items:stretch;min-width:0;height:100%;}
-  .slot{display:flex;align-items:flex-end;justify-content:center;min-width:0;height:100%;border-right:1.2px solid var(--cinza-linha);padding:0 .2mm .45mm;}
-  .segmented-group .slot:last-child{border-right:none;}
+  .slot{display:flex;align-items:flex-end;justify-content:center;min-width:0;height:100%;padding:0 .2mm .45mm;position:relative;}
+  .slot::after{content:"";position:absolute;right:0;bottom:0;height:12%;border-right:1.2px solid var(--cinza-linha);}
+  .segmented-group .slot:last-child::after{content:none;}
   .slot-char{display:block;font-size:10pt;font-weight:800;line-height:1;}
-  .group-separator{flex:0 0 1.1mm;height:100%;border-right:1.6px solid var(--cinza-linha);}
+  .group-separator{flex:0 0 1.1mm;height:85%;align-self:flex-end;border-right:1.6px solid var(--cinza-linha);}
   .checks-row,.checks-inline{font-size:7.6pt;font-weight:700;}
   .checks-row{display:flex;gap:4mm;align-items:center;flex-wrap:wrap;margin-top:1mm;}
   .checks-inline{display:flex;flex-direction:column;gap:.5mm;}
@@ -2486,6 +2495,8 @@ export class TitularService {
   .brand-footer{display:flex;justify-content:space-between;align-items:center;margin-top:4mm;border-top:1px solid #ccc;padding-top:3mm;font-size:7pt;gap:5mm;}
   .brand-footer .brands{display:flex;align-items:center;gap:5mm;}
   .logo-img-footer{height:9mm;width:auto;filter:grayscale(1) brightness(.3);}
+  .sindef-img{height:9mm;width:auto;filter:grayscale(1) brightness(.3);}
+  .pax-img{height:9mm;width:auto;filter:grayscale(1) brightness(.3);}
   .contact-footer{text-align:right;font-size:7pt;line-height:1.5;}
   .icon-box{display:inline-flex;align-items:center;justify-content:center;width:4mm;height:4mm;background:#1a1a1a;border-radius:.7mm;font-size:6.5pt;line-height:1;color:#fff;}
 </style>
@@ -2516,7 +2527,7 @@ export class TitularService {
       </div>
     </div>
     <div class="header-contact">
-      <div class="qr-placeholder">QR<br>WhatsApp</div>
+      ${qrDataUrl ? `<img class="qr-img" src="${qrDataUrl}" alt="QR WhatsApp" />` : ''}
       <div class="contact-text"><p class="ct-title">Central de Atendimento</p><p class="ct-phone">71<br>3266 0787</p></div>
     </div>
   </div>
@@ -2639,13 +2650,18 @@ export class TitularService {
     <span style="font-size:11pt;font-weight:700;">R$</span>
     <div class="rs-box">${this.escapeHtml(String(totalContrato).replace(/^R\$\s*/, ''))}</div>
     <div class="pix-block" style="margin-left:10mm;">
-      <div class="qr-placeholder">QR<br>Pix</div>
+      ${qrDataUrl ? `<img class="qr-img" src="${qrDataUrl}" alt="QR Pix" />` : ''}
       ${pixDataUrl ? `<img class="pix-logo" src="${pixDataUrl}" alt="Pix" />` : ''}
     </div>
     ${bankDataUrl ? `<div class="bb-logo" style="margin-left:2mm;"><img class="bb-logo-img" src="${bankDataUrl}" alt="Banco do Brasil" /></div>` : ''}
+    <div class="bank-info" style="margin-left:2mm;">AG:3439-5<br>C/c 53245-2<br>CHAVE PIX: 51121484000168<br>PLANO FAMILIAR CAMPO DO BOSQUE LTDA</div>
   </div>
   <div class="brand-footer page-break-avoid">
-    <div class="brands">${logoDataUrl ? `<img class="logo-img-footer" src="${logoDataUrl}" alt="Campo do Bosque" />` : ''}</div>
+    <div class="brands">
+      ${logoDataUrl ? `<img class="logo-img-footer" src="${logoDataUrl}" alt="Campo do Bosque" />` : ''}
+      ${sindefDataUrl ? `<img class="sindef-img" src="${sindefDataUrl}" alt="Sindef BA" />` : ''}
+      ${paxDataUrl ? `<img class="pax-img" src="${paxDataUrl}" alt="Pax" />` : ''}
+    </div>
     <div class="contact-footer"><span class="icon-box">📍</span> AV. CENTENÁRIO, 21 - CEP: 40.100-180 - GARCIA &nbsp; <span class="icon-box">📞</span> 71 3266-0787<br>SALVADOR - BA<br><span class="icon-box">🌐</span> www.CAMPODOBOSQUE.com.br &nbsp; <span class="icon-box">✉</span> atendimento@campodobosque.com.br</div>
   </div>
 </div>
