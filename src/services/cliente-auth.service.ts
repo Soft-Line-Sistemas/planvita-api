@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import config from '../config';
 import { NotificationApiClient, type NotificationChannel } from '../utils/notificationClient';
+import { buildStandardEmailTemplate, formatTextAsHtmlParagraphs } from '../utils/emailTemplate';
 import { getPrismaForTenant } from '../utils/prisma';
 
 const OTP_TTL_MINUTES = 15;
@@ -679,11 +680,24 @@ export class ClienteAuthService {
       messageParts.push(`Link: ${this.buildPublicLink(purpose, linkToken)}`);
     }
 
+    const subject = purpose === 'RESET_PASSWORD' ? 'Recuperação de senha' : 'Verificação de cadastro';
+    const message = messageParts.join('\n');
+
     await this.notifier.send({
       to: destination,
       channel,
-      subject: purpose === 'RESET_PASSWORD' ? 'Recuperação de senha' : 'Verificação de cadastro',
-      message: messageParts.join('\n'),
+      subject,
+      message,
+      ...(channel === 'email'
+        ? {
+            html: this.buildAuthEmailHtml({
+              nome: identity.nome,
+              otp,
+              purpose,
+              link: linkToken ? this.buildPublicLink(purpose, linkToken) : undefined,
+            }),
+          }
+        : {}),
       metadata: { purpose, tenant: this.tenantId },
     });
 
@@ -704,6 +718,58 @@ export class ClienteAuthService {
     url.searchParams.set('token', token);
     url.searchParams.set('tenant', this.tenantId);
     return url.toString();
+  }
+
+  private buildAuthEmailHtml({
+    nome,
+    otp,
+    purpose,
+    link,
+  }: {
+    nome: string;
+    otp: string;
+    purpose: OtpPurpose;
+    link?: string;
+  }) {
+    const primeiroNome = (nome || 'cliente').split(' ')[0];
+    const intro =
+      purpose === 'RESET_PASSWORD'
+        ? 'Recebemos uma solicitação para redefinir sua senha. Use o código abaixo para continuar.'
+        : 'Use o código abaixo para validar seu acesso e continuar o cadastro.';
+
+    const sections = [
+      {
+        html: `
+          <div style="margin:0 0 24px;padding:18px;border-radius:14px;background:#f3f7f3;border:1px solid #d9e7d9;text-align:center;">
+            <p style="margin:0 0 8px;font-size:13px;color:#5f6b5f;">Código de verificação</p>
+            <p style="margin:0;font-size:32px;font-weight:800;letter-spacing:6px;color:#2d7a1f;">${otp}</p>
+          </div>
+        `,
+      },
+      {
+        html: formatTextAsHtmlParagraphs(`Olá, ${primeiroNome}.\n\nEsse código expira em ${OTP_TTL_MINUTES} minutos.`),
+      },
+    ];
+
+    if (link) {
+      sections.push({
+        html: formatTextAsHtmlParagraphs('Se preferir, você também pode continuar pelo link abaixo.'),
+      });
+    }
+
+    return buildStandardEmailTemplate({
+      title: purpose === 'RESET_PASSWORD' ? 'Recuperação de senha' : 'Verificação de cadastro',
+      intro,
+      sections,
+      cta: link
+        ? {
+            label: 'Continuar acesso',
+            href: link,
+          }
+        : undefined,
+      footerNote:
+        'Se você não reconhece esta solicitação, ignore este e-mail. Nenhuma alteração será feita sem validação.',
+    });
   }
 
   private async resolveTitularForOtp(loginOrToken: string, purpose: OtpPurpose): Promise<{ titularId: number }> {

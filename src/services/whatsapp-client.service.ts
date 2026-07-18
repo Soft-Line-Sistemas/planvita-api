@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
 import config from '../config';
+import { getConfiguredPublicTenants } from '../utils/tenants';
 
 type QrState = {
   qr: string | null;
@@ -299,4 +300,55 @@ export function getWhatsappClientForTenant(tenantId: string) {
     );
   }
   return whatsappClientRegistry.get(normalizedTenant)!;
+}
+
+export async function resolveWhatsappClientForSending(preferredTenant?: string) {
+  const normalizedPreferred = String(preferredTenant ?? '')
+    .trim()
+    .toLowerCase();
+  const configuredTenants = getConfiguredPublicTenants();
+  const knownTenants = Array.from(whatsappClientRegistry.keys());
+  const tenants = Array.from(
+    new Set(
+      [normalizedPreferred, ...configuredTenants, ...knownTenants].filter(
+        (value): value is string => Boolean(value),
+      ),
+    ),
+  );
+
+  for (const tenant of tenants) {
+    const client = getWhatsappClientForTenant(tenant);
+    if (client.isReady()) {
+      return { tenant, client };
+    }
+  }
+
+  for (const tenant of tenants) {
+    const client = getWhatsappClientForTenant(tenant);
+    try {
+      const status = await client.getQrStatus(250);
+      if (status.ready || client.isReady()) {
+        return { tenant, client };
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  if (normalizedPreferred) {
+    return {
+      tenant: normalizedPreferred,
+      client: getWhatsappClientForTenant(normalizedPreferred),
+    };
+  }
+
+  const fallbackTenant = configuredTenants[0] ?? knownTenants[0];
+  if (!fallbackTenant) {
+    throw new Error('Nenhum tenant de WhatsApp configurado para envio.');
+  }
+
+  return {
+    tenant: fallbackTenant,
+    client: getWhatsappClientForTenant(fallbackTenant),
+  };
 }

@@ -27,6 +27,7 @@ const prismaMock = {
     create: jest.fn(),
     findFirst: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
     deleteMany: jest.fn(),
     findUnique: jest.fn(),
   },
@@ -869,17 +870,25 @@ describe('ClienteAuthService', () => {
 
   // ── resetPassword — cenários extra ────────────────────────────────────────────
   describe('resetPassword — cenários extra', () => {
-    it('resetPassword com token null não lança', async () => {
-      (prismaMock.titularCredential.findUnique as jest.Mock).mockResolvedValue(null);
+    it('resetPassword consome token válido e cria credencial quando necessário', async () => {
+      (prismaMock.titularToken.findFirst as jest.Mock)
+        .mockResolvedValueOnce({ id: 'token-1', titularId: 1 });
+      (prismaMock.titularCredential.upsert as jest.Mock).mockResolvedValue({});
+      (prismaMock.titularCredential.update as jest.Mock).mockResolvedValue({});
+      (prismaMock.titularToken.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+      jest.spyOn(bcrypt, 'hash').mockResolvedValue('hashed' as never);
+
       await expect(service.resetPassword('token-x', 'Nova@Senha1')).resolves.not.toThrow();
     });
 
-    it('resetPassword com credential existente resolve sem throw', async () => {
-      (prismaMock.titularCredential.findUnique as jest.Mock).mockResolvedValue({
-        id: 1, titularId: 1, resetToken: null, senhaHash: 'h',
-      });
+    it('resetPassword com credencial existente atualiza senha e consome token', async () => {
+      (prismaMock.titularToken.findFirst as jest.Mock)
+        .mockResolvedValueOnce({ id: 'token-2', titularId: 1 });
+      (prismaMock.titularCredential.upsert as jest.Mock).mockResolvedValue({});
       jest.spyOn(bcrypt, 'hash').mockResolvedValue('hashed' as never);
       (prismaMock.titularCredential.update as jest.Mock).mockResolvedValue({});
+      (prismaMock.titularToken.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+
       await expect(service.resetPassword('qualquer', 'Nova@Senha1')).resolves.not.toThrow();
     });
   });

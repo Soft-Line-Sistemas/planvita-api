@@ -1,7 +1,7 @@
 import { NotificationPayload, NotificationSendResult, NotificationApiClient } from '../utils/notificationClient';
 import { getPrismaForTenant } from '../utils/prisma';
 import Logger from '../utils/logger';
-import { getWhatsappClientForTenant } from './whatsapp-client.service';
+import { getWhatsappClientForTenant, resolveWhatsappClientForSending } from './whatsapp-client.service';
 
 export type WhatsappTriggerMode = 'AUTOMATIC' | 'MANUAL' | 'FALLBACK';
 
@@ -110,6 +110,10 @@ export class WhatsappNotificationService {
 
   private get client() {
     return getWhatsappClientForTenant(this.tenantId);
+  }
+
+  private async resolveClientForSending() {
+    return resolveWhatsappClientForSending(this.tenantId);
   }
 
   private mapRuleToCreate(configId: number, rule: (typeof DEFAULT_RULES)[number]) {
@@ -516,7 +520,8 @@ export class WhatsappNotificationService {
     }
 
     try {
-      const result = await this.client.sendMessage(normalizedRecipient, input.message);
+      const { tenant: sessionTenant, client } = await this.resolveClientForSending();
+      const result = await client.sendMessage(normalizedRecipient, input.message);
       await this.createDispatchRecord({
         configId: config.id,
         ruleId: rule?.id,
@@ -529,6 +534,10 @@ export class WhatsappNotificationService {
         provider: 'OWN',
         payloadPreview: input.message,
         providerRef: result.referenceId,
+        errorMessage:
+          sessionTenant && sessionTenant !== this.tenantId
+            ? `Sessão compartilhada usada via tenant ${sessionTenant}`
+            : undefined,
         attemptedAt: now,
         sentAt: new Date(),
       });
