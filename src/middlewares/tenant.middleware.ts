@@ -17,6 +17,29 @@ export interface TenantRequest extends Request {
 
 const logger = new Logger({ service: 'tenant-middleware' });
 
+function resolveTenantFromHost(hostHeader?: string): string | null {
+  const hostname = String(hostHeader ?? '')
+    .split(',')[0]
+    ?.trim()
+    .split(':')[0]
+    ?.toLowerCase();
+
+  if (!hostname) return null;
+
+  if (hostname === 'api.campodobosque.com.br' || hostname === 'app.campodobosque.com.br') {
+    return 'bosque';
+  }
+
+  if (hostname === 'api.planvita.com.br' || hostname === 'app.planvita.com.br') {
+    return null;
+  }
+
+  const parts = hostname.split('.');
+  const forbidden = ['www', 'api', 'app'];
+  const candidate = parts.find((part) => part && !forbidden.includes(part));
+  return candidate ?? null;
+}
+
 export const tenantMiddleware = async (req: TenantRequest, res: Response, next: NextFunction) => {
   try {
     const isClienteLoginRoute = req.path.includes('/auth/login');
@@ -73,11 +96,10 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
         hostname === 'app.campodobosque.com.br' ||
         hostname === 'api.campodobosque.com.br';
 
-      if (!isVercel && !isMainDomain && !isGenericSubdomain) {
-        const parts = hostname.split('.');
-        const forbidden = ['www', 'api', 'app'];
-        const candidate = parts.find((part) => part && !forbidden.includes(part));
-        tenant = candidate;
+      if (isGenericSubdomain) {
+        tenant = resolveTenantFromHost(host) ?? undefined;
+      } else if (!isVercel && !isMainDomain) {
+        tenant = resolveTenantFromHost(host) ?? undefined;
       }
     }
 

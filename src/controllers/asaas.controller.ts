@@ -18,7 +18,11 @@ export class AsaasController {
       (req.headers['x-asaas-tenant'] as string | undefined);
     const queryTenant = (req.query?.tenant as string | undefined) ?? null;
     const bodyTenant = (req.body as any)?.tenantId as string | undefined;
-    const tenantId = resolveTenantForWebhook(tenantHeader, queryTenant || bodyTenant);
+    const hostTenant = this.resolveTenantFromHost(req.headers.host);
+    const tenantId = resolveTenantForWebhook(
+      tenantHeader,
+      queryTenant || bodyTenant || hostTenant,
+    );
 
     if (!req.body || typeof req.body !== 'object' || !Object.keys(req.body).length) {
       this.logger.warn('Webhook Asaas rejeitado: payload vazio', { tenantId });
@@ -34,8 +38,14 @@ export class AsaasController {
         paymentId: webhookEvent.payment?.id,
         subscriptionId: webhookEvent.payment?.subscription ?? webhookEvent.subscription?.id,
         customerId: this.extractCustomerId(webhookEvent),
+        host: req.headers.host,
+        event: webhookEvent.event,
       });
-      return res.status(400).json({ message: tenantId ? 'Tenant não identificado para o evento' : 'Tenant não informado' });
+      return res.status(200).json({
+        ok: true,
+        ignored: true,
+        message: 'Webhook recebido sem tenant resolvido',
+      });
     }
 
     let client: AsaasClient;
@@ -178,5 +188,28 @@ export class AsaasController {
       return paymentCustomer.id.trim();
     }
     return event.customer?.id?.trim() ?? null;
+  }
+
+  private resolveTenantFromHost(hostHeader?: string): string | null {
+    const rawHost = String(hostHeader ?? '')
+      .split(',')[0]
+      ?.trim()
+      .split(':')[0]
+      ?.toLowerCase();
+
+    if (!rawHost) return null;
+
+    if (rawHost === 'api.campodobosque.com.br' || rawHost === 'app.campodobosque.com.br') {
+      return 'bosque';
+    }
+
+    if (rawHost === 'api.planvita.com.br' || rawHost === 'app.planvita.com.br') {
+      return null;
+    }
+
+    const parts = rawHost.split('.');
+    const forbidden = new Set(['www', 'api', 'app']);
+    const candidate = parts.find((part) => part && !forbidden.has(part));
+    return candidate || null;
   }
 }
