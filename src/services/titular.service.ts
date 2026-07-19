@@ -23,6 +23,7 @@ import {
   TextRun,
 } from 'docx';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { isValidCPF } from '../utils/helpers';
 
 type TitularType = Prisma.TitularGetPayload<{}>;
 
@@ -1207,7 +1208,7 @@ export class TitularService {
       err.status = 400;
       throw err;
     }
-    if (!cpf || cpf.length !== 11 || /^0+$/.test(cpf)) {
+    if (!cpf || !isValidCPF(cpf)) {
       const err: any = new Error('CPF inválido');
       err.status = 400;
       throw err;
@@ -1317,7 +1318,7 @@ export class TitularService {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw Object.assign(new Error('E-mail inválido'), { status: 400 });
     }
-    if (cpf.length < 8 || cpf.length > 11 || /^0+$/.test(cpf) || /\D/.test(cpf)) {
+    if (!isValidCPF(cpf)) {
       throw Object.assign(new Error('CPF inválido'), { status: 400 });
     }
     const situacaoConjugal = String(step1.situacaoConjugal ?? '').trim();
@@ -1395,6 +1396,9 @@ export class TitularService {
         };
 
     if (!usarMesmosDados) {
+      if (!isValidCPF(corresponsavelData.cpf)) {
+        throw Object.assign(new Error('CPF do corresponsável inválido'), { status: 400 });
+      }
       if (
         !corresponsavelData.situacaoConjugal ||
         !corresponsavelData.profissao ||
@@ -1418,6 +1422,12 @@ export class TitularService {
     const dependentesNormalizados = corresponsavelContaNaGrade
       ? this.deduplicarDependentesContraCorresponsavel(dependentes, corresponsavelData)
       : dependentes ?? [];
+    for (const dependente of dependentesNormalizados) {
+      const dependenteCpf = this.normalizeCpf(dependente?.cpf);
+      if (dependenteCpf && !isValidCPF(dependenteCpf)) {
+        throw Object.assign(new Error('CPF do dependente inválido'), { status: 400 });
+      }
+    }
     this.validarCpfUnicoNoCadastro({ ...data, dependentes: dependentesNormalizados });
 
     // --- Verifica duplicidade ---
