@@ -269,6 +269,27 @@ describe('WhatsappNotificationService', () => {
       expect(legacyClientMock.send).not.toHaveBeenCalled();
     });
 
+    it('sucesso na conexão própria sem referenceId não faz fallback', async () => {
+      (whatsappClientMock.sendMessage as jest.Mock).mockResolvedValue({});
+
+      const result = await service.sendViaOwnConnectionOrFallback({
+        flow: 'pendencia-periodica',
+        recipient: '71999990012',
+        message: 'sem referenceId',
+        triggerMode: 'MANUAL',
+        legacyPayload: {
+          to: '71999990012',
+          channel: 'whatsapp',
+          message: 'sem referenceId',
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.provider).toBe('OWN');
+      expect(result.referenceId).toBeUndefined();
+      expect(legacyClientMock.send).not.toHaveBeenCalled();
+    });
+
     it('registra dispatch SENT na conexão própria quando sucesso', async () => {
       (whatsappClientMock.sendMessage as jest.Mock).mockResolvedValue({ success: true });
 
