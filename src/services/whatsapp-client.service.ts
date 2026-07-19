@@ -22,6 +22,7 @@ function sleep(ms: number) {
 class TenantWhatsAppClientService {
   private client: Client | null = null;
   private initializing: Promise<void> | null = null;
+  private lifecycleOp: Promise<void> | null = null;
   private ready = false;
   private authenticated = false;
   private connectionState: string | null = null;
@@ -98,6 +99,7 @@ class TenantWhatsAppClientService {
       this.ready = false;
       this.authenticated = false;
       this.connectionState = null;
+      void this.handleUnexpectedDisconnect();
     });
 
     this.initializing = this.client
@@ -109,6 +111,21 @@ class TenantWhatsAppClientService {
       .finally(() => {
         this.initializing = null;
       });
+  }
+
+  private async runLifecycleOp(operation: () => Promise<void>) {
+    if (this.lifecycleOp) {
+      await this.lifecycleOp.catch(() => undefined);
+    }
+
+    const pending = operation().finally(() => {
+      if (this.lifecycleOp === pending) {
+        this.lifecycleOp = null;
+      }
+    });
+
+    this.lifecycleOp = pending;
+    return pending;
   }
 
   async start() {
@@ -203,6 +220,12 @@ class TenantWhatsAppClientService {
     );
   }
 
+  private async handleUnexpectedDisconnect() {
+    await this.runLifecycleOp(async () => {
+      await this.destroyClient();
+    }).catch(() => undefined);
+  }
+
   private async destroyClient() {
     this.ready = false;
     this.authenticated = false;
@@ -220,9 +243,11 @@ class TenantWhatsAppClientService {
   }
 
   private async restartClient() {
-    await this.destroyClient();
-    this.qrState = { qr: null, generatedAt: null };
-    await this.start();
+    await this.runLifecycleOp(async () => {
+      await this.destroyClient();
+      this.qrState = { qr: null, generatedAt: null };
+      await this.start();
+    });
   }
 
   private async sendMessageOnce(to: string, message: string, mediaPath?: string) {
