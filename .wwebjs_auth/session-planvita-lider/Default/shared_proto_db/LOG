@@ -1,2 +1,3 @@
-2026/06/24-17:21:31.958 19b5b Creating DB /home/programador1/projects/softline/projects/planvita/backend/.wwebjs_auth/session-planvita-lider/Default/shared_proto_db since it was missing.
-2026/06/24-17:21:31.985 19b5b Reusing MANIFEST /home/programador1/projects/softline/projects/planvita/backend/.wwebjs_auth/session-planvita-lider/Default/shared_proto_db/MANIFEST-000001
+2026/07/19-10:44:30.785 456c0 Reusing MANIFEST /home/programador1/projects/softline/projects/planvita/backend/.wwebjs_auth/session-planvita-lider/Default/shared_proto_db/MANIFEST-000001
+2026/07/19-10:44:30.785 456c0 Recovering log #3
+2026/07/19-10:44:30.786 456c0 Reusing old log /home/programador1/projects/softline/projects/planvita/backend/.wwebjs_auth/session-planvita-lider/Default/shared_proto_db/000003.log 

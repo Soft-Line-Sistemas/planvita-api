@@ -52,6 +52,12 @@ jest.mock('../utils/notificationClient', () => ({
   })),
 }));
 
+jest.mock('./whatsapp-notification.service', () => ({
+  WhatsappNotificationService: jest.fn().mockImplementation(() => ({
+    sendViaOwnConnectionOrFallback: jest.fn().mockResolvedValue(undefined),
+  })),
+}));
+
 describe('ClienteAuthService', () => {
   let service: ClienteAuthService;
 
@@ -267,8 +273,8 @@ describe('ClienteAuthService', () => {
       );
       expect(result.result).toMatchObject({
         titularId: 10,
-        nome: 'Titular Principal',
-        email: 'titular@email.com',
+        nome: 'Resp',
+        email: 'resp@email.com',
       });
     });
 
@@ -282,6 +288,35 @@ describe('ClienteAuthService', () => {
 
       const result = await service.login('teste@email.com', 'SenhaErrada@1');
       expect(result.result).toBeNull();
+    });
+
+    it('retorna code de acesso por OTP quando a senha do corresponsavel estiver errada', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue(null);
+      (prismaMock.corresponsavel.findFirst as jest.Mock).mockResolvedValue({
+        nome: 'Resp Financeiro',
+        email: 'resp@email.com',
+        cpf: '22233344455',
+        telefone: '71999999999',
+        titular: {
+          id: 22,
+          nome: 'Titular Principal',
+          email: 'titular@email.com',
+          cpf: '12345678901',
+          pagamentoConfirmadoEm: new Date(),
+          metodoNotificacaoRecorrente: 'email',
+        },
+      });
+      (prismaMock.titularCredential.findUnique as jest.Mock).mockResolvedValue({
+        senhaHash: '$2a$10$hash-atual',
+      });
+      jest.spyOn(bcrypt, 'compare').mockResolvedValue(false as never);
+
+      const result = await service.login('resp@email.com', 'SenhaErrada@1');
+
+      expect(result).toMatchObject({
+        result: null,
+        code: 'CORRESPONSAVEL_OTP_REQUIRED',
+      });
     });
 
     it('faz login com email válido e senha correta', async () => {
@@ -465,6 +500,26 @@ describe('ClienteAuthService', () => {
       expect(result.channel).toBe('email');
       expect(result.destinationMasked).toContain('@');
     });
+
+    it('permite solicitar recuperação por WhatsApp quando houver telefone válido', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 21,
+        nome: 'Titular Teste',
+        email: 'titular@email.com',
+        cpf: '12345678901',
+        telefone: '71999990001',
+        metodoNotificacaoRecorrente: 'email',
+        pagamentoConfirmadoEm: new Date(),
+      });
+      (prismaMock.titularCredential.upsert as jest.Mock).mockResolvedValue({});
+      (prismaMock.titularToken.create as jest.Mock).mockResolvedValue({});
+      (prismaMock.titularOtp.create as jest.Mock).mockResolvedValue({});
+
+      const result = await service.startForgotPassword('titular@email.com', 'whatsapp');
+
+      expect(result.channel).toBe('whatsapp');
+      expect(result.destinationMasked).toContain('71');
+    });
   });
 
   describe('startFirstAccessByLogin', () => {
@@ -495,6 +550,85 @@ describe('ClienteAuthService', () => {
       );
       expect(result.channel).toBe('whatsapp');
       expect(result.destinationMasked).toContain('71');
+    });
+  });
+
+  describe('startCorresponsavelAccess', () => {
+    it('envia codigo para o contato do corresponsavel', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue(null);
+      (prismaMock.corresponsavel.findFirst as jest.Mock).mockResolvedValue({
+        nome: 'Resp',
+        email: 'resp@email.com',
+        cpf: '22233344455',
+        telefone: '71999999999',
+        titular: {
+          id: 10,
+          nome: 'Titular Principal',
+          email: 'titular@email.com',
+          cpf: '12345678901',
+          pagamentoConfirmadoEm: new Date(),
+          metodoNotificacaoRecorrente: 'email',
+        },
+      });
+      (prismaMock.titularCredential.findUnique as jest.Mock).mockResolvedValue({
+        senhaHash: 'hash-existente',
+      });
+      (prismaMock.titularOtp.create as jest.Mock).mockResolvedValue({});
+
+      const result = await service.startCorresponsavelAccess(
+        'resp@email.com',
+        'whatsapp',
+      );
+
+      expect(result.channel).toBe('whatsapp');
+      expect(result.destinationMasked).toContain('71');
+    });
+  });
+
+  describe('loginCorresponsavelWithOtp', () => {
+    it('autentica o corresponsavel com codigo valido', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue(null);
+      (prismaMock.corresponsavel.findFirst as jest.Mock).mockResolvedValue({
+        nome: 'Resp',
+        email: 'resp@email.com',
+        cpf: '22233344455',
+        telefone: '71999999999',
+        titular: {
+          id: 12,
+          nome: 'Titular Principal',
+          email: 'titular@email.com',
+          cpf: '12345678901',
+          pagamentoConfirmadoEm: new Date(),
+          metodoNotificacaoRecorrente: 'email',
+        },
+      });
+      (prismaMock.titularOtp.findFirst as jest.Mock).mockResolvedValue({
+        id: 'otp-1',
+        attempts: 0,
+        channel: 'email',
+        codeHash: 'hash-otp',
+      });
+      (prismaMock.titularOtp.update as jest.Mock).mockResolvedValue({});
+      (prismaMock.titularCredential.update as jest.Mock).mockResolvedValue({});
+      jest.spyOn(bcrypt, 'compare').mockResolvedValue(true as never);
+
+      const result = await service.loginCorresponsavelWithOtp(
+        'resp@email.com',
+        '123456',
+      );
+
+      expect(result).toMatchObject({
+        titularId: 12,
+        nome: 'Resp',
+        email: 'resp@email.com',
+        cpf: '22233344455',
+      });
+      expect(prismaMock.titularCredential.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { titularId: 12 },
+          data: expect.objectContaining({ lastLoginAt: expect.any(Date) }),
+        }),
+      );
     });
   });
 

@@ -116,6 +116,15 @@ export class AuthController {
               continue;
             }
 
+            if (!result && code === 'CORRESPONSAVEL_OTP_REQUIRED') {
+              return res.status(401).json({
+                message:
+                  'Senha incorreta para este corresponsável. Valide seu acesso com um código enviado ao seu e-mail ou WhatsApp.',
+                code: 'CORRESPONSAVEL_OTP_REQUIRED',
+                tenant,
+              });
+            }
+
             if (!result) continue;
 
             const clienteToken = service.generateClienteJwt({
@@ -245,7 +254,7 @@ export class AuthController {
       const { loginOrToken, login, token, otp, purpose } = req.body ?? {};
 
       const purposeValue = String(purpose ?? '').toUpperCase();
-      if (!['FIRST_ACCESS', 'RESET_PASSWORD', 'REGISTER'].includes(purposeValue)) {
+      if (!['FIRST_ACCESS', 'RESET_PASSWORD', 'REGISTER', 'LOGIN_ACCESS'].includes(purposeValue)) {
         return res.status(400).json({ message: 'Purpose inválido.' });
       }
 
@@ -256,6 +265,22 @@ export class AuthController {
       if (!value) return res.status(400).json({ message: 'Login ou token é obrigatório.' });
 
       const auth = new ClienteAuthService(req.tenantId);
+      if (purposeValue === 'LOGIN_ACCESS') {
+        const loginValue = String(login ?? '').trim();
+        if (!loginValue) return res.status(400).json({ message: 'Login é obrigatório.' });
+
+        const result = await auth.loginCorresponsavelWithOtp(loginValue, otpValue);
+        const clienteToken = auth.generateClienteJwt({
+          titularId: result.titularId,
+          tenant: req.tenantId,
+          email: result.email,
+        });
+
+        res.cookie('cliente_token', clienteToken, this.getClienteCookieOptions(req));
+        res.cookie('tenant', req.tenantId, this.getClienteTenantCookieOptions(req));
+        return res.json(result);
+      }
+
       const result = await auth.verifyOtp(value, otpValue, purposeValue as any);
       res.json(result);
     } catch (error: any) {
@@ -333,16 +358,36 @@ export class AuthController {
   async forgotPassword(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
-      const { login } = req.body ?? {};
+      const { login, channel } = req.body ?? {};
       if (!login) return res.status(400).json({ message: 'Login é obrigatório.' });
 
       const auth = new ClienteAuthService(req.tenantId);
-      const start = await auth.startForgotPassword(String(login));
+      const start = await auth.startForgotPassword(String(login), channel);
       res.json({ message: 'Enviamos um código para recuperação de senha.', start });
     } catch (error: any) {
       const status = error?.status ?? 500;
       const message = error?.message ?? 'Erro ao iniciar recuperação de senha.';
       res.status(status).json({ message });
+    }
+  }
+
+  async corresponsavelAccess(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+      const { login, channel } = req.body ?? {};
+      if (!login) return res.status(400).json({ message: 'Login é obrigatório.' });
+
+      const auth = new ClienteAuthService(req.tenantId);
+      const start = await auth.startCorresponsavelAccess(String(login), channel);
+      res.json({ message: 'Enviamos um código para validar o acesso do corresponsável.', start });
+    } catch (error: any) {
+      const status = error?.status ?? 500;
+      const message =
+        error?.message ?? 'Erro ao iniciar validação de acesso do corresponsável.';
+      res.status(status).json({
+        message,
+        ...(error?.code ? { code: error.code } : {}),
+      });
     }
   }
 

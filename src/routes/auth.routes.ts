@@ -18,6 +18,10 @@ router.get(
   '/first-access/channels',
   authController.firstAccessChannels.bind(authController),
 );
+router.post(
+  '/corresponsavel-access',
+  authController.corresponsavelAccess.bind(authController),
+);
 router.post('/forgot-password', authController.forgotPassword.bind(authController));
 router.post('/reset-password', authController.resetPassword.bind(authController));
 router.post(

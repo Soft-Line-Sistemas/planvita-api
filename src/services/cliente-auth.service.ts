@@ -5,6 +5,7 @@ import config from '../config';
 import { NotificationApiClient, type NotificationChannel } from '../utils/notificationClient';
 import { buildStandardEmailTemplate, formatTextAsHtmlParagraphs } from '../utils/emailTemplate';
 import { getPrismaForTenant } from '../utils/prisma';
+import { WhatsappNotificationService } from './whatsapp-notification.service';
 
 const OTP_TTL_MINUTES = 15;
 const TOKEN_TTL_MINUTES = 15;
@@ -43,7 +44,11 @@ export type AuthStartResult = {
   };
 };
 
-export type OtpPurpose = 'FIRST_ACCESS' | 'RESET_PASSWORD' | 'REGISTER';
+export type OtpPurpose =
+  | 'FIRST_ACCESS'
+  | 'RESET_PASSWORD'
+  | 'REGISTER'
+  | 'LOGIN_ACCESS';
 
 export type VerifyResult = {
   verificationToken: string;
@@ -93,10 +98,12 @@ const isStrongPassword = (value: string): boolean => {
 export class ClienteAuthService {
   private prisma;
   private notifier: NotificationApiClient;
+  private whatsappNotifier: WhatsappNotificationService;
 
   constructor(private tenantId: string) {
     this.prisma = getPrismaForTenant(tenantId);
     this.notifier = new NotificationApiClient(tenantId);
+    this.whatsappNotifier = new WhatsappNotificationService(tenantId);
   }
 
   private async reconcilePagamentoConfirmadoEm(
@@ -164,7 +171,14 @@ export class ClienteAuthService {
     }
 
     const ok = await bcrypt.compare(senha, credential.senhaHash);
-    if (!ok) return { result: null };
+    if (!ok) {
+      return {
+        result: null,
+        ...(identity.source === 'corresponsavel'
+          ? { code: 'CORRESPONSAVEL_OTP_REQUIRED' }
+          : {}),
+      };
+    }
 
     await (this.prisma as any).titularCredential.update({
       where: { titularId: identity.titularId },
@@ -286,7 +300,7 @@ export class ClienteAuthService {
     return start;
   }
 
-  async startForgotPassword(loginRaw: string): Promise<AuthStartResult> {
+  async startForgotPassword(loginRaw: string, requestedChannelRaw?: unknown): Promise<AuthStartResult> {
     const identity = await this.findAccessIdentityByLogin(loginRaw);
     if (!identity) {
       const err: any = new Error('Cliente não encontrado.');
@@ -296,8 +310,50 @@ export class ClienteAuthService {
 
     await this.ensureCredential(identity.titularId);
     const linkToken = await this.createToken('RESET_PASSWORD_LINK', identity.titularId, 'RESET_PASSWORD');
-    const start = await this.startOtp(identity, this.resolvePreferredChannel(identity), 'RESET_PASSWORD', linkToken);
+    const channel = this.resolveChannel(identity, requestedChannelRaw);
+    const start = await this.startOtp(identity, channel, 'RESET_PASSWORD', linkToken);
     return start;
+  }
+
+  async startCorresponsavelAccess(
+    loginRaw: string,
+    requestedChannelRaw?: unknown,
+  ): Promise<AuthStartResult> {
+    const identity = await this.findAccessIdentityByLogin(loginRaw);
+    if (!identity || identity.source !== 'corresponsavel') {
+      const err: any = new Error('Corresponsável não encontrado para este login.');
+      err.status = 404;
+      throw err;
+    }
+
+    identity.pagamentoConfirmadoEm = await this.reconcilePagamentoConfirmadoEm(
+      identity.titularId,
+      identity.pagamentoConfirmadoEm ?? null,
+    );
+
+    if (!identity.pagamentoConfirmadoEm) {
+      const err: any = new Error(
+        'Pagamento ainda não confirmado. Aguarde a confirmação do pagamento para acessar o aplicativo.',
+      );
+      err.status = 402;
+      err.code = 'PAYMENT_REQUIRED';
+      throw err;
+    }
+
+    const credential = await (this.prisma as any).titularCredential.findUnique({
+      where: { titularId: identity.titularId },
+      select: { senhaHash: true },
+    });
+
+    if (!credential?.senhaHash) {
+      const err: any = new Error('Primeiro acesso necessário para definir uma senha.');
+      err.status = 428;
+      err.code = 'FIRST_ACCESS_REQUIRED';
+      throw err;
+    }
+
+    const channel = this.resolveChannel(identity, requestedChannelRaw);
+    return this.startOtp(identity, channel, 'LOGIN_ACCESS');
   }
 
   async verifyOtp(loginRawOrToken: string, otp: string, purpose: OtpPurpose): Promise<VerifyResult> {
@@ -353,6 +409,88 @@ export class ClienteAuthService {
       ...(config.server.nodeEnv !== 'production'
         ? { dev: { verificationToken } }
         : {}),
+    };
+  }
+
+  async loginCorresponsavelWithOtp(
+    loginRaw: string,
+    otp: string,
+  ): Promise<ClienteLoginResult> {
+    const identity = await this.findAccessIdentityByLogin(loginRaw);
+    if (!identity || identity.source !== 'corresponsavel') {
+      const err: any = new Error('Corresponsável não encontrado para este login.');
+      err.status = 404;
+      throw err;
+    }
+
+    identity.pagamentoConfirmadoEm = await this.reconcilePagamentoConfirmadoEm(
+      identity.titularId,
+      identity.pagamentoConfirmadoEm ?? null,
+    );
+
+    if (!identity.pagamentoConfirmadoEm) {
+      const err: any = new Error(
+        'Pagamento ainda não confirmado. Aguarde a confirmação do pagamento para acessar o aplicativo.',
+      );
+      err.status = 402;
+      err.code = 'PAYMENT_REQUIRED';
+      throw err;
+    }
+
+    const otpRecord = await (this.prisma as any).titularOtp.findFirst({
+      where: {
+        titularId: identity.titularId,
+        purpose: 'LOGIN_ACCESS',
+        consumedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!otpRecord) {
+      const err: any = new Error('Código inválido ou expirado.');
+      err.status = 400;
+      throw err;
+    }
+
+    if (otpRecord.attempts >= OTP_MAX_ATTEMPTS) {
+      const err: any = new Error('Muitas tentativas. Solicite um novo código.');
+      err.status = 429;
+      throw err;
+    }
+
+    const ok = await bcrypt.compare(otp, otpRecord.codeHash);
+    if (!ok) {
+      await (this.prisma as any).titularOtp.update({
+        where: { id: otpRecord.id },
+        data: { attempts: { increment: 1 } },
+      });
+      const err: any = new Error('Código inválido.');
+      err.status = 400;
+      throw err;
+    }
+
+    await (this.prisma as any).titularOtp.update({
+      where: { id: otpRecord.id },
+      data: { consumedAt: new Date() },
+    });
+
+    const channel =
+      String(otpRecord.channel ?? '').toLowerCase() === 'whatsapp'
+        ? 'whatsapp'
+        : 'email';
+    await this.markVerifiedChannel(identity.titularId, channel);
+
+    await (this.prisma as any).titularCredential.update({
+      where: { titularId: identity.titularId },
+      data: { lastLoginAt: new Date() },
+    });
+
+    return {
+      titularId: identity.titularId,
+      nome: identity.nome,
+      email: identity.email,
+      cpf: identity.cpf ?? null,
     };
   }
 
@@ -531,9 +669,9 @@ export class ClienteAuthService {
       if (!corresponsavel?.titular) return null;
       return {
         titularId: corresponsavel.titular.id,
-        nome: corresponsavel.titular.nome,
-        email: corresponsavel.titular.email,
-        cpf: corresponsavel.titular.cpf ?? null,
+        nome: corresponsavel.nome,
+        email: corresponsavel.email,
+        cpf: corresponsavel.cpf ?? null,
         telefone: corresponsavel.telefone ?? null,
         metodoNotificacaoRecorrente: corresponsavel.titular.metodoNotificacaoRecorrente ?? null,
         pagamentoConfirmadoEm: corresponsavel.titular.pagamentoConfirmadoEm ?? null,
@@ -582,9 +720,9 @@ export class ClienteAuthService {
       if (!corresponsavel?.titular) return null;
       return {
         titularId: corresponsavel.titular.id,
-        nome: corresponsavel.titular.nome,
-        email: corresponsavel.titular.email,
-        cpf: corresponsavel.titular.cpf ?? null,
+        nome: corresponsavel.nome,
+        email: corresponsavel.email,
+        cpf: corresponsavel.cpf ?? null,
         telefone: corresponsavel.telefone ?? null,
         metodoNotificacaoRecorrente: corresponsavel.titular.metodoNotificacaoRecorrente ?? null,
         pagamentoConfirmadoEm: corresponsavel.titular.pagamentoConfirmadoEm ?? null,
@@ -680,26 +818,49 @@ export class ClienteAuthService {
       messageParts.push(`Link: ${this.buildPublicLink(purpose, linkToken)}`);
     }
 
-    const subject = purpose === 'RESET_PASSWORD' ? 'Recuperação de senha' : 'Verificação de cadastro';
+    const subject =
+      purpose === 'RESET_PASSWORD'
+        ? 'Recuperação de senha'
+        : purpose === 'LOGIN_ACCESS'
+          ? 'Validação de acesso'
+          : 'Verificação de cadastro';
     const message = messageParts.join('\n');
 
-    await this.notifier.send({
-      to: destination,
-      channel,
-      subject,
-      message,
-      ...(channel === 'email'
-        ? {
-            html: this.buildAuthEmailHtml({
-              nome: identity.nome,
-              otp,
-              purpose,
-              link: linkToken ? this.buildPublicLink(purpose, linkToken) : undefined,
-            }),
-          }
-        : {}),
-      metadata: { purpose, tenant: this.tenantId },
-    });
+    if (channel === 'whatsapp') {
+      await this.whatsappNotifier.sendViaOwnConnectionOrFallback({
+        flow: 'auth-otp',
+        recipient: destination,
+        message,
+        triggerMode: 'MANUAL',
+        titularId: identity.titularId,
+        legacyPayload: {
+          to: destination,
+          phone: destination,
+          channel: 'whatsapp',
+          message,
+          text: message,
+          metadata: {
+            purpose,
+            tenant: this.tenantId,
+            source: 'cliente-auth-otp',
+          },
+        },
+      });
+    } else {
+      await this.notifier.send({
+        to: destination,
+        channel,
+        subject,
+        message,
+        html: this.buildAuthEmailHtml({
+          nome: identity.nome,
+          otp,
+          purpose,
+          link: linkToken ? this.buildPublicLink(purpose, linkToken) : undefined,
+        }),
+        metadata: { purpose, tenant: this.tenantId },
+      });
+    }
 
     return {
       channel,
@@ -735,7 +896,9 @@ export class ClienteAuthService {
     const intro =
       purpose === 'RESET_PASSWORD'
         ? 'Recebemos uma solicitação para redefinir sua senha. Use o código abaixo para continuar.'
-        : 'Use o código abaixo para validar seu acesso e continuar o cadastro.';
+        : purpose === 'LOGIN_ACCESS'
+          ? 'Recebemos uma tentativa de acesso com sua identificação. Use o código abaixo para entrar com segurança.'
+          : 'Use o código abaixo para validar seu acesso e continuar o cadastro.';
 
     const sections = [
       {
@@ -758,7 +921,12 @@ export class ClienteAuthService {
     }
 
     return buildStandardEmailTemplate({
-      title: purpose === 'RESET_PASSWORD' ? 'Recuperação de senha' : 'Verificação de cadastro',
+      title:
+        purpose === 'RESET_PASSWORD'
+          ? 'Recuperação de senha'
+          : purpose === 'LOGIN_ACCESS'
+            ? 'Validação de acesso'
+            : 'Verificação de cadastro',
       intro,
       sections,
       cta: link

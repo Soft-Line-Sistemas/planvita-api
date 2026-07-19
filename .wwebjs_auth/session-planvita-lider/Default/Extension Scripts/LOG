@@ -1,2 +1,3 @@
-2026/06/24-17:21:31.942 19b65 Creating DB /home/programador1/projects/softline/projects/planvita/backend/.wwebjs_auth/session-planvita-lider/Default/Extension Scripts since it was missing.
-2026/06/24-17:21:31.980 19b65 Reusing MANIFEST /home/programador1/projects/softline/projects/planvita/backend/.wwebjs_auth/session-planvita-lider/Default/Extension Scripts/MANIFEST-000001
+2026/07/19-10:44:30.719 4567a Reusing MANIFEST /home/programador1/projects/softline/projects/planvita/backend/.wwebjs_auth/session-planvita-lider/Default/Extension Scripts/MANIFEST-000001
+2026/07/19-10:44:30.719 4567a Recovering log #3
+2026/07/19-10:44:30.720 4567a Reusing old log /home/programador1/projects/softline/projects/planvita/backend/.wwebjs_auth/session-planvita-lider/Default/Extension Scripts/000003.log 

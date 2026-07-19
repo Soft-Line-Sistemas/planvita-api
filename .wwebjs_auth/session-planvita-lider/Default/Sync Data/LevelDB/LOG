@@ -1,2 +1,3 @@
-2026/06/24-17:21:31.906 19b42 Creating DB /home/programador1/projects/softline/projects/planvita/backend/.wwebjs_auth/session-planvita-lider/Default/Sync Data/LevelDB since it was missing.
-2026/06/24-17:21:31.927 19b42 Reusing MANIFEST /home/programador1/projects/softline/projects/planvita/backend/.wwebjs_auth/session-planvita-lider/Default/Sync Data/LevelDB/MANIFEST-000001
+2026/07/19-10:44:30.681 4567e Reusing MANIFEST /home/programador1/projects/softline/projects/planvita/backend/.wwebjs_auth/session-planvita-lider/Default/Sync Data/LevelDB/MANIFEST-000001
+2026/07/19-10:44:30.703 4567e Recovering log #3
+2026/07/19-10:44:30.703 4567e Reusing old log /home/programador1/projects/softline/projects/planvita/backend/.wwebjs_auth/session-planvita-lider/Default/Sync Data/LevelDB/000003.log 
