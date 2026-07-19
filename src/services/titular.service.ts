@@ -232,6 +232,11 @@ const DEFAULT_DIAS_SUSPENSAO = 90;
 const MAX_DEPENDENTES_POR_TITULAR = 8;
 const STATUS_PLANO_PENDENTE_ASSINATURA = 'PENDENTE_ASSINATURA';
 const execFileAsync = promisify(execFile);
+const TENANT_UNIT_LABELS: Record<string, string> = {
+  bosque: 'CAMPO DO BOSQUE',
+  lider: 'FUNERÁRIA LIDER',
+  pax: 'PAX LÍRIOS',
+};
 const CONTRATO_TEMPLATE_CANDIDATES = [
   process.env.CONTRATO_TEMPLATE_DOCX_PATH,
   path.resolve(process.cwd(), 'public/docs/contrato.docx'),
@@ -2239,6 +2244,10 @@ export class TitularService {
     return `<div class="ruled-line${tick ? ' tick' : ''}"><span class="filled-text">${this.escapeHtml(value)}</span></div>`;
   }
 
+  private buildIconBoxMarkup(pathMarkup: string, viewBox = '0 0 24 24'): string {
+    return `<span class="icon-box"><svg viewBox="${viewBox}" aria-hidden="true">${pathMarkup}</svg></span>`;
+  }
+
   private normalizeSegmentedValue(
     value: string | null | undefined,
     maxLength: number,
@@ -2316,6 +2325,15 @@ export class TitularService {
     if (normalized.startsWith('pra')) return 'PRAÇA';
     if (normalized.startsWith('rod')) return 'RODOVIA';
     return 'RUA';
+  }
+
+  private resolveTenantUnitLabel(value?: string | null): string {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized && TENANT_UNIT_LABELS[normalized]) return TENANT_UNIT_LABELS[normalized];
+    if (normalized.includes('bosque')) return TENANT_UNIT_LABELS.bosque;
+    if (normalized.includes('lider')) return TENANT_UNIT_LABELS.lider;
+    if (normalized.includes('pax')) return TENANT_UNIT_LABELS.pax;
+    return String(value ?? '').trim().toUpperCase() || 'CAMPO DO BOSQUE';
   }
 
   private async buildFichaAdesaoPagePdfBuffer(
@@ -2414,6 +2432,18 @@ export class TitularService {
     const qrPixDataUrl = qrPixPath ? this.fileToDataUrl(qrPixPath) : '';
     const sindefDataUrl = sindefPath ? this.fileToDataUrl(sindefPath) : '';
     const paxDataUrl = paxPath ? this.fileToDataUrl(paxPath) : '';
+    const locationIcon = this.buildIconBoxMarkup(
+      '<path d="M12 21s6-5.33 6-11a6 6 0 1 0-12 0c0 5.67 6 11 6 11Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/>',
+    );
+    const phoneIcon = this.buildIconBoxMarkup(
+      '<path d="M8.2 4.5h2.1l1 3.2-1.4 1.4a13 13 0 0 0 5.2 5.2l1.4-1.4 3.2 1v2.1c0 .7-.5 1.2-1.2 1.2A15.7 15.7 0 0 1 6.9 5.7c0-.7.6-1.2 1.3-1.2Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+    );
+    const globeIcon = this.buildIconBoxMarkup(
+      '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3.8 12h16.4M12 3.5c2.3 2.3 3.6 5.4 3.6 8.5S14.3 18.2 12 20.5M12 3.5C9.7 5.8 8.4 8.9 8.4 12s1.3 6.2 3.6 8.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
+    );
+    const mailIcon = this.buildIconBoxMarkup(
+      '<rect x="3.5" y="6" width="17" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m5.5 8 6.5 4.8L18.5 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+    );
     const today = this.formatDatePtBr(new Date());
 
     const html = `<!DOCTYPE html>
@@ -2504,7 +2534,8 @@ export class TitularService {
   .sindef-img{height:9mm;width:auto;filter:grayscale(1) brightness(.3);}
   .pax-img{height:9mm;width:auto;filter:grayscale(1) brightness(.3);}
   .contact-footer{text-align:right;font-size:7pt;line-height:1.5;}
-  .icon-box{display:inline-flex;align-items:center;justify-content:center;width:4mm;height:4mm;background:#1a1a1a;border-radius:.7mm;font-size:6.5pt;line-height:1;color:#fff;}
+  .icon-box{display:inline-flex;align-items:center;justify-content:center;width:4mm;height:4mm;background:#1a1a1a;border-radius:.7mm;color:#fff;}
+  .icon-box svg{width:2.7mm;height:2.7mm;display:block;}
 </style>
 </head>
 <body>
@@ -2518,7 +2549,7 @@ export class TitularService {
   </div>
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3mm;">
     <div class="top-fields" style="flex:1;">
-      <div class="field"><span class="field-label">UNIDADE</span>${this.buildRuledLineMarkup(this.tenantId.toUpperCase(), true)}</div>
+      <div class="field"><span class="field-label">UNIDADE</span>${this.buildRuledLineMarkup(this.resolveTenantUnitLabel(this.tenantId), true)}</div>
       <div class="field"><span class="field-label">DATA DA ADESÃO</span>${this.buildSegmentedLineMarkup(today, [2, 2, 4], 'end-bar')}</div>
       <div class="field"><span class="field-label">PROMOTOR (A) COMERCIAL</span>${this.buildRuledLineMarkup(titular.vendedor?.nome, true)}</div>
       <div class="field">
@@ -2558,13 +2589,8 @@ export class TitularService {
         <span class="field-label">DATA DE NASCIMENTO</span>
         ${this.buildSegmentedLineMarkup(this.formatDatePtBr(titular.dataNascimento), [2, 2, 4], 'end-bar')}
       </div>
-      <div style="display:flex;flex-direction:column;gap:.8mm;">
-        ${this.buildCheckMarkup(Boolean(titular.telefone))}
-        ${this.buildCheckMarkup(Boolean(titular.telefone))}
-      </div>
-      <div style="display:flex;flex-direction:column;gap:.8mm;"><span style="font-size:7pt;">WhatsApp</span><span style="font-size:7pt;">Ligação</span></div>
       <div class="field" style="flex:0 0 auto;min-width:48mm;"><span class="field-label">CPF</span>${this.buildSegmentedLineMarkup(titular.cpf, [3, 3, 3, 2], 'end-bar')}</div>
-      <div class="field" style="flex:0 0 auto;min-width:24mm;"><span class="field-label">RG</span>${this.buildSegmentedLineMarkup(titular.rg, [2, 3, 2], 'no-tick end-bar start-bar', { mode: 'alphanumeric' })}</div>
+      <div class="field" style="flex:0 0 auto;min-width:24mm;"><span class="field-label">RG</span>${this.buildRuledLineMarkup(titular.rg, true)}</div>
     </div>
     <div style="display:flex;gap:4mm;margin-bottom:2mm;align-items:flex-end;">
       <div style="flex:0.58;">
@@ -2668,7 +2694,7 @@ export class TitularService {
       ${sindefDataUrl ? `<img class="sindef-img" src="${sindefDataUrl}" alt="Sindef BA" />` : ''}
       ${paxDataUrl ? `<img class="pax-img" src="${paxDataUrl}" alt="Pax" />` : ''}
     </div>
-    <div class="contact-footer"><span class="icon-box">📍</span> AV. CENTENÁRIO, 21 - CEP: 40.100-180 - GARCIA &nbsp; <span class="icon-box">📞</span> 71 3266-0787<br>SALVADOR - BA<br><span class="icon-box">🌐</span> www.CAMPODOBOSQUE.com.br &nbsp; <span class="icon-box">✉</span> atendimento@campodobosque.com.br</div>
+    <div class="contact-footer">${locationIcon} AV. CENTENÁRIO, 21 - CEP: 40.100-180 - GARCIA &nbsp; ${phoneIcon} 71 3266-0787<br>SALVADOR - BA<br>${globeIcon} www.CAMPODOBOSQUE.com.br &nbsp; ${mailIcon} atendimento@campodobosque.com.br</div>
   </div>
 </div>
 </body>

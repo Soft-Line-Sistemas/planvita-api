@@ -306,11 +306,16 @@ export async function resolveWhatsappClientForSending(preferredTenant?: string) 
   const normalizedPreferred = String(preferredTenant ?? '')
     .trim()
     .toLowerCase();
+  const sharedSessionTenant = String(
+    process.env.WHATSAPP_SHARED_SESSION_TENANT || 'lider',
+  )
+    .trim()
+    .toLowerCase();
   const configuredTenants = getConfiguredPublicTenants();
   const knownTenants = Array.from(whatsappClientRegistry.keys());
   const tenants = Array.from(
     new Set(
-      [normalizedPreferred, ...configuredTenants, ...knownTenants].filter(
+      [sharedSessionTenant, normalizedPreferred, ...configuredTenants, ...knownTenants].filter(
         (value): value is string => Boolean(value),
       ),
     ),

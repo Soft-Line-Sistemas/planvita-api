@@ -500,7 +500,7 @@ export class WhatsappNotificationService {
       }
     }
 
-    if (!config.enabled || !rule?.enabled) {
+    if (!config.enabled || (rule && !rule.enabled)) {
       return this.sendFallback({
         configId: config.id,
         ruleId: rule?.id,
