@@ -37,6 +37,10 @@ jest.mock('../utils/prisma', () => ({
 
 jest.mock('./whatsapp-client.service', () => ({
   getWhatsappClientForTenant: () => whatsappClientMock,
+  resolveWhatsappClientForSending: async () => ({
+    tenant: 'tenant-123',
+    client: whatsappClientMock,
+  }),
 }));
 
 jest.mock('../utils/notificationClient', () => ({

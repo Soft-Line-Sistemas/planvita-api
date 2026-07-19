@@ -196,6 +196,19 @@ export function asyncHandler(fn: Function) {
 
 // Global unhandled rejection handler
 process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+  const message = reason instanceof Error ? reason.message : String(reason ?? '');
+  const stack = reason instanceof Error ? reason.stack || '' : '';
+  const isWhatsappTargetClose =
+    message.includes('Protocol error (Network.getResponseBody): Target closed') &&
+    (stack.includes('whatsapp-web.js') || stack.includes('puppeteer'));
+
+  if (isWhatsappTargetClose) {
+    logger.warn('WhatsApp session target closed; ignoring unhandled rejection and aguardando reinicialização', {
+      message,
+    });
+    return;
+  }
+
   logger.error('Unhandled promise rejection', reason, {
     promise: promise.toString()
   });
@@ -219,4 +232,3 @@ export default {
   notFoundHandler,
   asyncHandler
 };
-
