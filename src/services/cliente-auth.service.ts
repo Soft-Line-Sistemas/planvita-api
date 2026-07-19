@@ -38,6 +38,8 @@ type ClienteAccessIdentity = {
 export type AuthStartResult = {
   channel: NotificationChannel;
   destinationMasked: string;
+  provider?: 'OWN' | 'LEGACY_API';
+  fallbackUsed?: boolean;
   dev?: {
     otp?: string;
     token?: string;
@@ -827,7 +829,7 @@ export class ClienteAuthService {
     const message = messageParts.join('\n');
 
     if (channel === 'whatsapp') {
-      await this.whatsappNotifier.sendViaOwnConnectionOrFallback({
+      const sendResult = await this.whatsappNotifier.sendViaOwnConnectionOrFallback({
         flow: 'auth-otp',
         recipient: destination,
         message,
@@ -846,8 +848,27 @@ export class ClienteAuthService {
           },
         },
       });
+
+      if (!sendResult.success) {
+        const err: any = new Error(
+          sendResult.error || 'Não foi possível enviar o código pelo WhatsApp.',
+        );
+        err.status = 502;
+        err.code = 'OTP_DELIVERY_FAILED';
+        throw err;
+      }
+
+      return {
+        channel,
+        destinationMasked,
+        provider: sendResult.provider,
+        fallbackUsed: sendResult.fallbackUsed,
+        ...(config.server.nodeEnv !== 'production'
+          ? { dev: { otp, token: linkToken } }
+          : {}),
+      };
     } else {
-      await this.notifier.send({
+      const sendResult = await this.notifier.send({
         to: destination,
         channel,
         subject,
@@ -860,13 +881,26 @@ export class ClienteAuthService {
         }),
         metadata: { purpose, tenant: this.tenantId },
       });
-    }
 
-    return {
-      channel,
-      destinationMasked,
-      ...(config.server.nodeEnv !== 'production' ? { dev: { otp, token: linkToken } } : {}),
-    };
+      if (!sendResult.success) {
+        const err: any = new Error(
+          sendResult.error || 'Não foi possível enviar o código pelo e-mail.',
+        );
+        err.status = 502;
+        err.code = 'OTP_DELIVERY_FAILED';
+        throw err;
+      }
+
+      return {
+        channel,
+        destinationMasked,
+        provider: sendResult.provider as 'OWN' | 'LEGACY_API' | undefined,
+        fallbackUsed: sendResult.fallbackUsed,
+        ...(config.server.nodeEnv !== 'production'
+          ? { dev: { otp, token: linkToken } }
+          : {}),
+      };
+    }
   }
 
   private buildPublicLink(purpose: OtpPurpose | 'RESET_PASSWORD', token: string): string {

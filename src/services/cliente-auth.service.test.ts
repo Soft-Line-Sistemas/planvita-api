@@ -48,13 +48,21 @@ jest.mock('../utils/prisma', () => ({
 
 jest.mock('../utils/notificationClient', () => ({
   NotificationApiClient: jest.fn().mockImplementation(() => ({
-    send: jest.fn(),
+    send: jest.fn().mockResolvedValue({
+      success: true,
+      provider: 'LEGACY_API',
+      fallbackUsed: false,
+    }),
   })),
 }));
 
 jest.mock('./whatsapp-notification.service', () => ({
   WhatsappNotificationService: jest.fn().mockImplementation(() => ({
-    sendViaOwnConnectionOrFallback: jest.fn().mockResolvedValue(undefined),
+    sendViaOwnConnectionOrFallback: jest.fn().mockResolvedValue({
+      success: true,
+      provider: 'OWN',
+      fallbackUsed: false,
+    }),
   })),
 }));
 
