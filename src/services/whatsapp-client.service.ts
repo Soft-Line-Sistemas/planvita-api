@@ -267,9 +267,17 @@ class TenantWhatsAppClientService {
           message ? { caption: message } : undefined,
         )
       : await this.client!.sendMessage(jid, message);
+    const sentUnsafe = sent as any;
+
+    const referenceId =
+      typeof sent?.id?._serialized === 'string' && sent.id._serialized.trim()
+        ? sent.id._serialized
+        : typeof sentUnsafe?._data?.id?.id === 'string' && sentUnsafe._data.id.id.trim()
+          ? sentUnsafe._data.id.id
+          : undefined;
 
     return {
-      referenceId: sent.id._serialized,
+      referenceId,
       jid,
       normalized,
     };
