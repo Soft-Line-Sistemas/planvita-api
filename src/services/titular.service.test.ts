@@ -42,9 +42,11 @@ const prismaMock = {
     count: jest.fn(),
   },
   dependente: {
+    createMany: jest.fn(),
     deleteMany: jest.fn(),
   },
   corresponsavel: {
+    create: jest.fn(),
     delete: jest.fn(),
     deleteMany: jest.fn(),
   },
@@ -104,7 +106,7 @@ import { TitularService } from './titular.service';
 const makePayload = (overrides: Record<string, unknown> = {}) => ({
   step1: {
     nomeCompleto: 'Cliente Teste',
-    cpf: '12345678901',
+    cpf: '31415926590',
     dataNascimento: '1990-01-01',
     sexo: 'Masculino',
     naturalidade: 'São Paulo',
@@ -152,6 +154,12 @@ const buildCreateFullTxMock = (titularCreate?: jest.Mock) => ({
         dependentes: [],
         corresponsaveis: [],
       }),
+    findUniqueOrThrow: jest.fn().mockResolvedValue({
+      id: 1,
+      nome: 'Cliente Teste',
+      dependentes: [],
+      corresponsaveis: [],
+    }),
     update: prismaMock.titular.update,
     delete: prismaMock.titular.delete,
   },
@@ -184,7 +192,9 @@ describe('TitularService', () => {
     prismaMock.assinaturaDigital.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.parceriaVantagemResgate.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.contaPagar.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.dependente.createMany.mockResolvedValue({ count: 0 });
     prismaMock.dependente.deleteMany.mockResolvedValue({ count: 0 });
+    prismaMock.corresponsavel.create.mockResolvedValue({ id: 1 });
     prismaMock.corresponsavel.delete.mockResolvedValue({ id: 99 });
     prismaMock.corresponsavel.deleteMany.mockResolvedValue({ count: 0 });
     prismaMock.contaReceber.deleteMany.mockResolvedValue({ count: 0 });
@@ -301,7 +311,7 @@ describe('TitularService', () => {
       const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
-          cpf: '12345678901',
+          cpf: '31415926590',
           dataNascimento: '1990-01-01',
           sexo: '',
           naturalidade: '',
@@ -335,7 +345,7 @@ describe('TitularService', () => {
       const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
-          cpf: '123.456.789-01',
+          cpf: '314.159.265-90',
           dataNascimento: '1990-01-01',
           sexo: 'Masculino',
           naturalidade: 'São Paulo',
@@ -352,7 +362,7 @@ describe('TitularService', () => {
             dataNascimento: '2015-01-01',
             parentesco: 'Filho(a)',
             telefone: '11999999999',
-            cpf: '12345678901',
+            cpf: '31415926590',
           },
         ],
       });
@@ -369,7 +379,7 @@ describe('TitularService', () => {
       const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
-          cpf: '123.456.789-01',
+          cpf: '314.159.265-90',
           dataNascimento: '1990-01-01',
           sexo: 'Masculino',
           naturalidade: 'São Paulo',
@@ -386,7 +396,7 @@ describe('TitularService', () => {
             dataNascimento: 'data-invalida',
             parentesco: 'Sobrinho(a)',
             telefone: '11999999999',
-            cpf: '98765432100',
+            cpf: '27182818205',
           },
         ],
       });
@@ -405,7 +415,7 @@ describe('TitularService', () => {
         step3: {
           usarMesmosDados: false,
           nomeCompleto: 'Corresponsavel Teste',
-          cpf: '22233344455',
+          cpf: '27182818205',
           dataNascimento: '1992-02-02',
           sexo: 'Feminino',
           naturalidade: 'Salvador',
@@ -429,7 +439,7 @@ describe('TitularService', () => {
             dataNascimento: '2015-01-01',
             parentesco: 'Filho(a)',
             telefone: '11999999999',
-            cpf: '99988877766',
+            cpf: '41750839288',
           },
         ],
       });
@@ -447,7 +457,7 @@ describe('TitularService', () => {
         step3: {
           usarMesmosDados: false,
           nomeCompleto: 'Corresponsavel Primo',
-          cpf: '22233344455',
+          cpf: '27182818205',
           dataNascimento: '1992-02-02',
           sexo: 'Feminino',
           naturalidade: 'Salvador',
@@ -487,7 +497,7 @@ describe('TitularService', () => {
       const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
-          cpf: '12345678901',
+          cpf: '31415926590',
           dataNascimento: '1990-01-01',
           sexo: 'Masculino',
           naturalidade: 'São Paulo',
@@ -500,7 +510,7 @@ describe('TitularService', () => {
         step3: {
           usarMesmosDados: false,
           nomeCompleto: 'Corresponsavel Menor',
-          cpf: '22233344455',
+          cpf: '27182818205',
           dataNascimento: '2010-06-19',
           sexo: 'Feminino',
           naturalidade: 'Salvador',
@@ -569,7 +579,7 @@ describe('TitularService', () => {
       const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
-          cpf: '12345678901',
+          cpf: '31415926590',
           dataNascimento: '1990-01-01',
           sexo: 'Masculino',
           naturalidade: 'São Paulo',
@@ -582,7 +592,7 @@ describe('TitularService', () => {
         step3: {
           usarMesmosDados: false,
           nomeCompleto: 'Corresponsavel Teste',
-          cpf: '22233344455',
+          cpf: '27182818205',
           dataNascimento: '1992-02-02',
           sexo: '',
           naturalidade: '',
@@ -623,7 +633,7 @@ describe('TitularService', () => {
       const payload = makePayload({
         step1: {
           nomeCompleto: 'Cliente Teste',
-          cpf: '12345678901',
+          cpf: '31415926590',
           dataNascimento: '1990-01-01',
           sexo: 'Masculino',
           naturalidade: 'São Paulo',
@@ -636,7 +646,7 @@ describe('TitularService', () => {
         step3: {
           usarMesmosDados: false,
           nomeCompleto: 'Corresponsavel Teste',
-          cpf: '22233344455',
+          cpf: '27182818205',
           dataNascimento: '1992-02-02',
           sexo: 'Feminino',
           naturalidade: 'Salvador',
@@ -660,7 +670,7 @@ describe('TitularService', () => {
             dataNascimento: '1992-02-02',
             parentesco: 'Cônjuge',
             telefone: '71999999999',
-            cpf: '22233344455',
+            cpf: '27182818205',
           },
           {
             nome: 'Filho Teste',
@@ -668,20 +678,16 @@ describe('TitularService', () => {
             dataNascimento: '2015-01-01',
             parentesco: 'Filho(a)',
             telefone: '11999999999',
-            cpf: '99988877766',
+            cpf: '41750839288',
           },
         ],
       });
 
       await service.createFull(payload as any);
 
-      expect(txCreate).toHaveBeenCalledWith(
+      expect(prismaMock.dependente.createMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({
-            dependentes: {
-              create: [expect.objectContaining({ nome: 'Filho Teste' })],
-            },
-          }),
+          data: [expect.objectContaining({ nome: 'Filho Teste' })],
         }),
       );
     });
@@ -691,7 +697,7 @@ describe('TitularService', () => {
       const payload = makePayload({
         step1: {
           nomeCompleto: 'Teste',
-          cpf: '12345678901',
+          cpf: '31415926590',
           dataNascimento: '1990-01-01',
           sexo: 'Masculino',
           naturalidade: 'SP',
@@ -711,7 +717,7 @@ describe('TitularService', () => {
       const payload = makePayload({
         step1: {
           nomeCompleto: 'Teste',
-          cpf: '12345678901',
+          cpf: '31415926590',
           dataNascimento: '1990-01-01',
           sexo: 'Masculino',
           naturalidade: 'SP',
@@ -731,7 +737,7 @@ describe('TitularService', () => {
       const payload = makePayload({
         step1: {
           nomeCompleto: 'Teste',
-          cpf: '12345678901',
+          cpf: '31415926590',
           dataNascimento: '1990-01-01',
           sexo: 'Masculino',
           naturalidade: 'SP',
@@ -751,7 +757,7 @@ describe('TitularService', () => {
       const payload = makePayload({
         step1: {
           nomeCompleto: 'Titular OK',
-          cpf: '11111111111',
+          cpf: '31415926590',
           dataNascimento: '1990-01-01',
           sexo: 'Masculino',
           naturalidade: 'SP',
@@ -764,7 +770,7 @@ describe('TitularService', () => {
         step3: {
           usarMesmosDados: false,
           nomeCompleto: 'Resp',
-          cpf: '22222222222',
+          cpf: '27182818205',
           dataNascimento: '1985-01-01',
           sexo: 'Feminino',
           naturalidade: 'RJ',
@@ -788,7 +794,7 @@ describe('TitularService', () => {
             dataNascimento: '2015-01-01',
             parentesco: 'Filho(a)',
             telefone: '11999999999',
-            cpf: '22222222222',
+            cpf: '27182818205',
           },
         ],
       });
@@ -895,7 +901,7 @@ describe('TitularService', () => {
       prismaMock.titular.findUnique.mockResolvedValueOnce({
         id: 7,
         nome: 'Titular Teste',
-        cpf: '12345678901',
+        cpf: '31415926590',
         dataContratacao: new Date('2026-06-18T00:00:00.000Z'),
         dependentes: [
           {
@@ -925,7 +931,7 @@ describe('TitularService', () => {
           {
             id: 15,
             nome: 'Corresponsavel Grade',
-            cpf: '22233344455',
+            cpf: '27182818205',
             dataNascimento: new Date('1990-02-01T00:00:00.000Z'),
             relacionamento: 'Cônjuge',
           },
@@ -947,14 +953,14 @@ describe('TitularService', () => {
       prismaMock.titular.findUnique.mockResolvedValueOnce({
         id: 8,
         nome: 'Titular Igual',
-        cpf: '12345678901',
+        cpf: '31415926590',
         dataContratacao: new Date('2026-06-18T00:00:00.000Z'),
         dependentes: [],
         corresponsaveis: [
           {
             id: 16,
             nome: 'Titular Igual',
-            cpf: '12345678901',
+            cpf: '31415926590',
             dataNascimento: new Date('1990-01-01T00:00:00.000Z'),
             relacionamento: 'Titular',
           },
@@ -1041,6 +1047,9 @@ describe('TitularService', () => {
   describe('delete', () => {
     it('repassa erro do prisma no delete', async () => {
       prismaMock.titular.delete.mockRejectedValueOnce(new Error('FK violation'));
+      prismaMock.$transaction.mockImplementationOnce(async (callback: any) =>
+        callback(buildCreateFullTxMock()),
+      );
       const service = new TitularService('tenant-123');
       await expect(service.delete(1)).rejects.toThrow('FK violation');
     });
@@ -1048,6 +1057,9 @@ describe('TitularService', () => {
     it('deleta titular pelo id', async () => {
       const titular = { id: 1, nome: 'Test' };
       prismaMock.titular.delete.mockResolvedValueOnce(titular);
+      prismaMock.$transaction.mockImplementationOnce(async (callback: any) =>
+        callback(buildCreateFullTxMock()),
+      );
       const service = new TitularService('tenant-123');
       const result = await service.delete(1);
       expect(result).toEqual(titular);
@@ -1091,6 +1103,12 @@ describe('TitularService', () => {
     it('rejeita quando CPF tem mais de 11 dígitos', async () => {
       const service = new TitularService('tenant-123');
       const payload = makePayload({ step1: { cpf: '123456789012' } });
+      await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('rejeita quando CPF tem dígitos verificadores inválidos', async () => {
+      const service = new TitularService('tenant-123');
+      const payload = makePayload({ step1: { cpf: '12345678901' } });
       await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 400 });
     });
 
@@ -1463,7 +1481,7 @@ describe('TitularService', () => {
       const service = new TitularService('tenant-123');
       const payload = makePayload({
         step1: {
-          nomeCompleto: 'T', cpf: '12345678901', dataNascimento: '1990-01-01',
+          nomeCompleto: 'T', cpf: '31415926590', dataNascimento: '1990-01-01',
           sexo: 'M', naturalidade: 'SP', telefone: '11999999999', whatsapp: '',
           email: '', situacaoConjugal: 'Solteiro', profissao: 'Dev',
         },
@@ -1473,7 +1491,7 @@ describe('TitularService', () => {
 
     it('createFull com CPF duplicado rejeita com status 409', async () => {
       const service = new TitularService('tenant-123');
-      (prismaMock.titular.findFirst as jest.Mock).mockResolvedValue({ id: 1, cpf: '12345678901' });
+      (prismaMock.titular.findFirst as jest.Mock).mockResolvedValue({ id: 1, cpf: '31415926590' });
       const payload = makePayload();
       await expect(service.createFull(payload as any)).rejects.toMatchObject({ status: 409 });
     });
@@ -1482,7 +1500,7 @@ describe('TitularService', () => {
       const service = new TitularService('tenant-123');
       const payload = makePayload({
         step1: {
-          nomeCompleto: 'T', cpf: '12345678901', dataNascimento: '1990-01-01',
+          nomeCompleto: 'T', cpf: '31415926590', dataNascimento: '1990-01-01',
           sexo: '', naturalidade: '', telefone: '11999999999', whatsapp: '',
           email: 't@t.com', situacaoConjugal: 'Solteiro', profissao: 'Dev',
         },
@@ -1500,7 +1518,7 @@ describe('TitularService', () => {
           billingType: 'CREDIT_CARD',
           creditCard: {
             holderName: 'JOAO DA SILVA',
-            holderCpf: '12345678901',
+            holderCpf: '31415926590',
             number: '4111111111111111',
             expiryMonth: '12',
             expiryYear: '28',
@@ -1648,7 +1666,7 @@ describe('TitularService', () => {
 
     it('normaliza CPF com pontuação antes de validar', async () => {
       const service = new TitularService('tenant-123');
-      const payload = makeCardPayload({ holderCpf: '123.456.789-01' });
+      const payload = makeCardPayload({ holderCpf: '314.159.265-90' });
       const result = await service.createFull(payload as any);
       expect(result).toBeDefined();
     });
