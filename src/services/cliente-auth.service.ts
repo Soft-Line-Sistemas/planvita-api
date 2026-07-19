@@ -10,6 +10,7 @@ import { WhatsappNotificationService } from './whatsapp-notification.service';
 const OTP_TTL_MINUTES = 15;
 const TOKEN_TTL_MINUTES = 15;
 const OTP_MAX_ATTEMPTS = 5;
+const OTP_RESEND_COOLDOWN_SECONDS = 60;
 
 export type ClienteJwtPayload = {
   titularId: number;
@@ -214,6 +215,7 @@ export class ClienteAuthService {
       pagamentoConfirmadoEm: titular.pagamentoConfirmadoEm ?? null,
       source: 'titular',
     };
+    await this.assertOtpResendAllowed(identity.titularId, 'REGISTER');
     const start = await this.startOtp(
       identity,
       this.resolvePreferredChannel(identity),
@@ -247,6 +249,7 @@ export class ClienteAuthService {
     }
 
     await this.ensureCredential(identity.titularId);
+    await this.assertOtpResendAllowed(identity.titularId, 'FIRST_ACCESS');
     const linkToken = await this.createToken('FIRST_ACCESS_LINK', identity.titularId, 'FIRST_ACCESS');
     const channel = this.resolveChannel(identity, requestedChannelRaw);
     const start = await this.startOtp(identity, channel, 'FIRST_ACCESS', linkToken);
@@ -282,6 +285,7 @@ export class ClienteAuthService {
     }
 
     await this.ensureCredential(titular.id);
+    await this.assertOtpResendAllowed(titular.id, 'FIRST_ACCESS');
     const linkToken = await this.createToken('FIRST_ACCESS_LINK', titular.id, 'FIRST_ACCESS');
     const channel = this.resolveChannel(titular, requestedChannelRaw);
     const start = await this.startOtp(
@@ -311,6 +315,7 @@ export class ClienteAuthService {
     }
 
     await this.ensureCredential(identity.titularId);
+    await this.assertOtpResendAllowed(identity.titularId, 'RESET_PASSWORD');
     const linkToken = await this.createToken('RESET_PASSWORD_LINK', identity.titularId, 'RESET_PASSWORD');
     const channel = this.resolveChannel(identity, requestedChannelRaw);
     const start = await this.startOtp(identity, channel, 'RESET_PASSWORD', linkToken);
@@ -354,6 +359,7 @@ export class ClienteAuthService {
       throw err;
     }
 
+    await this.assertOtpResendAllowed(identity.titularId, 'LOGIN_ACCESS');
     const channel = this.resolveChannel(identity, requestedChannelRaw);
     return this.startOtp(identity, channel, 'LOGIN_ACCESS');
   }
@@ -788,6 +794,31 @@ export class ClienteAuthService {
     });
   }
 
+  private async assertOtpResendAllowed(titularId: number, purpose: OtpPurpose): Promise<void> {
+    const latestOtp = await (this.prisma as any).titularOtp.findFirst({
+      where: {
+        titularId,
+        purpose,
+        consumedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!latestOtp?.createdAt) return;
+
+    const elapsedMs = Date.now() - new Date(latestOtp.createdAt).getTime();
+    const remainingSeconds = OTP_RESEND_COOLDOWN_SECONDS - Math.floor(elapsedMs / 1000);
+    if (remainingSeconds <= 0) return;
+
+    const err: any = new Error(
+      `Aguarde ${remainingSeconds}s antes de solicitar um novo código.`,
+    );
+    err.status = 429;
+    err.code = 'OTP_RESEND_COOLDOWN';
+    err.retryAfterSeconds = remainingSeconds;
+    throw err;
+  }
+
   private async startOtp(
     identity: ClienteAccessIdentity,
     channel: NotificationChannel,
@@ -798,7 +829,7 @@ export class ClienteAuthService {
     const codeHash = await bcrypt.hash(otp, 10);
     const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
 
-    await (this.prisma as any).titularOtp.create({
+    const otpRecord = await (this.prisma as any).titularOtp.create({
       data: {
         titularId: identity.titularId,
         channel,
@@ -850,6 +881,9 @@ export class ClienteAuthService {
       });
 
       if (!sendResult.success) {
+        await (this.prisma as any).titularOtp.deleteMany({
+          where: { id: otpRecord.id },
+        });
         const err: any = new Error(
           sendResult.error || 'Não foi possível enviar o código pelo WhatsApp.',
         );
@@ -883,6 +917,9 @@ export class ClienteAuthService {
       });
 
       if (!sendResult.success) {
+        await (this.prisma as any).titularOtp.deleteMany({
+          where: { id: otpRecord.id },
+        });
         const err: any = new Error(
           sendResult.error || 'Não foi possível enviar o código pelo e-mail.',
         );

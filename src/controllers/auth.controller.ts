@@ -286,7 +286,13 @@ export class AuthController {
     } catch (error: any) {
       const status = error?.status ?? 500;
       const message = error?.message ?? 'Erro ao validar código.';
-      res.status(status).json({ message });
+      res.status(status).json({
+        message,
+        ...(error?.code ? { code: error.code } : {}),
+        ...(typeof error?.retryAfterSeconds === 'number'
+          ? { retryAfterSeconds: error.retryAfterSeconds }
+          : {}),
+      });
     }
   }
 
@@ -327,7 +333,13 @@ export class AuthController {
     } catch (error: any) {
       const status = error?.status ?? 500;
       const message = error?.message ?? 'Erro no primeiro acesso.';
-      res.status(status).json({ message });
+      res.status(status).json({
+        message,
+        ...(error?.code ? { code: error.code } : {}),
+        ...(typeof error?.retryAfterSeconds === 'number'
+          ? { retryAfterSeconds: error.retryAfterSeconds }
+          : {}),
+      });
     }
   }
 
@@ -367,7 +379,13 @@ export class AuthController {
     } catch (error: any) {
       const status = error?.status ?? 500;
       const message = error?.message ?? 'Erro ao iniciar recuperação de senha.';
-      res.status(status).json({ message });
+      res.status(status).json({
+        message,
+        ...(error?.code ? { code: error.code } : {}),
+        ...(typeof error?.retryAfterSeconds === 'number'
+          ? { retryAfterSeconds: error.retryAfterSeconds }
+          : {}),
+      });
     }
   }
 
@@ -387,6 +405,9 @@ export class AuthController {
       res.status(status).json({
         message,
         ...(error?.code ? { code: error.code } : {}),
+        ...(typeof error?.retryAfterSeconds === 'number'
+          ? { retryAfterSeconds: error.retryAfterSeconds }
+          : {}),
       });
     }
   }
@@ -407,7 +428,13 @@ export class AuthController {
     } catch (error: any) {
       const status = error?.status ?? 500;
       const message = error?.message ?? 'Erro ao redefinir senha.';
-      res.status(status).json({ message });
+      res.status(status).json({
+        message,
+        ...(error?.code ? { code: error.code } : {}),
+        ...(typeof error?.retryAfterSeconds === 'number'
+          ? { retryAfterSeconds: error.retryAfterSeconds }
+          : {}),
+      });
     }
   }
 

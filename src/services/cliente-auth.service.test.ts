@@ -71,6 +71,7 @@ describe('ClienteAuthService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    (prismaMock.titularOtp.findFirst as jest.Mock).mockResolvedValue(null);
     service = new ClienteAuthService('tenant-123');
   });
 
@@ -414,6 +415,37 @@ describe('ClienteAuthService', () => {
       expect(prismaMock.titular.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({ where: { email: 'usuario@empresa.com.br' } }),
       );
+    });
+  });
+
+  describe('otp cooldown', () => {
+    it('bloqueia novo envio de recuperação dentro do cooldown mesmo trocando o canal', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 1,
+        nome: 'Teste',
+        email: 'teste@email.com',
+        cpf: '12345678901',
+        telefone: '71999999999',
+        metodoNotificacaoRecorrente: 'email',
+        pagamentoConfirmadoEm: new Date(),
+      });
+      (prismaMock.titularCredential.upsert as jest.Mock).mockResolvedValue({
+        titularId: 1,
+      });
+      (prismaMock.titularOtp.findFirst as jest.Mock).mockResolvedValue({
+        id: 99,
+        createdAt: new Date(),
+      });
+
+      await expect(
+        service.startForgotPassword('teste@email.com', 'whatsapp'),
+      ).rejects.toMatchObject({
+        status: 429,
+        code: 'OTP_RESEND_COOLDOWN',
+      });
+
+      expect(prismaMock.titularToken.create).not.toHaveBeenCalled();
+      expect(prismaMock.titularOtp.create).not.toHaveBeenCalled();
     });
   });
 
