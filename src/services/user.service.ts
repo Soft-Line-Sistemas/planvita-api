@@ -1,5 +1,7 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
 import bcrypt from 'bcryptjs';
+import { uploadToFilesApi } from '../utils/filesClient';
+import { ensureConsultorCode } from '../utils/consultor-code';
 
 type UserType = Prisma.UserGetPayload<{}>;
 
@@ -19,6 +21,7 @@ type User = {
   email: string;
   roleId?: number | null;
   consultorId?: number | null;
+  consultorCodigo?: string | null;
   consultorWhatsapp?: string | null;
   valorComissaoIndicacao?: number | null;
   percentualComissaoIndicacao?: number | null;
@@ -39,6 +42,7 @@ type UserRoleType = Prisma.UserGetPayload<{
     consultor: {
       select: {
         id: true;
+        codigo: true;
         whatsapp: true;
         valorComissaoIndicacao: true;
         percentualComissaoIndicacao: true;
@@ -101,6 +105,7 @@ export class UserService {
       },
       select: {
         id: true,
+        codigo: true,
         whatsapp: true,
         valorComissaoIndicacao: true,
         percentualComissaoIndicacao: true,
@@ -141,6 +146,7 @@ export class UserService {
         consultor: {
           select: {
             id: true,
+            codigo: true,
             whatsapp: true,
             valorComissaoIndicacao: true,
             percentualComissaoIndicacao: true,
@@ -149,12 +155,43 @@ export class UserService {
       },
     });
 
-    const vendedorIds = usuarios
+    await Promise.all(
+      usuarios
+        .map((usuario) => usuario.consultor)
+        .filter((consultor): consultor is NonNullable<typeof consultor> => Boolean(consultor))
+        .map((consultor) => ensureConsultorCode(this.tenantId, consultor)),
+    );
+
+    const refreshedUsers = await this.prisma.user.findMany({
+      include: {
+        roles: {
+          select: {
+            role: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        consultor: {
+          select: {
+            id: true,
+            codigo: true,
+            whatsapp: true,
+            valorComissaoIndicacao: true,
+            percentualComissaoIndicacao: true,
+          },
+        },
+      },
+    });
+
+    const vendedorIds = refreshedUsers
       .map((u) => u.consultor?.id)
       .filter((id): id is number => Number.isFinite(id));
     const pendentePorVendedor = await this.carregarMapaComissaoPendente(vendedorIds);
 
-    return usuarios.map((usuario) => ({
+    return refreshedUsers.map((usuario) => ({
       ...usuario,
       consultor: usuario.consultor
         ? {
@@ -166,7 +203,7 @@ export class UserService {
   }
 
   async getById(id: number): Promise<UserRoleType | null> {
-    return this.prisma.user.findUnique({
+    const usuario = await this.prisma.user.findUnique({
       where: { id },
       include: {
         roles: {
@@ -179,6 +216,7 @@ export class UserService {
         consultor: {
           select: {
             id: true,
+            codigo: true,
             whatsapp: true,
             valorComissaoIndicacao: true,
             percentualComissaoIndicacao: true,
@@ -186,6 +224,33 @@ export class UserService {
         },
       },
     });
+
+    if (usuario?.consultor) {
+      await ensureConsultorCode(this.tenantId, usuario.consultor);
+      return this.prisma.user.findUnique({
+        where: { id },
+        include: {
+          roles: {
+            select: {
+              role: {
+                select: { id: true, name: true },
+              },
+            },
+          },
+          consultor: {
+            select: {
+              id: true,
+              codigo: true,
+              whatsapp: true,
+              valorComissaoIndicacao: true,
+              percentualComissaoIndicacao: true,
+            },
+          },
+        },
+      });
+    }
+
+    return usuario;
   }
 
   async create(data: UserTypeCreate): Promise<User> {
@@ -230,6 +295,7 @@ export class UserService {
           email: user.email,
           roleId: data.roleId,
           consultorId: consultor.id,
+          consultorCodigo: await ensureConsultorCode(this.tenantId, consultor),
           consultorWhatsapp: consultor.whatsapp,
           valorComissaoIndicacao: consultor.valorComissaoIndicacao,
           percentualComissaoIndicacao: consultor.percentualComissaoIndicacao,
@@ -291,6 +357,54 @@ export class UserService {
     });
   }
 
+  async updateAvatar(
+    id: number,
+    fileBase64: string,
+    filename: string,
+    mimeType: string,
+  ): Promise<UserType> {
+    const userId = Number(id);
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!existing) {
+      const err: any = new Error('Usuário não encontrado');
+      err.status = 404;
+      throw err;
+    }
+
+    const { url } = await uploadToFilesApi(this.tenantId, fileBase64, filename, mimeType);
+    if (!url) {
+      const err: any = new Error('Não foi possível enviar a foto do colaborador');
+      err.status = 500;
+      throw err;
+    }
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl: url },
+    });
+  }
+
+  async removeAvatar(id: number): Promise<UserType> {
+    const userId = Number(id);
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!existing) {
+      const err: any = new Error('Usuário não encontrado');
+      err.status = 404;
+      throw err;
+    }
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarUrl: null },
+    });
+  }
+
   async verifyPassword(id: number, plainPassword: string): Promise<boolean | null> {
     const user = await this.prisma.user.findUnique({
       where: { id: Number(id) },
@@ -343,16 +457,37 @@ export class UserService {
       },
     });
 
+    let consultorPayload:
+      | {
+          id: number;
+          codigo: string;
+          whatsapp: string | null;
+          valorComissaoIndicacao: number;
+          percentualComissaoIndicacao: number;
+        }
+      | null = null;
+
     if (this.isConsultorRole(newRole.role?.name)) {
-      await this.garantirConsultorParaUsuario(
+      const consultor = await this.garantirConsultorParaUsuario(
         userId,
         user.nome,
         whatsapp,
         valorComissaoIndicacao,
         percentualComissaoIndicacao,
       );
+      consultorPayload = {
+        id: consultor.id,
+        codigo: await ensureConsultorCode(this.tenantId, consultor),
+        whatsapp: consultor.whatsapp,
+        valorComissaoIndicacao: consultor.valorComissaoIndicacao,
+        percentualComissaoIndicacao: consultor.percentualComissaoIndicacao,
+      };
     }
 
-    return newRole;
+    return {
+      userId,
+      roleId,
+      consultor: consultorPayload,
+    };
   }
 }

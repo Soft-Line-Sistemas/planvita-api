@@ -22,6 +22,18 @@ router.put(
   authorize(['user.update']),
   controller.changeEmail.bind(controller),
 );
+router.put(
+  '/:id/avatar',
+  authenticate,
+  authorize(['user.update']),
+  controller.uploadAvatar.bind(controller),
+);
+router.delete(
+  '/:id/avatar',
+  authenticate,
+  authorize(['user.update']),
+  controller.removeAvatar.bind(controller),
+);
 
 router.put(
   '/:userId/role',

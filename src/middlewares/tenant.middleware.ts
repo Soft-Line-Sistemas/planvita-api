@@ -48,6 +48,11 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
     const isGlobalConsultorPublicRoute =
       req.path.includes('/consultor/public') &&
       String(req.query?.scope ?? '').trim().toLowerCase() === 'global';
+    const isConsultorPublicLookupRoute =
+      req.path.includes('/consultor/public') &&
+      (String(req.query?.codigo ?? '').trim().length > 0 ||
+        (Number.isInteger(Number(req.query?.consultorId)) &&
+          String(req.query?.consultorTenant ?? '').trim().length > 0));
     let tenant = (req.headers['x-tenant'] as string | undefined)?.toLowerCase();
 
     if (!tenant) {
@@ -110,6 +115,9 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
 
     if (!tenant) {
       if (isGlobalConsultorPublicRoute) {
+        return next();
+      }
+      if (isConsultorPublicLookupRoute) {
         return next();
       }
       if (isClienteFirstAccessChannelsRoute) {

@@ -27,6 +27,25 @@ export class ConsultorController {
 
   async getPublicOptions(req: TenantRequest, res: Response) {
     try {
+      const codigo = String(req.query?.codigo ?? '').trim();
+      if (codigo) {
+        const resolved = await ConsultorService.resolvePublicByCode(codigo);
+        if (!resolved) {
+          return res.status(404).json({ message: 'Consultor não encontrado para o código informado.' });
+        }
+        return res.json(resolved);
+      }
+
+      const legacyId = Number(req.query?.consultorId);
+      const legacyTenant = String(req.query?.consultorTenant ?? '').trim().toLowerCase();
+      if (Number.isInteger(legacyId) && legacyId > 0 && legacyTenant) {
+        const resolved = await ConsultorService.resolvePublicByLegacyId(legacyId, legacyTenant);
+        if (!resolved) {
+          return res.status(404).json({ message: 'Consultor não encontrado para o link informado.' });
+        }
+        return res.json(resolved);
+      }
+
       const scope = String(req.query?.scope ?? '').trim().toLowerCase();
       if (scope === 'global') {
         const result = await ConsultorService.getGlobalPublicOptions();

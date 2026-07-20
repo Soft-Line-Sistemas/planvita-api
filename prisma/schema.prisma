@@ -79,6 +79,7 @@ model User {
   email     String    @unique
   senhaHash String
   ativo     Boolean   @default(true)
+  avatarUrl String?
 
   roles       UserRole[]
   consultor   Consultor? @relation("UserConsultor")
@@ -92,6 +93,7 @@ model User {
 model Consultor {
   id     Int    @id @default(autoincrement())
   nome   String
+  codigo String? @unique
   whatsapp String?
   valorComissaoIndicacao Float @default(0)
   percentualComissaoIndicacao Float @default(0)
