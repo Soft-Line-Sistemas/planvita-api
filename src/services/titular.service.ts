@@ -3426,7 +3426,8 @@ export class TitularService {
     valorMensal: number,
     billingType?: 'PIX' | 'BOLETO' | 'CREDIT_CARD',
   ): Promise<CreateFullRecurringResult> {
-    void this.syncCustomerAsaasSafe(titular.id);
+    // A assinatura já garante (e reutiliza) o customer. Disparar as duas
+    // sincronizações em paralelo criava uma corrida para o mesmo vínculo.
     void this.syncSubscriptionAsaasSafe(titular.id, titular.nome, valorMensal, billingType);
     return { status: 'skipped' };
   }
