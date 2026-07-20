@@ -868,6 +868,28 @@ describe('AsaasIntegrationService', () => {
         expect.objectContaining({ customer: 'cus_found', billingType: 'BOLETO' }),
       );
     });
+
+    it('reconcilia uma cobrança já criada no Asaas pela externalReference estável', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 2,
+        nome: 'Cliente',
+        cpf: '99999999999',
+        email: 'cliente@teste.com',
+        asaasCustomerId: 'cus_saved',
+        plano: { valorMensal: 99.9 },
+        contasReceber: [],
+      });
+      (mockAsaasClient as any).getPayments = jest.fn().mockResolvedValue({
+        data: [{ id: 'pay_existing', invoiceUrl: 'https://asaas.test/existente', dueDate: '2026-07-30' }],
+      });
+      (prismaMock.contaReceber.create as jest.Mock).mockResolvedValue({ id: 1 });
+
+      await expect(service.reenviarLinkCobrancaPendente(2)).resolves.toBe('https://asaas.test/existente');
+      expect(mockAsaasClient.createPayment).not.toHaveBeenCalled();
+      expect(prismaMock.contaReceber.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ asaasPaymentId: 'pay_existing' }) }),
+      );
+    });
   });
 
   // ── mapEventFromStatus — cenários extra ──────────────────────────────────────

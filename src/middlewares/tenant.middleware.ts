@@ -40,23 +40,6 @@ function resolveTenantFromHost(hostHeader?: string): string | null {
   return candidate ?? null;
 }
 
-function resolvePinnedTenantFromHost(hostHeader?: string): string | null {
-  const hostname = String(hostHeader ?? '')
-    .split(',')[0]
-    ?.trim()
-    .split(':')[0]
-    ?.toLowerCase();
-
-  // Os domínios próprios do tenant não podem aceitar um X-Tenant/cookie
-  // divergente. Caso contrário, um cookie antigo (por exemplo, "lider") faz
-  // o PUT gravar em um banco e o GET pelo host do Bosque consultar outro.
-  if (hostname === 'api.campodobosque.com.br' || hostname === 'app.campodobosque.com.br') {
-    return 'bosque';
-  }
-
-  return null;
-}
-
 export const tenantMiddleware = async (req: TenantRequest, res: Response, next: NextFunction) => {
   try {
     const isClienteLoginRoute = req.path.includes('/auth/login');
@@ -70,8 +53,7 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
       (String(req.query?.codigo ?? '').trim().length > 0 ||
         (Number.isInteger(Number(req.query?.consultorId)) &&
           String(req.query?.consultorTenant ?? '').trim().length > 0));
-    const pinnedTenant = resolvePinnedTenantFromHost(req.headers.host);
-    let tenant = pinnedTenant ?? (req.headers['x-tenant'] as string | undefined)?.toLowerCase();
+    let tenant = (req.headers['x-tenant'] as string | undefined)?.toLowerCase();
 
     if (!tenant) {
       const tenantQuery = (req.query?.tenant as string | undefined)?.toLowerCase();
