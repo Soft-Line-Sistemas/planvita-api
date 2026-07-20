@@ -15,6 +15,8 @@ const prismaMock = {
   },
   consultor: {
     upsert: jest.fn(),
+    findFirst: jest.fn(),
+    update: jest.fn(),
   },
   comissao: {
     groupBy: jest.fn(),
@@ -30,6 +32,9 @@ jest.mock('bcryptjs', () => ({
   hash: jest.fn().mockResolvedValue('hashed-password'),
   compare: jest.fn(),
 }));
+
+process.env.FILES_API_URL = 'https://files.test/api/v1';
+process.env['FILES_API_TOKEN_TENANT-123'] = 'test-token';
 
 import bcrypt from 'bcryptjs';
 import { UserService } from './user.service';
@@ -50,6 +55,8 @@ describe('UserService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     prismaMock.comissao.groupBy.mockResolvedValue([]);
+    prismaMock.consultor.findFirst.mockResolvedValue(null);
+    prismaMock.consultor.update.mockResolvedValue({ codigo: 'CODIGO1' });
     service = new UserService('tenant-123');
   });
 
@@ -148,6 +155,31 @@ describe('UserService', () => {
       const result = await service.update(1, { nome: 'Atualizado' } as any);
       expect(prismaMock.user.update).toHaveBeenCalledWith({ where: { id: 1 }, data: { nome: 'Atualizado' } });
       expect(result).toEqual(expect.objectContaining({ id: 1 }));
+    });
+  });
+
+  // ── avatar ─────────────────────────────────────────────────────────────
+  describe('updateAvatar', () => {
+    it('persiste a URL canônica de download, sem depender de payload.path', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({ id: 3 });
+      prismaMock.user.update.mockResolvedValue({
+        id: 3,
+        avatarUrl: 'https://files.test/api/v1/file/avatar-123/download',
+      });
+      const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({ id: 'avatar-123', path: '/caminho-interno-invalido' }),
+      } as Response);
+
+      await service.updateAvatar(3, 'aGVsbG8=', 'avatar.png', 'image/png');
+
+      expect(prismaMock.user.update).toHaveBeenCalledWith({
+        where: { id: 3 },
+        data: {
+          avatarUrl: 'https://files.test/api/v1/file/avatar-123/download',
+        },
+      });
+      fetchMock.mockRestore();
     });
   });
 
