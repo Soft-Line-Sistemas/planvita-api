@@ -24,6 +24,7 @@ import {
 } from 'docx';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { isValidCPF } from '../utils/helpers';
+import { normalizeConsultorCode } from '../utils/consultor-code';
 
 type TitularType = Prisma.TitularGetPayload<{}>;
 
@@ -1470,6 +1471,7 @@ export class TitularService {
       (dependentesData?.length ?? 0) + (corresponsavelContaNaGrade ? 1 : 0),
     );
     const consultorIdInformado = data.consultorId ? Number(data.consultorId) : null;
+    const consultorCodigoInformado = normalizeConsultorCode(data.consultorCodigo);
     const participantesPlano: ParticipanteInput[] = [
       {
         dataNascimento: step1.dataNascimento,
@@ -1520,13 +1522,27 @@ export class TitularService {
                 select: {
                   id: true,
                   nome: true,
+                  codigo: true,
                   whatsapp: true,
                   valorComissaoIndicacao: true,
                 },
               })
+            : consultorCodigoInformado
+              ? await tx.consultor.findFirst({
+                  where: {
+                    codigo: consultorCodigoInformado,
+                  },
+                  select: {
+                    id: true,
+                    nome: true,
+                    codigo: true,
+                    whatsapp: true,
+                    valorComissaoIndicacao: true,
+                  },
+                })
             : null;
 
-        if (consultorIdInformado && !consultor) {
+        if ((consultorIdInformado || consultorCodigoInformado) && !consultor) {
           const err: any = new Error('Consultor informado não encontrado.');
           err.status = 400;
           err.code = 'CONSULTOR_INVALIDO';

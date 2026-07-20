@@ -12,6 +12,28 @@ export interface TenantRequest extends Request {
 
 type TenantAuthRequest = TenantRequest & AuthRequest;
 
+const AVATAR_ALLOWED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const AVATAR_MIME_TO_EXT: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+};
+const AVATAR_MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5MB
+
+function sanitizeAvatarFilename(name: string, mimeType: string) {
+  const safeBase =
+    name.replace(/[/\\\\]+/g, '').replace(/[^\w.-]/g, '_').slice(0, 80) || 'avatar';
+  const desiredExt = AVATAR_MIME_TO_EXT[mimeType] || '';
+  const hasValidExt = safeBase.toLowerCase().endsWith(desiredExt);
+  return hasValidExt ? safeBase : `${safeBase}${desiredExt}`;
+}
+
+function estimateAvatarBase64Size(base64: string) {
+  const clean = base64.split(',').pop() || '';
+  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
+  return (clean.length * 3) / 4 - padding;
+}
+
 export class UserController {
   private logger = new Logger({ service: 'UserController' });
 
@@ -36,8 +58,10 @@ export class UserController {
         id: u.id,
         name: u.nome,
         email: u.email,
+        avatarUrl: (u as any).avatarUrl ?? null,
         roleId: u.roles?.[0]?.role?.id ?? null,
         consultorId: (u as any).consultor?.id ?? null,
+        consultorCodigo: (u as any).consultor?.codigo ?? null,
         consultorWhatsapp: (u as any).consultor?.whatsapp ?? null,
         valorComissaoIndicacao: (u as any).consultor?.valorComissaoIndicacao ?? null,
         percentualComissaoIndicacao: (u as any).consultor?.percentualComissaoIndicacao ?? null,
@@ -236,6 +260,73 @@ export class UserController {
       this.logger.error('Erro ao atualizar senha do usuário', error, {
         params: req.params,
         body: req.body,
+      });
+      this.respondFromError(res, error);
+    }
+  }
+
+  async uploadAvatar(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const targetUserId = Number(req.params.id);
+      if (Number.isNaN(targetUserId)) {
+        return res.status(400).json({ message: 'ID de usuário inválido' });
+      }
+
+      const { fileBase64, filename, mimeType } = req.body ?? {};
+      if (!fileBase64 || !filename || !mimeType) {
+        return res
+          .status(400)
+          .json({ message: 'Campos fileBase64, filename e mimeType são obrigatórios' });
+      }
+      if (!AVATAR_ALLOWED_MIME_TYPES.includes(mimeType)) {
+        return res.status(400).json({ message: 'Tipo de arquivo não permitido' });
+      }
+      const size = estimateAvatarBase64Size(fileBase64);
+      if (size > AVATAR_MAX_UPLOAD_BYTES) {
+        return res.status(400).json({ message: 'Arquivo excede o limite de 5MB' });
+      }
+
+      const safeName = sanitizeAvatarFilename(filename, mimeType);
+      const service = new UserService(req.tenantId);
+      const updated = await service.updateAvatar(targetUserId, fileBase64, safeName, mimeType);
+
+      this.logger.info('Avatar do colaborador atualizado', {
+        tenant: req.tenantId,
+        targetUserId,
+      });
+
+      res.json({ avatarUrl: (updated as any).avatarUrl ?? null });
+    } catch (error) {
+      this.logger.error('Erro ao atualizar avatar do colaborador', error, {
+        params: req.params,
+      });
+      this.respondFromError(res, error);
+    }
+  }
+
+  async removeAvatar(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const targetUserId = Number(req.params.id);
+      if (Number.isNaN(targetUserId)) {
+        return res.status(400).json({ message: 'ID de usuário inválido' });
+      }
+
+      const service = new UserService(req.tenantId);
+      await service.removeAvatar(targetUserId);
+
+      this.logger.info('Avatar do colaborador removido', {
+        tenant: req.tenantId,
+        targetUserId,
+      });
+
+      res.status(204).send();
+    } catch (error) {
+      this.logger.error('Erro ao remover avatar do colaborador', error, {
+        params: req.params,
       });
       this.respondFromError(res, error);
     }

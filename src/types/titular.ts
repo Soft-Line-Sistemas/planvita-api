@@ -1,5 +1,6 @@
 export interface CadastroTitularRequest {
   consultorId?: number | null;
+  consultorCodigo?: string | null;
   consultorTenantId?: string | null;
   targetTenantId?: string | null;
   consents?: {
