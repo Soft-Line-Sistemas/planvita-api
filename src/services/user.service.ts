@@ -1,7 +1,8 @@
 import { Prisma, getPrismaForTenant } from '../utils/prisma';
 import bcrypt from 'bcryptjs';
-import { uploadToFilesApi } from '../utils/filesClient';
 import { ensureConsultorCode } from '../utils/consultor-code';
+
+const FILES_API_BASE_URL = process.env.FILES_API_URL;
 
 type UserType = Prisma.UserGetPayload<{}>;
 
@@ -357,6 +358,98 @@ export class UserService {
     });
   }
 
+  private getFilesApiToken(): string | null {
+    if (!this.tenantId) return process.env.FILES_API_TOKEN || null;
+    const normalized = this.tenantId.toUpperCase();
+    const envKey = `FILES_API_TOKEN_${normalized}`;
+    return process.env[envKey] || process.env.FILES_API_TOKEN || null;
+  }
+
+  private async uploadAvatarArquivo(buffer: Buffer, mimetype: string, filename: string) {
+    const token = this.getFilesApiToken();
+    if (!token) {
+      throw new Error('Token da Files API não configurado para este tenant.');
+    }
+
+    const formData = new FormData();
+    const uint = new Uint8Array(buffer);
+    const blob = new Blob([uint], { type: mimetype });
+    formData.append('file', blob, filename);
+
+    const response = await fetch(`${FILES_API_BASE_URL}/file/upload`, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(`Falha ao enviar foto para armazenamento externo: ${response.status} ${message}`);
+    }
+
+    const payload = await response.json();
+    const arquivoId = payload.id;
+    const arquivoUrl = payload.path || `${FILES_API_BASE_URL}/file/${arquivoId}/download`;
+
+    return { arquivoUrl };
+  }
+
+  private parseBase64Avatar(input: string, allowedMimeTypes: readonly string[], maxBytes: number, fallbackMimeType?: string) {
+    const trimmed = (input || '').trim();
+    if (!trimmed) {
+      throw Object.assign(new Error('Formato de imagem inválido.'), { status: 400 });
+    }
+
+    const matches = trimmed.match(/^data:(.+);base64,(.+)$/);
+    const mimetype = matches?.[1] ?? fallbackMimeType ?? 'image/png';
+    const rawPayload = matches?.[2] ?? trimmed;
+    const payload = rawPayload.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+
+    if (!allowedMimeTypes.includes(mimetype)) {
+      throw Object.assign(new Error('Tipo de arquivo de imagem não permitido.'), { status: 400 });
+    }
+    if (!/^[A-Za-z0-9+/=]+$/.test(payload)) {
+      throw Object.assign(new Error('Imagem em base64 inválida.'), { status: 400 });
+    }
+
+    const buffer = Buffer.from(payload, 'base64');
+    if (!buffer.length) {
+      throw Object.assign(new Error('Imagem em base64 inválida.'), { status: 400 });
+    }
+    if (buffer.length > maxBytes) {
+      throw Object.assign(new Error('Arquivo de imagem excede o limite permitido.'), { status: 400 });
+    }
+
+    return { buffer, mimetype };
+  }
+
+  private normalizeAvatarFilename(filenameRaw: string | undefined, mimeType: string, fallbackBaseName: string): string {
+    const extensionByMime: Record<string, string> = {
+      'image/png': 'png',
+      'image/jpeg': 'jpg',
+      'image/webp': 'webp',
+    };
+    const extension = extensionByMime[mimeType] ?? 'bin';
+    const sanitizedBase = String(filenameRaw ?? '')
+      .trim()
+      .replace(/[^\w.-]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+
+    if (!sanitizedBase) {
+      return `${fallbackBaseName}-${Date.now()}.${extension}`;
+    }
+    if (sanitizedBase.toLowerCase().endsWith(`.${extension}`)) {
+      return sanitizedBase;
+    }
+    if (/\.[a-z0-9]+$/i.test(sanitizedBase)) {
+      return sanitizedBase;
+    }
+    return `${sanitizedBase}.${extension}`;
+  }
+
   async updateAvatar(
     id: number,
     fileBase64: string,
@@ -374,16 +467,18 @@ export class UserService {
       throw err;
     }
 
-    const { url } = await uploadToFilesApi(this.tenantId, fileBase64, filename, mimeType);
-    if (!url) {
-      const err: any = new Error('Não foi possível enviar a foto do colaborador');
-      err.status = 500;
-      throw err;
-    }
+    const { buffer, mimetype } = this.parseBase64Avatar(
+      fileBase64,
+      ['image/png', 'image/jpeg', 'image/webp'],
+      5 * 1024 * 1024,
+      mimeType,
+    );
+    const safeFilename = this.normalizeAvatarFilename(filename, mimetype, 'avatar');
+    const { arquivoUrl } = await this.uploadAvatarArquivo(buffer, mimetype, safeFilename);
 
     return this.prisma.user.update({
       where: { id: userId },
-      data: { avatarUrl: url },
+      data: { avatarUrl: arquivoUrl },
     });
   }
 

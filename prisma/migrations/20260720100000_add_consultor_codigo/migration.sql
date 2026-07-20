@@ -11,7 +11,9 @@ IF NOT EXISTS (
     AND object_id = OBJECT_ID(N'[dbo].[Consultor]')
 )
 BEGIN
-  CREATE UNIQUE NONCLUSTERED INDEX [Consultor_codigo_key]
-    ON [dbo].[Consultor]([codigo])
-    WHERE [codigo] IS NOT NULL;
+  EXEC(N'
+    CREATE UNIQUE NONCLUSTERED INDEX [Consultor_codigo_key]
+      ON [dbo].[Consultor]([codigo])
+      WHERE [codigo] IS NOT NULL;
+  ');
 END;
