@@ -298,18 +298,19 @@ export class AuthController {
 
   async firstAccess(req: TenantRequest, res: Response) {
     try {
-      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
       const { verificationToken, token, password, login, titularId, channel } = req.body ?? {};
-
-      const auth = new ClienteAuthService(req.tenantId);
 
       const tokenValue = String(verificationToken ?? token ?? '').trim();
       if (tokenValue && password) {
+        if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+        const auth = new ClienteAuthService(req.tenantId);
         await auth.completeFirstAccess(tokenValue, String(password));
         return res.json({ message: 'Senha criada com sucesso.' });
       }
 
       if (titularId != null) {
+        if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+        const auth = new ClienteAuthService(req.tenantId);
         const backofficeToken = (req as any).cookies?.auth_token;
         if (!backofficeToken) {
           return res.status(403).json({ message: 'Ação permitida apenas para admin/consultor autenticado.' });
@@ -325,8 +326,34 @@ export class AuthController {
       }
 
       if (login) {
-        const start = await auth.startFirstAccessByLogin(String(login), channel);
-        return res.json({ message: 'Enviamos um código para primeiro acesso.', start });
+        // Primeiro acesso é público: um cookie de tenant antigo não pode impedir
+        // que o cliente seja encontrado em outra base configurada.
+        let deferredError: any = null;
+        for (const tenant of this.getClienteTenantCandidates()) {
+          try {
+            const auth = new ClienteAuthService(tenant);
+            const start = await auth.startFirstAccessByLogin(String(login), channel);
+            res.cookie('tenant', tenant, this.getClienteTenantCookieOptions(req));
+            return res.json({
+              message: 'Enviamos um código para primeiro acesso.',
+              tenant,
+              start,
+            });
+          } catch (error: any) {
+            // Ausência no tenant atual é esperada; continue procurando nas demais bases.
+            if (error?.status === 404) continue;
+
+            // Ex.: pagamento pendente. Preserve o erro, mas continue em caso de
+            // cadastros distintos com o mesmo CPF/e-mail em outro tenant.
+            deferredError ??= error;
+          }
+        }
+
+        if (deferredError) throw deferredError;
+
+        const error: any = new Error('Cliente não encontrado.');
+        error.status = 404;
+        throw error;
       }
 
       return res.status(400).json({ message: 'Informe login ou token+password.' });
