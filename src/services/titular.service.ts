@@ -1495,7 +1495,39 @@ export class TitularService {
       })),
     ];
     const planosCompativeis = await this.planoService.listarPlanosCompativeis(participantesPlano);
-    const planoCompativel = planosCompativeis.find((plano) => plano.id === planoIdSelecionado);
+    let planoCompativel = planosCompativeis.find((plano) => plano.id === planoIdSelecionado);
+    let planoIdParaCadastro = planoIdSelecionado;
+
+    // O ID do plano é local a cada tenant. Como proteção para cadastros
+    // públicos iniciados antes de o tenant do consultor ser resolvido, tenta
+    // reconciliar o plano selecionado dentro do tenant de destino. A ordem
+    // evita aceitar um plano apenas por coincidência de preço.
+    if (!planoCompativel) {
+      const nomeInformado = String(step5?.plano?.nome ?? '').trim().toLocaleLowerCase('pt-BR');
+      const valorInformado = Number(step5?.plano?.valorMensal);
+      const temNome = nomeInformado.length > 0;
+      const temValor = Number.isFinite(valorInformado) && valorInformado >= 0;
+      const temMesmoNome = (plano: { nome: string }) =>
+        temNome && plano.nome.trim().toLocaleLowerCase('pt-BR') === nomeInformado;
+      const temMesmoValor = (plano: { valorMensal: number }) =>
+        temValor && Math.abs(Number(plano.valorMensal) - valorInformado) < 0.005;
+
+      const porNomeEValor = planosCompativeis.filter(
+        (plano) => temMesmoNome(plano) && temMesmoValor(plano),
+      );
+      const porNome = planosCompativeis.filter(temMesmoNome);
+      const porValor = planosCompativeis.filter(temMesmoValor);
+      const planoReconciliado =
+        (porNomeEValor.length === 1 && porNomeEValor[0]) ||
+        (porNome.length === 1 && porNome[0]) ||
+        (porValor.length === 1 && porValor[0]) ||
+        null;
+
+      if (planoReconciliado) {
+        planoCompativel = planoReconciliado;
+        planoIdParaCadastro = planoReconciliado.id;
+      }
+    }
     if (!planoCompativel) {
       const err: any = new Error('Plano selecionado não é compatível com o perfil cadastrado.');
       err.status = 400;
@@ -1573,10 +1605,10 @@ export class TitularService {
             pontoReferencia: pontoReferenciaTitular,
             formaPagamentoAdesao: billingType,
             servicosAdicionaisJson: JSON.stringify(servicosAdicionais),
-            plano: planoIdSelecionado
+            plano: planoIdParaCadastro
               ? {
                   connect: {
-                    id: planoIdSelecionado,
+                    id: planoIdParaCadastro,
                   },
                 }
               : undefined,

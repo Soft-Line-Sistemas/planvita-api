@@ -66,6 +66,12 @@ export interface CadastroTitularRequest {
   }[];
   step5?: {
     planoId?: number | null;
+    // Usado como referência para reconciliar o plano quando um link público
+    // troca de tenant e os IDs internos não são os mesmos.
+    plano?: {
+      nome?: string | null;
+      valorMensal?: number | string | null;
+    } | null;
     billingType?: 'PIX' | 'BOLETO' | 'CREDIT_CARD' | 'CARTAO';
     creditCard?: {
       holderName: string;
