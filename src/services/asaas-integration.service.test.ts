@@ -892,6 +892,44 @@ describe('AsaasIntegrationService', () => {
     });
   });
 
+  describe('ensureAdesaoPaymentForTitular', () => {
+    it('cria e persiste a adesão sem reutilizar a cobrança recorrente', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 2,
+        nome: 'Cliente',
+        asaasCustomerId: 'cus_saved',
+        valorTotalContrato: 129.9,
+        plano: { valorMensal: 99.9 },
+        contasReceber: [],
+      });
+      (mockAsaasClient as any).getPayments = jest.fn().mockResolvedValue({ data: [] });
+      mockAsaasClient.createPayment.mockResolvedValue({
+        id: 'pay_adesao',
+        invoiceUrl: 'https://asaas.test/adesao',
+        dueDate: '2026-07-23',
+      });
+
+      await expect(service.ensureAdesaoPaymentForTitular(2)).resolves.toBe('https://asaas.test/adesao');
+
+      expect(mockAsaasClient.createPayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          billingType: 'BOLETO',
+          value: 129.9,
+          description: 'Adesão — Cliente',
+          externalReference: 'titular-adesao-tenant-123-2',
+        }),
+      );
+      expect(prismaMock.contaReceber.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            descricao: 'Adesão — Cliente',
+            asaasPaymentId: 'pay_adesao',
+          }),
+        }),
+      );
+    });
+  });
+
   // ── mapEventFromStatus — cenários extra ──────────────────────────────────────
   describe('mapEventFromStatus — cenários extra', () => {
     it('mapEventFromStatus para CONFIRMED retorna CONFIRMED', () => {

@@ -85,7 +85,11 @@ export class AsaasIntegrationService {
     return this.enabled && !!this.client;
   }
 
-  async reenviarLinkCobrancaPendente(titularId: number): Promise<string | null> {
+  /**
+   * Garante a cobrança única de adesão. Ela não pertence à assinatura mensal:
+   * a recorrência só deve iniciar na competência seguinte ao cadastro.
+   */
+  async ensureAdesaoPaymentForTitular(titularId: number): Promise<string | null> {
     if (!this.client) return null;
 
     const titular = await this.prisma.titular.findUnique({
@@ -96,9 +100,12 @@ export class AsaasIntegrationService {
         email: true,
         cpf: true,
         asaasCustomerId: true,
+        valorTotalContrato: true,
         plano: { select: { valorMensal: true } },
         contasReceber: {
-          where: { status: 'PENDENTE' },
+          where: {
+            descricao: { startsWith: 'Adesão' },
+          },
           orderBy: { vencimento: 'asc' },
           take: 1,
         },
@@ -107,12 +114,12 @@ export class AsaasIntegrationService {
 
     if (!titular) return null;
 
-    const contaPendente = titular.contasReceber[0] ?? null;
+    const contaAdesao = titular.contasReceber[0] ?? null;
 
-    if (contaPendente?.asaasPaymentId) {
+    if (contaAdesao?.asaasPaymentId) {
       try {
-        const existing = await this.client.getPaymentById(contaPendente.asaasPaymentId);
-        const url = (existing as any)?.invoiceUrl ?? (existing as any)?.bankSlipUrl ?? contaPendente.paymentUrl;
+        const existing = await this.client.getPaymentById(contaAdesao.asaasPaymentId);
+        const url = (existing as any)?.invoiceUrl ?? (existing as any)?.bankSlipUrl ?? contaAdesao.paymentUrl;
         if (url) return url;
       } catch {
         // fall through to create new
@@ -126,7 +133,7 @@ export class AsaasIntegrationService {
 
     if (!customerId) return null;
 
-    const valor = titular.plano?.valorMensal ?? contaPendente?.valor;
+    const valor = Number(titular.valorTotalContrato ?? titular.plano?.valorMensal ?? contaAdesao?.valor);
     if (!valor) return null;
 
     const vencimento = new Date();
@@ -176,9 +183,9 @@ export class AsaasIntegrationService {
     const vencimentoProvider = payment?.dueDate ? new Date(payment.dueDate) : vencimento;
 
     try {
-      if (contaPendente) {
+      if (contaAdesao) {
         await this.prisma.contaReceber.update({
-          where: { id: contaPendente.id },
+          where: { id: contaAdesao.id },
           data: {
             paymentUrl,
             asaasPaymentId: paymentId,
@@ -212,6 +219,10 @@ export class AsaasIntegrationService {
     }
 
     return paymentUrl;
+  }
+
+  async reenviarLinkCobrancaPendente(titularId: number): Promise<string | null> {
+    return this.ensureAdesaoPaymentForTitular(titularId);
   }
 
   private isStatusPagamentoConfirmado(status: string): boolean {

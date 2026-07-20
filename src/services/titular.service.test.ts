@@ -72,6 +72,7 @@ jest.mock('../utils/prisma', () => ({
 
 const asaasMock = {
   ensureCustomerForTitular: jest.fn().mockResolvedValue(null),
+  ensureAdesaoPaymentForTitular: jest.fn().mockResolvedValue(null),
   ensureMonthlySubscriptionForTitular: jest.fn().mockResolvedValue(null),
   isEnabled: jest.fn().mockReturnValue(false),
   cancelMonthlySubscriptionForTitular: jest.fn().mockResolvedValue('sub-123'),
@@ -225,6 +226,17 @@ describe('TitularService', () => {
 
   // ── createFull ──────────────────────────────────────────────────────────────
   describe('createFull', () => {
+    it('emite a adesão antes de configurar a recorrência mensal', async () => {
+      const service = new TitularService('tenant-123');
+
+      await service.createFull(makePayload() as any);
+
+      expect(asaasMock.ensureAdesaoPaymentForTitular).toHaveBeenCalledWith(1);
+      expect(asaasMock.ensureMonthlySubscriptionForTitular).toHaveBeenCalledWith(
+        expect.objectContaining({ titularId: 1 }),
+      );
+    });
+
     it('exige aceite de politica e contrato quando o contexto requer consentimento', async () => {
       const service = new TitularService('tenant-123');
 
