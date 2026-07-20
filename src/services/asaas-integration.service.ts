@@ -132,6 +132,9 @@ export class AsaasIntegrationService {
     const vencimento = new Date();
     vencimento.setDate(vencimento.getDate() + 3);
     const dueDate = vencimento.toISOString().split('T')[0];
+    // Referência estável: se o Asaas aceitar a cobrança e a gravação local
+    // falhar, a próxima tentativa a encontra e reconcilia em vez de duplicar.
+    const externalReference = `titular-adesao-${this.tenantId}-${titularId}`;
 
     const payload: AsaasPaymentPayload = {
       customer: customerId,
@@ -139,45 +142,76 @@ export class AsaasIntegrationService {
       value: valor,
       dueDate,
       description: `Adesão — ${titular.nome}`,
-      externalReference: `titular-adesao-reenvio-${this.tenantId}-${titularId}-${Date.now()}`,
+      externalReference,
     };
 
+    let payment: any = null;
     try {
-      const created = await this.client.createPayment(payload);
-      const paymentUrl = (created as any)?.invoiceUrl ?? (created as any)?.bankSlipUrl ?? null;
+      const existing = await this.client!.getPayments({ externalReference, limit: 1, offset: 0 });
+      payment = existing?.data?.[0] ?? null;
+    } catch (error: any) {
+      // A consulta é uma proteção contra duplicidade. Se ela falhar, ainda
+      // tentamos emitir a cobrança solicitada e registramos o ocorrido.
+      this.logger.warn('Falha ao consultar cobrança de adesão existente no Asaas', {
+        tenantId: this.tenantId,
+        titularId,
+        externalReference,
+        error: error?.message,
+      });
+    }
 
-      if (paymentUrl && contaPendente) {
-        await this.prisma.contaReceber.update({
-          where: { id: contaPendente.id },
-          data: {
-            paymentUrl,
-            asaasPaymentId: (created as any)?.id ?? undefined,
-            vencimento,
-          },
-        });
-      } else if (paymentUrl) {
-        const valorTotal = contaPendente?.valor ?? valor;
-        await this.prisma.contaReceber.create({
-          data: {
-            clienteId: titularId,
-            descricao: `Adesão — ${titular.nome}`,
-            valor: valorTotal,
-            vencimento,
-            status: 'PENDENTE',
-            paymentUrl,
-            asaasPaymentId: (created as any)?.id ?? undefined,
-          },
-        });
-      }
-
-      return paymentUrl;
+    try {
+      payment = payment ?? await this.client!.createPayment(payload);
     } catch (error: any) {
       this.logger.warn('Falha ao criar nova cobrança de adesão no Asaas', {
         titularId,
+        externalReference,
         error: error?.message,
       });
       return null;
     }
+
+    const paymentId = String(payment?.id ?? '').trim() || undefined;
+    const paymentUrl = payment?.invoiceUrl ?? payment?.bankSlipUrl ?? payment?.paymentLink ?? null;
+    const vencimentoProvider = payment?.dueDate ? new Date(payment.dueDate) : vencimento;
+
+    try {
+      if (contaPendente) {
+        await this.prisma.contaReceber.update({
+          where: { id: contaPendente.id },
+          data: {
+            paymentUrl,
+            asaasPaymentId: paymentId,
+            vencimento: vencimentoProvider,
+          },
+        });
+      } else {
+        await this.prisma.contaReceber.create({
+          data: {
+            clienteId: titularId,
+            descricao: `Adesão — ${titular.nome}`,
+            valor,
+            vencimento: vencimentoProvider,
+            status: 'PENDENTE',
+            paymentUrl,
+            asaasPaymentId: paymentId,
+          },
+        });
+      }
+    } catch (error: any) {
+      // A cobrança já foi criada no provedor. Não a tratamos como falha para o
+      // cliente; a externalReference estável permite reconciliar o paymentId na
+      // próxima chamada ou rotina de sincronização.
+      this.logger.warn('Cobrança de adesão criada no Asaas, mas não persistida localmente', {
+        tenantId: this.tenantId,
+        titularId,
+        paymentId,
+        externalReference,
+        error: error?.message,
+      });
+    }
+
+    return paymentUrl;
   }
 
   private isStatusPagamentoConfirmado(status: string): boolean {
