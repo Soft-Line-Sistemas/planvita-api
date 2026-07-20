@@ -119,11 +119,10 @@ export class AsaasIntegrationService {
       }
     }
 
-    const customerId = titular.asaasCustomerId ?? await this.findExistingCustomerOnAsaas({
-      externalReference: `titular-${this.tenantId}-${titularId}`,
-      cpfCnpj: titular.cpf ?? undefined,
-      email: titular.email ?? undefined,
-    });
+    // O Asaas exige o customer para criar uma cobrança. A resolução também tenta
+    // persistir o vínculo local, mas uma falha nesse armazenamento não pode
+    // impedir a emissão da cobrança quando já temos um customer válido no Asaas.
+    const customerId = titular.asaasCustomerId ?? await this.ensureCustomerForTitular(titularId);
 
     if (!customerId) return null;
 
@@ -927,10 +926,7 @@ export class AsaasIntegrationService {
     });
 
     if (existingCustomerId) {
-      await this.prisma.titular.update({
-        where: { id: titularId },
-        data: { asaasCustomerId: existingCustomerId },
-      });
+      await this.persistAsaasCustomerIdSafely(titularId, existingCustomerId);
       this.logger.info('Cliente Asaas reaproveitado por busca', {
         tenantId: this.tenantId,
         titularId,
@@ -982,10 +978,7 @@ export class AsaasIntegrationService {
     const customerId = result?.id;
 
     if (customerId) {
-      await this.prisma.titular.update({
-        where: { id: titularId },
-        data: { asaasCustomerId: customerId },
-      });
+      await this.persistAsaasCustomerIdSafely(titularId, customerId);
     }
 
     this.logger.info('Customer synchronized with Asaas', {
@@ -995,6 +988,27 @@ export class AsaasIntegrationService {
     });
 
     return customerId ?? null;
+  }
+
+  /**
+   * O customer já existe no Asaas neste ponto. Não propagamos uma falha local
+   * para não cancelar uma cobrança/assinatura válida no provedor; o vínculo
+   * será refeito nas próximas tentativas de sincronização.
+   */
+  private async persistAsaasCustomerIdSafely(titularId: number, customerId: string): Promise<void> {
+    try {
+      await this.prisma.titular.update({
+        where: { id: titularId },
+        data: { asaasCustomerId: customerId },
+      });
+    } catch (error: any) {
+      this.logger.warn('Falha ao persistir customer Asaas localmente; seguindo com o customer do provedor', {
+        tenantId: this.tenantId,
+        titularId,
+        customerId,
+        error: error?.message,
+      });
+    }
   }
 
   async ensurePaymentForContaReceber(
@@ -2300,7 +2314,14 @@ export class AsaasIntegrationService {
       },
     });
 
-    if (!titular?.asaasCustomerId) {
+    if (!titular) {
+      throw new Error('Titular não encontrado');
+    }
+
+    const asaasCustomerId =
+      titular.asaasCustomerId ?? await this.ensureCustomerForTitular(titularId);
+
+    if (!asaasCustomerId) {
       throw new Error('Titular sem customer no Asaas');
     }
 
@@ -2350,7 +2371,7 @@ export class AsaasIntegrationService {
         oldMethod: metodoAtual,
         newMethod: metodoDestino,
         oldCardToken: titular.asaasCardTokenEncrypted,
-        asaasCustomerId: titular.asaasCustomerId,
+        asaasCustomerId,
         asaasSubscriptionId: subscriptionId,
         status: 'PROCESSING',
         idempotencyKey: `${titularId}-${action}-${Date.now()}`,
@@ -2362,7 +2383,7 @@ export class AsaasIntegrationService {
 
       if (metodoDestino === 'CREDIT_CARD' && creditCard) {
         const payload: AsaasCreditCardTokenizePayload = {
-          customer: titular.asaasCustomerId,
+          customer: asaasCustomerId,
           creditCard: {
             holderName: creditCard.card.holderName,
             number: this.sanitizeDigits(creditCard.card.number) || '',
@@ -2400,7 +2421,7 @@ export class AsaasIntegrationService {
 
         await this.client!.createOrUpdateSubscription(
           {
-            customer: titular.asaasCustomerId,
+            customer: asaasCustomerId,
             billingType: metodoDestino as any,
             value: subscriptionValue,
             nextDueDate: nextDueDate.toISOString().slice(0, 10),

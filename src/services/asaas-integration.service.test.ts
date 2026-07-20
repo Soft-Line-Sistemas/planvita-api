@@ -830,9 +830,43 @@ describe('AsaasIntegrationService', () => {
       await expect(service.ensureCustomerForTitular(2)).resolves.not.toThrow();
     });
 
+    it('continua com o customer Asaas quando a persistência local falha', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 2, nome: 'N', cpf: '99999999999', email: 'n@b.com',
+        telefone: '71888888888', asaasCustomerId: null,
+      });
+      (mockAsaasClient as any).getCustomers = jest.fn().mockResolvedValue({ data: [{ id: 'cus_found' }] });
+      (prismaMock.titular.update as jest.Mock).mockRejectedValue(new Error('banco indisponível'));
+
+      await expect(service.ensureCustomerForTitular(2)).resolves.toBe('cus_found');
+    });
+
     it('ensureCustomerForTitular com titular inexistente lança erro', async () => {
       (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue(null);
       await expect(service.ensureCustomerForTitular(999)).rejects.toThrow();
+    });
+  });
+
+  describe('reenviarLinkCobrancaPendente', () => {
+    it('emite a cobrança mesmo quando não consegue salvar localmente o customer encontrado', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        id: 2,
+        nome: 'Cliente',
+        cpf: '99999999999',
+        email: 'cliente@teste.com',
+        asaasCustomerId: null,
+        plano: { valorMensal: 99.9 },
+        contasReceber: [],
+      });
+      (mockAsaasClient as any).getCustomers = jest.fn().mockResolvedValue({ data: [{ id: 'cus_found' }] });
+      (prismaMock.titular.update as jest.Mock).mockRejectedValue(new Error('banco indisponível'));
+      mockAsaasClient.createPayment.mockResolvedValue({ id: 'pay_new', invoiceUrl: 'https://asaas.test/fatura' });
+      (prismaMock.contaReceber.create as jest.Mock).mockResolvedValue({ id: 1 });
+
+      await expect(service.reenviarLinkCobrancaPendente(2)).resolves.toBe('https://asaas.test/fatura');
+      expect(mockAsaasClient.createPayment).toHaveBeenCalledWith(
+        expect.objectContaining({ customer: 'cus_found', billingType: 'BOLETO' }),
+      );
     });
   });
 
@@ -1438,6 +1472,7 @@ describe('AsaasIntegrationService', () => {
       (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
         asaasCustomerId: null,
       });
+      (service as any).ensureCustomerForTitular = jest.fn().mockResolvedValue(null);
 
       await expect(
         service.changePaymentMethod({
@@ -1446,6 +1481,24 @@ describe('AsaasIntegrationService', () => {
           creditCard: creditCardInput,
         }),
       ).rejects.toThrow('sem customer no Asaas');
+    });
+
+    it('ATUALIZAR_CARTAO recupera o customer ausente antes de atualizar o cartão', async () => {
+      (prismaMock.titular.findUnique as jest.Mock).mockResolvedValue({
+        ...titularBase,
+        asaasCustomerId: null,
+      });
+      (service as any).ensureCustomerForTitular = jest.fn().mockResolvedValue('cus_recovered');
+
+      await service.changePaymentMethod({
+        titularId: 1,
+        action: 'ATUALIZAR_CARTAO',
+        creditCard: creditCardInput,
+      });
+
+      expect(mockAsaasClient.tokenizeCreditCard).toHaveBeenCalledWith(
+        expect.objectContaining({ customer: 'cus_recovered' }),
+      );
     });
 
     it('ATUALIZAR_CARTAO: rejeita titular sem assinatura recorrente', async () => {
