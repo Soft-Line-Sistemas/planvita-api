@@ -306,6 +306,30 @@ export class UserController {
     }
   }
 
+  async downloadAvatar(req: TenantRequest, res: Response) {
+    try {
+      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
+
+      const targetUserId = Number(req.params.id);
+      if (Number.isNaN(targetUserId)) {
+        return res.status(400).json({ message: 'ID de usuário inválido' });
+      }
+
+      const service = new UserService(req.tenantId);
+      const { buffer, mimetype } = await service.baixarAvatar(targetUserId);
+
+      res.setHeader('Content-Type', mimetype);
+      res.setHeader('Cache-Control', 'private, max-age=60');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.send(buffer);
+    } catch (error) {
+      this.logger.error('Erro ao baixar avatar do colaborador', error, {
+        params: req.params,
+      });
+      this.respondFromError(res, error);
+    }
+  }
+
   async removeAvatar(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });

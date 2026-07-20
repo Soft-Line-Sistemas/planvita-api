@@ -28,6 +28,12 @@ router.put(
   authorize(['user.update']),
   controller.uploadAvatar.bind(controller),
 );
+router.get(
+  '/:id/avatar/arquivo',
+  authenticate,
+  authorize(['user.view']),
+  controller.downloadAvatar.bind(controller),
+);
 router.delete(
   '/:id/avatar',
   authenticate,

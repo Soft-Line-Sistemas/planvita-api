@@ -500,6 +500,39 @@ export class UserService {
     });
   }
 
+  async baixarAvatar(id: number): Promise<{ buffer: Buffer; mimetype: string }> {
+    const userId = Number(id);
+    const existing = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { avatarUrl: true },
+    });
+    if (!existing?.avatarUrl) {
+      const err: any = new Error('Foto do colaborador não encontrada.');
+      err.status = 404;
+      throw err;
+    }
+
+    const token = this.getFilesApiToken();
+    if (!token) {
+      throw new Error('Token da Files API não configurado para este tenant.');
+    }
+
+    const response = await fetch(existing.avatarUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(`Falha ao baixar foto do armazenamento externo: ${response.status} ${message}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const mimetype = response.headers.get('content-type') || 'image/png';
+    return { buffer: Buffer.from(arrayBuffer), mimetype };
+  }
+
   async verifyPassword(id: number, plainPassword: string): Promise<boolean | null> {
     const user = await this.prisma.user.findUnique({
       where: { id: Number(id) },
