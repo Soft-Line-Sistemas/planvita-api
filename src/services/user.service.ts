@@ -390,8 +390,19 @@ export class UserService {
     }
 
     const payload = await response.json();
-    const arquivoId = payload.id;
-    const arquivoUrl = payload.path || `${FILES_API_BASE_URL}/file/${arquivoId}/download`;
+    const arquivoId = payload?.id ?? payload?.data?.id;
+    if (!arquivoId) {
+      throw new Error('Files API não retornou o identificador do arquivo enviado.');
+    }
+
+    // `path` não é garantido pela Files API como uma URL de download. Persistir o
+    // endpoint canônico evita que o avatar fique apontando para um caminho que
+    // existe no upload, mas responde 404 ao ser lido depois.
+    const filesApiBaseUrl = String(FILES_API_BASE_URL ?? '').replace(/\/$/, '');
+    if (!filesApiBaseUrl) {
+      throw new Error('URL da Files API não configurada.');
+    }
+    const arquivoUrl = `${filesApiBaseUrl}/file/${encodeURIComponent(String(arquivoId))}/download`;
 
     return { arquivoUrl };
   }
@@ -476,10 +487,18 @@ export class UserService {
     const safeFilename = this.normalizeAvatarFilename(filename, mimetype, 'avatar');
     const { arquivoUrl } = await this.uploadAvatarArquivo(buffer, mimetype, safeFilename);
 
-    return this.prisma.user.update({
+    const updated = await this.prisma.user.update({
       where: { id: userId },
       data: { avatarUrl: arquivoUrl },
     });
+
+    // Não confirme o upload ao frontend se, por qualquer divergência de schema
+    // ou banco do tenant, a referência não tiver sido persistida.
+    if (!updated.avatarUrl) {
+      throw new Error('Não foi possível persistir a referência da foto do colaborador.');
+    }
+
+    return updated;
   }
 
   async removeAvatar(id: number): Promise<UserType> {
