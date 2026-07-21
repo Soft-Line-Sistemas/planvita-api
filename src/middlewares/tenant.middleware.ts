@@ -62,26 +62,28 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
       (String(req.query?.codigo ?? '').trim().length > 0 ||
         (Number.isInteger(Number(req.query?.consultorId)) &&
           String(req.query?.consultorTenant ?? '').trim().length > 0));
-    let tenant = (req.headers['x-tenant'] as string | undefined)?.toLowerCase();
+    // Em uma sessão de cliente, o tenant assinado no JWT é a fonte de verdade.
+    // Um X-Tenant ou cookie antigo pode vir de outra empresa e não pode desviar
+    // uma requisição autenticada para a base errada.
+    let tenant: string | undefined;
+    const clienteToken = (req as any).cookies?.cliente_token as string | undefined;
+    if (clienteToken) {
+      try {
+        const decoded = jwt.verify(clienteToken, config.jwt.secret) as ClienteJwtPayload;
+        const tenantFromToken = String(decoded?.tenant ?? '').trim().toLowerCase();
+        if (tenantFromToken) tenant = tenantFromToken;
+      } catch {
+        // Token inválido/expirado: segue fluxo normal de resolução de tenant.
+      }
+    }
+
+    if (!tenant) {
+      tenant = (req.headers['x-tenant'] as string | undefined)?.toLowerCase();
+    }
 
     if (!tenant) {
       const tenantQuery = (req.query?.tenant as string | undefined)?.toLowerCase();
       if (tenantQuery) tenant = tenantQuery;
-    }
-
-    // Fallback para rotas do cliente autenticado: usa tenant dentro do cliente_token.
-    // Isso mantém sessão no refresh mesmo sem query/header/cookie "tenant" no frontend.
-    if (!tenant) {
-      const clienteToken = (req as any).cookies?.cliente_token as string | undefined;
-      if (clienteToken) {
-        try {
-          const decoded = jwt.verify(clienteToken, config.jwt.secret) as ClienteJwtPayload;
-          const tenantFromToken = String(decoded?.tenant ?? '').trim().toLowerCase();
-          if (tenantFromToken) tenant = tenantFromToken;
-        } catch {
-          // Token inválido/expirado: segue fluxo normal de resolução de tenant.
-        }
-      }
     }
 
     // Cookie simples "tenant" — setado pelo frontend quando o usuário escolhe a empresa
