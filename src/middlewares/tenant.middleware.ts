@@ -42,7 +42,16 @@ function resolveTenantFromHost(hostHeader?: string): string | null {
 
 export const tenantMiddleware = async (req: TenantRequest, res: Response, next: NextFunction) => {
   try {
-    const isClienteLoginRoute = req.path.includes('/auth/login');
+    const requestPath = `${req.baseUrl ?? ''}${req.path ?? ''} ${req.originalUrl ?? ''}`;
+    const isClientePublicAuthRoute = [
+      '/auth/login',
+      '/auth/verify',
+      '/auth/first-access',
+      '/auth/forgot-password',
+      '/auth/reset-password',
+      '/auth/corresponsavel-access',
+      '/auth/pagamento/reenviar',
+    ].some((path) => requestPath.includes(path));
     const isClienteFirstAccessChannelsRoute =
       req.method === 'GET' && req.path.includes('/auth/first-access/channels');
     const isGlobalConsultorPublicRoute =
@@ -123,14 +132,14 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
       if (isClienteFirstAccessChannelsRoute) {
         return next();
       }
-      if (isClienteLoginRoute) {
+      if (isClientePublicAuthRoute) {
         return next();
       }
       return res.status(400).send('Tenant not identified. Please provide X-Tenant header or tenant query param.');
     }
 
     if (!/^[a-z0-9-]+$/.test(tenant)) {
-      if (isClienteLoginRoute) {
+      if (isClientePublicAuthRoute) {
         return res.status(404).send('Tenant database not configured');
       }
       return res.status(400).send('Invalid tenant format');
@@ -140,8 +149,8 @@ export const tenantMiddleware = async (req: TenantRequest, res: Response, next: 
     try {
       req.prisma = getPrismaForTenant(tenant);
     } catch (e: any) {
-      if (isClienteLoginRoute) {
-        logger.warn(`Skipping tenant db binding on login route for tenant ${tenant}`, {
+      if (isClientePublicAuthRoute) {
+        logger.warn(`Skipping tenant db binding on public client route for tenant ${tenant}`, {
           reason: e?.message,
         });
         return next();

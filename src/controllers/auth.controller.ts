@@ -9,7 +9,7 @@ import { AuthRequest } from '../types/auth';
 import jwt from 'jsonwebtoken';
 import config from '../config';
 import { ClienteAuthRequest } from '../middlewares/cliente-auth.middleware';
-import { normalizeTenantId } from '../utils/tenants';
+import { getConfiguredPublicTenants, normalizeTenantId } from '../utils/tenants';
 import { resolveWhatsappClientForSending } from '../services/whatsapp-client.service';
 
 export interface TenantRequest extends Request {
@@ -64,11 +64,45 @@ export class AuthController {
   }
 
   private getClienteTenantCandidates(currentTenant?: string): string[] {
+    const configuredTenants = getConfiguredPublicTenants();
+    const availableTenants =
+      configuredTenants.length > 0 ? configuredTenants : this.clienteTenantFallback;
     const preferred = String(currentTenant ?? '').trim().toLowerCase();
     const ordered = preferred
-      ? [preferred, ...this.clienteTenantFallback]
-      : [...this.clienteTenantFallback];
+      ? [preferred, ...availableTenants]
+      : [...availableTenants];
     return Array.from(new Set(ordered));
+  }
+
+  /**
+   * Operações públicas do cliente não podem confiar no tenant do host ou em
+   * um cookie antigo. CPF/e-mail e tokens pertencem a apenas uma base, mas a
+   * rota deve encontrá-la entre os tenants configurados.
+   */
+  private async runForClienteTenant<T>(
+    operation: (auth: ClienteAuthService, tenant: string) => Promise<T>,
+  ): Promise<{ tenant: string; result: T }> {
+    let deferredError: any = null;
+    let notFoundError: any = null;
+
+    for (const tenant of this.getClienteTenantCandidates()) {
+      try {
+        return { tenant, result: await operation(new ClienteAuthService(tenant), tenant) };
+      } catch (error: any) {
+        if (error?.status === 404) {
+          notFoundError ??= error;
+          continue;
+        }
+        deferredError ??= error;
+      }
+    }
+
+    if (deferredError) throw deferredError;
+    if (notFoundError) throw notFoundError;
+
+    const error: any = new Error('Cliente não encontrado.');
+    error.status = 404;
+    throw error;
   }
 
   private getClienteCookieOptions(req: Request) {
@@ -250,7 +284,6 @@ export class AuthController {
 
   async verify(req: TenantRequest, res: Response) {
     try {
-      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
       const { loginOrToken, login, token, otp, purpose } = req.body ?? {};
 
       const purposeValue = String(purpose ?? '').toUpperCase();
@@ -264,25 +297,29 @@ export class AuthController {
       const value = String(loginOrToken ?? token ?? login ?? '').trim();
       if (!value) return res.status(400).json({ message: 'Login ou token é obrigatório.' });
 
-      const auth = new ClienteAuthService(req.tenantId);
       if (purposeValue === 'LOGIN_ACCESS') {
         const loginValue = String(login ?? '').trim();
         if (!loginValue) return res.status(400).json({ message: 'Login é obrigatório.' });
 
-        const result = await auth.loginCorresponsavelWithOtp(loginValue, otpValue);
-        const clienteToken = auth.generateClienteJwt({
+        const { tenant, result } = await this.runForClienteTenant((auth) =>
+          auth.loginCorresponsavelWithOtp(loginValue, otpValue),
+        );
+        const clienteToken = new ClienteAuthService(tenant).generateClienteJwt({
           titularId: result.titularId,
-          tenant: req.tenantId,
+          tenant,
           email: result.email,
         });
 
         res.cookie('cliente_token', clienteToken, this.getClienteCookieOptions(req));
-        res.cookie('tenant', req.tenantId, this.getClienteTenantCookieOptions(req));
-        return res.json(result);
+        res.cookie('tenant', tenant, this.getClienteTenantCookieOptions(req));
+        return res.json({ ...result, tenant });
       }
 
-      const result = await auth.verifyOtp(value, otpValue, purposeValue as any);
-      res.json(result);
+      const { tenant, result } = await this.runForClienteTenant((auth) =>
+        auth.verifyOtp(value, otpValue, purposeValue as any),
+      );
+      res.cookie('tenant', tenant, this.getClienteTenantCookieOptions(req));
+      res.json({ ...result, tenant });
     } catch (error: any) {
       const status = error?.status ?? 500;
       const message = error?.message ?? 'Erro ao validar código.';
@@ -302,10 +339,11 @@ export class AuthController {
 
       const tokenValue = String(verificationToken ?? token ?? '').trim();
       if (tokenValue && password) {
-        if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
-        const auth = new ClienteAuthService(req.tenantId);
-        await auth.completeFirstAccess(tokenValue, String(password));
-        return res.json({ message: 'Senha criada com sucesso.' });
+        const { tenant } = await this.runForClienteTenant((auth) =>
+          auth.completeFirstAccess(tokenValue, String(password)),
+        );
+        res.cookie('tenant', tenant, this.getClienteTenantCookieOptions(req));
+        return res.json({ message: 'Senha criada com sucesso.', tenant });
       }
 
       if (titularId != null) {
@@ -396,13 +434,14 @@ export class AuthController {
 
   async forgotPassword(req: TenantRequest, res: Response) {
     try {
-      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
       const { login, channel } = req.body ?? {};
       if (!login) return res.status(400).json({ message: 'Login é obrigatório.' });
 
-      const auth = new ClienteAuthService(req.tenantId);
-      const start = await auth.startForgotPassword(String(login), channel);
-      res.json({ message: 'Enviamos um código para recuperação de senha.', start });
+      const { tenant, result: start } = await this.runForClienteTenant((auth) =>
+        auth.startForgotPassword(String(login), channel),
+      );
+      res.cookie('tenant', tenant, this.getClienteTenantCookieOptions(req));
+      res.json({ message: 'Enviamos um código para recuperação de senha.', tenant, start });
     } catch (error: any) {
       const status = error?.status ?? 500;
       const message = error?.message ?? 'Erro ao iniciar recuperação de senha.';
@@ -418,13 +457,18 @@ export class AuthController {
 
   async corresponsavelAccess(req: TenantRequest, res: Response) {
     try {
-      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
       const { login, channel } = req.body ?? {};
       if (!login) return res.status(400).json({ message: 'Login é obrigatório.' });
 
-      const auth = new ClienteAuthService(req.tenantId);
-      const start = await auth.startCorresponsavelAccess(String(login), channel);
-      res.json({ message: 'Enviamos um código para validar o acesso do corresponsável.', start });
+      const { tenant, result: start } = await this.runForClienteTenant((auth) =>
+        auth.startCorresponsavelAccess(String(login), channel),
+      );
+      res.cookie('tenant', tenant, this.getClienteTenantCookieOptions(req));
+      res.json({
+        message: 'Enviamos um código para validar o acesso do corresponsável.',
+        tenant,
+        start,
+      });
     } catch (error: any) {
       const status = error?.status ?? 500;
       const message =
@@ -441,7 +485,6 @@ export class AuthController {
 
   async resetPassword(req: TenantRequest, res: Response) {
     try {
-      if (!req.tenantId) return res.status(400).json({ message: 'Tenant unknown' });
       const { verificationToken, token, password } = req.body ?? {};
       const passwordValue = String(password ?? '');
       const tokenValue = String(verificationToken ?? token ?? '').trim();
@@ -449,9 +492,11 @@ export class AuthController {
         return res.status(400).json({ message: 'Token e senha são obrigatórios.' });
       }
 
-      const auth = new ClienteAuthService(req.tenantId);
-      await auth.resetPassword(tokenValue, passwordValue);
-      res.json({ message: 'Senha alterada com sucesso.' });
+      const { tenant } = await this.runForClienteTenant((auth) =>
+        auth.resetPassword(tokenValue, passwordValue),
+      );
+      res.cookie('tenant', tenant, this.getClienteTenantCookieOptions(req));
+      res.json({ message: 'Senha alterada com sucesso.', tenant });
     } catch (error: any) {
       const status = error?.status ?? 500;
       const message = error?.message ?? 'Erro ao redefinir senha.';
@@ -593,7 +638,9 @@ export class AuthController {
       const { login } = req.body ?? {};
       if (!login) return res.status(400).json({ message: 'Login (CPF ou e-mail) é obrigatório.' });
 
-      const tenantsToTry = this.getClienteTenantCandidates(req.tenantId);
+      // Esta rota é pública. Não priorize o tenant do cookie, que pode ser de
+      // um acesso anterior, ao localizar a cobrança do cliente.
+      const tenantsToTry = this.getClienteTenantCandidates();
 
       for (const tenant of tenantsToTry) {
         try {
@@ -655,7 +702,9 @@ export class AuthController {
             return `****${v.slice(-4)}`;
           };
 
+          res.cookie('tenant', tenant, this.getClienteTenantCookieOptions(req));
           return res.json({
+            tenant,
             nome: titular.nome,
             emailMasked: masked(titular.email),
             telefoneMasked: masked(titular.telefone),
