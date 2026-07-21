@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { ConsultorService } from '../services/consultor.service';
+import { UserService } from '../services/user.service';
 import Logger from '../utils/logger';
 import { PrismaClient } from '@prisma/client';
 import { AuthRequest } from '../types/auth';
@@ -60,6 +61,33 @@ export class ConsultorController {
     } catch (error) {
       this.logger.error('Failed to get public consultor options', error);
       return res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
+  async downloadPublicAvatar(req: TenantRequest, res: Response) {
+    try {
+      const codigo = String(req.query?.codigo ?? '').trim();
+      if (!codigo) {
+        return res.status(400).json({ message: 'Código do consultor é obrigatório.' });
+      }
+
+      const consultor = await ConsultorService.resolvePublicByCode(codigo);
+      if (!consultor?.userId) {
+        return res.status(404).json({ message: 'Foto do consultor não encontrada.' });
+      }
+
+      const service = new UserService(consultor.tenantId);
+      const { buffer, mimetype } = await service.baixarAvatar(consultor.userId);
+      res.setHeader('Cache-Control', 'public, max-age=300');
+      res.type(mimetype).send(buffer);
+    } catch (error: any) {
+      const status = error?.status === 404 ? 404 : 500;
+      if (status === 500) {
+        this.logger.error('Failed to download public consultor avatar', error);
+      }
+      return res.status(status).json({
+        message: status === 404 ? 'Foto do consultor não encontrada.' : 'Não foi possível carregar a foto do consultor.',
+      });
     }
   }
 
