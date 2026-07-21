@@ -18,20 +18,24 @@ export class AsaasController {
       (req.headers['x-asaas-tenant'] as string | undefined);
     const queryTenant = (req.query?.tenant as string | undefined) ?? null;
     const bodyTenant = (req.body as any)?.tenantId as string | undefined;
-    const hostTenant = this.resolveTenantFromHost(req.headers.host);
-    const tenantId = resolveTenantForWebhook(
+    // O host do endpoint pode pertencer a outro tenant (por exemplo, um
+    // webhook centralizado em api.campodobosque.com.br). Nunca o use para
+    // decidir onde gravar um pagamento: resolva pelo ID da cobrança,
+    // assinatura ou cliente presente no evento.
+    const explicitTenantId = resolveTenantForWebhook(
       tenantHeader,
-      queryTenant || bodyTenant || hostTenant,
+      queryTenant || bodyTenant,
     );
 
     if (!req.body || typeof req.body !== 'object' || !Object.keys(req.body).length) {
-      this.logger.warn('Webhook Asaas rejeitado: payload vazio', { tenantId });
+      this.logger.warn('Webhook Asaas rejeitado: payload vazio', { tenantId: explicitTenantId });
       return res.status(400).json({ message: 'Payload inválido' });
     }
 
     const webhookEvent = req.body as AsaasWebhookEvent;
     const resolvedTenantId =
-      tenantId ?? (await this.resolveTenantFromWebhookEvent(webhookEvent, (req as any).requestId));
+      explicitTenantId ??
+      (await this.resolveTenantFromWebhookEvent(webhookEvent, (req as any).requestId));
 
     if (!resolvedTenantId) {
       this.logger.warn('Webhook Asaas rejeitado: tenant não resolvido pelo payload', {

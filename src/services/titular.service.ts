@@ -1659,6 +1659,9 @@ export class TitularService {
       const novoTitular = cadastroCriado.titular;
       await this.pricingService.recalcularDependentesDoTitular(novoTitular.id);
       const valorMensal = await this.pricingService.recalcularFinanceiroTitular(novoTitular.id);
+      // A adesão é uma cobrança avulsa e deve existir assim que o cadastro é
+      // finalizado. A assinatura mensal permanece com início no próximo mês.
+      await this.syncAdesaoAsaasSafe(novoTitular.id);
       const recurring =
         billingType === 'CREDIT_CARD'
           ? await this.syncCreditCardSubscription(
@@ -3561,6 +3564,17 @@ export class TitularService {
       await this.asaasIntegration.ensureCustomerForTitular(titularId);
     } catch (error: any) {
       this.logger.warn('Falha ao sincronizar titular com Asaas', {
+        error: error?.message,
+        titularId,
+      });
+    }
+  }
+
+  private async syncAdesaoAsaasSafe(titularId: number) {
+    try {
+      await this.asaasIntegration.ensureAdesaoPaymentForTitular(titularId);
+    } catch (error: any) {
+      this.logger.warn('Falha ao criar cobrança de adesão no Asaas', {
         error: error?.message,
         titularId,
       });
