@@ -133,7 +133,7 @@ describe('NotificacaoRecorrenteService', () => {
 
   // ── buscarPendencias ────────────────────────────────────────────────────────
   describe('buscarPendencias', () => {
-    it('seleciona apenas cobrancas com 3 dias para o fluxo de lembrete', async () => {
+    it('seleciona apenas cobranças com 2 dias para o aviso de vencimento', async () => {
       (prismaMock.contaReceber.findMany as jest.Mock).mockResolvedValue([
         {
           id: 1, descricao: 'Mensalidade junho', valor: 100, vencimento: new Date('2026-06-22T00:00:00.000Z'),
@@ -149,14 +149,32 @@ describe('NotificacaoRecorrenteService', () => {
 
       jest.spyOn(service as any, 'calcularDiasParaVencer')
         .mockImplementation((vencimento: unknown) =>
-          new Date(vencimento as Date).toISOString() === '2026-06-22T00:00:00.000Z' ? 3 : 4,
+          new Date(vencimento as Date).toISOString() === '2026-06-22T00:00:00.000Z' ? 2 : 3,
         );
       jest.spyOn(service as any, 'calcularDiasAtraso').mockReturnValue(0);
 
-      const contas = await (service as any).buscarPendencias('lembrete-3-dias-antes');
+      const contas = await (service as any).buscarPendencias('aviso-vencimento');
 
       expect(contas).toHaveLength(1);
       expect(contas[0].id).toBe(1);
+    });
+
+    it('repete pendência no 1º dia e depois a cada 5 dias', async () => {
+      (prismaMock.contaReceber.findMany as jest.Mock).mockResolvedValue([
+        { id: 1, vencimento: new Date(), status: 'ATRASADO', cliente: { id: 1, nome: 'A' } },
+        { id: 5, vencimento: new Date(), status: 'ATRASADO', cliente: { id: 5, nome: 'B' } },
+        { id: 6, vencimento: new Date(), status: 'ATRASADO', cliente: { id: 6, nome: 'C' } },
+      ]);
+      jest.spyOn(service as any, 'calcularDiasParaVencer').mockReturnValue(-1);
+      jest
+        .spyOn(service as any, 'calcularDiasAtraso')
+        .mockReturnValueOnce(1)
+        .mockReturnValueOnce(5)
+        .mockReturnValueOnce(6);
+
+      const contas = await (service as any).buscarPendencias('pendencia-periodica');
+
+      expect(contas.map((conta: { id: number }) => conta.id)).toEqual([1, 6]);
     });
 
     it('seleciona apenas cobrancas no dia exato do vencimento', async () => {

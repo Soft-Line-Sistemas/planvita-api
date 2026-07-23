@@ -1595,7 +1595,7 @@ export class AsaasIntegrationService {
 
   async syncRecurringPaymentsForTitular(
     titularId: number,
-    opts?: { maxPages?: number },
+    opts?: { maxPages?: number; onlyOpen?: boolean },
   ): Promise<{ processed: number; inserted: number; updated: number }> {
     if (!this.isEnabled()) {
       return { processed: 0, inserted: 0, updated: 0 };
@@ -1628,36 +1628,6 @@ export class AsaasIntegrationService {
       if (s.asaasSubscriptionId) subscriptionIds.add(s.asaasSubscriptionId);
     }
 
-    const subscriptionStatuses: Array<'ACTIVE' | 'EXPIRED' | 'INACTIVE'> = [
-      'ACTIVE',
-      'EXPIRED',
-      'INACTIVE',
-    ];
-
-    for (const status of subscriptionStatuses) {
-      let offset = 0;
-      let page = 0;
-      while (page < maxPages) {
-        const response = await this.client!.getSubscriptions({
-          customer: customerId,
-          status,
-          limit,
-          offset,
-        });
-        const items = Array.isArray(response?.data) ? response.data : [];
-        if (!items.length) break;
-
-        for (const sub of items) {
-          const subId = typeof sub?.id === 'string' ? sub.id : null;
-          if (subId) subscriptionIds.add(subId);
-        }
-
-        if (items.length < limit) break;
-        offset += limit;
-        page += 1;
-      }
-    }
-
     for (const subscriptionId of subscriptionIds) {
       const response = await this.client!.getSubscriptionPayments(subscriptionId);
       const items = Array.isArray(response)
@@ -1667,6 +1637,22 @@ export class AsaasIntegrationService {
           : [];
 
       for (const payment of items) {
+        const paymentCustomerId =
+          typeof payment?.customer === 'string'
+            ? payment.customer
+            : payment?.customer?.id;
+        if (paymentCustomerId && paymentCustomerId !== customerId) {
+          this.logger.warn('Pagamento ignorado: customer Asaas não pertence ao titular', {
+            tenantId: this.tenantId,
+            titularId,
+            subscriptionId,
+            paymentId: payment?.id,
+            paymentCustomerId,
+            customerId,
+          });
+          continue;
+        }
+
         const paymentId = payment?.id as string | undefined;
         const existed = paymentId
           ? await this.prisma.contaReceber.findUnique({
@@ -1676,6 +1662,17 @@ export class AsaasIntegrationService {
           : null;
 
         const providerStatus = String(payment?.status ?? 'PENDING');
+        const normalizedStatus = providerStatus.toUpperCase();
+        const isClosedStatus =
+          normalizedStatus === 'RECEIVED' ||
+          normalizedStatus === 'RECEIVED_IN_CASH' ||
+          normalizedStatus === 'CONFIRMED' ||
+          normalizedStatus === 'REFUNDED' ||
+          normalizedStatus === 'CANCELLED' ||
+          normalizedStatus === 'CANCELED' ||
+          normalizedStatus === 'DELETED';
+        if (opts?.onlyOpen && isClosedStatus) continue;
+
         const customer =
           typeof payment?.customer === 'string'
             ? { id: payment.customer as string }
@@ -1729,89 +1726,30 @@ export class AsaasIntegrationService {
     }
 
     const maxPages = Math.max(1, Math.min(opts?.maxPages ?? 5, 20));
-    const limit = 100;
-    let offset = 0;
-    let page = 0;
     let processed = 0;
     let inserted = 0;
     let updated = 0;
 
-    while (page < maxPages) {
-      const response = await this.client!.getPayments({
-        limit,
-        offset,
+    // O Asaas não deve ser percorrido sem filtro: isso importa cobranças
+    // históricas de clientes que compartilham a mesma conta do provedor.
+    // Só sincronizamos titulares que já possuem customer e assinatura gravados
+    // neste tenant; a busca seguinte é feita pelo subscriptionId local.
+    const titulares = await this.prisma.titular.findMany({
+      where: {
+        asaasCustomerId: { not: null },
+        contasReceber: { some: { asaasSubscriptionId: { not: null } } },
+      },
+      select: { id: true },
+    });
+
+    for (const titular of titulares) {
+      const result = await this.syncRecurringPaymentsForTitular(titular.id, {
+        maxPages,
+        onlyOpen: opts?.onlyOpen,
       });
-      const items = Array.isArray(response?.data) ? response.data : [];
-      if (!items.length) break;
-
-      for (const payment of items) {
-        const subscriptionId = payment?.subscription as string | undefined;
-        if (!subscriptionId) continue;
-
-        const providerStatus = String(payment?.status ?? '').toUpperCase();
-        const isClosedStatus =
-          providerStatus === 'RECEIVED' ||
-          providerStatus === 'RECEIVED_IN_CASH' ||
-          providerStatus === 'CONFIRMED' ||
-          providerStatus === 'REFUNDED' ||
-          providerStatus === 'CANCELLED' ||
-          providerStatus === 'CANCELED' ||
-          providerStatus === 'DELETED';
-
-        if (opts?.onlyOpen && isClosedStatus) continue;
-
-        const paymentId = payment?.id as string | undefined;
-        const existed = paymentId
-          ? await this.prisma.contaReceber.findUnique({
-              where: { asaasPaymentId: paymentId },
-              select: { id: true },
-            })
-          : null;
-
-        const customer =
-          typeof payment?.customer === 'string'
-            ? { id: payment.customer as string }
-            : ((payment?.customer as { id?: string } | undefined) ?? undefined);
-
-        const result = await this.handleWebhook({
-          event: this.mapEventFromStatus(String(payment?.status ?? 'PENDING')),
-          dateCreated: new Date().toISOString(),
-          payment: {
-            id: payment?.id as string,
-            status: String(payment?.status ?? 'PENDING'),
-            dueDate: payment?.dueDate as string | undefined,
-            value: Number(payment?.value ?? 0),
-            description: (payment?.description as string | undefined) ?? undefined,
-            invoiceUrl:
-              (payment?.invoiceUrl as string | undefined) ??
-              (payment?.bankSlipUrl as string | undefined) ??
-              (payment?.paymentLink as string | undefined),
-            bankSlipUrl: (payment?.bankSlipUrl as string | undefined) ?? undefined,
-            pixQrCode:
-              (payment?.pixQrCode as string | undefined) ??
-              (payment?.pixQrCodeId as string | undefined),
-            pixExpirationDate: (payment?.pixExpirationDate as string | undefined) ?? undefined,
-            subscription: subscriptionId,
-            billingType: (payment?.billingType as string | undefined) ?? 'PIX',
-            customer,
-          },
-          subscription: {
-            id: subscriptionId,
-            status: String(payment?.status ?? 'PENDING'),
-            nextDueDate: (payment?.nextDueDate as string | undefined) ?? undefined,
-            value: Number(payment?.value ?? 0),
-          },
-          customer,
-        } as AsaasWebhookEvent);
-
-        processed += 1;
-        if (!existed && result.contaReceberId) inserted += 1;
-        if (existed || (!result.contaReceberId && isClosedStatus)) updated += 1;
-      }
-
-      if (items.length < limit) break;
-      offset += limit;
-      page += 1;
+      processed += result.processed;
+      inserted += result.inserted;
+      updated += result.updated;
     }
 
     this.logger.info('Sincronização recorrente Asaas concluída', {
