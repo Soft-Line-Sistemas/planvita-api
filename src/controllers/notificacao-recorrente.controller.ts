@@ -44,6 +44,8 @@ export class NotificacaoRecorrenteController {
       'suspensao-preventiva',
       'suspensao',
       'pos-suspensao',
+      'reajuste-anual',
+      'renovacao-automatica',
     ];
 
     return permitidos.includes(normalizado as NotificationFlowType)

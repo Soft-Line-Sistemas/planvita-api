@@ -17,18 +17,23 @@ export type NotificationFlowType =
   | 'aviso-pendencia'
   | 'suspensao-preventiva'
   | 'suspensao'
-  | 'pos-suspensao';
+  | 'pos-suspensao'
+  | 'reajuste-anual'
+  | 'renovacao-automatica';
 
 export const COBRANCA_NOTIFICATION_FLOWS: NotificationFlowType[] = [
-  'lembrete-3-dias-antes',
-  'cobranca-no-vencimento',
-  'atraso-1-dia',
-  'atraso-7-dias',
+  'aviso-vencimento',
+  'pendencia-periodica',
+  'suspensao-preventiva',
+  'suspensao',
+  'pos-suspensao',
+  'reajuste-anual',
+  'renovacao-automatica',
 ];
 
-const DEFAULT_DIAS_AVISO_VENCIMENTO = 3;
+const DEFAULT_DIAS_AVISO_VENCIMENTO = 2;
 const DEFAULT_DIAS_AVISO_PENDENCIA = 1;
-const DEFAULT_REPETICAO_PENDENCIA_DIAS = 1;
+const DEFAULT_REPETICAO_PENDENCIA_DIAS = 5;
 const DEFAULT_DIAS_SUSPENSAO_PREVENTIVA = 85;
 const DEFAULT_DIAS_SUSPENSAO = 90;
 const DEFAULT_DIAS_POS_SUSPENSAO = 92;
@@ -781,9 +786,13 @@ export class NotificacaoRecorrenteService {
                     ? 'Aviso de suspensão preventiva'
                     : tipo === 'suspensao'
                       ? 'Aviso de suspensão'
-                      : tipo === 'pos-suspensao'
-                        ? 'Lembrete pós-suspensão'
-                        : 'Cobrança pendente';
+              : tipo === 'pos-suspensao'
+                ? 'Lembrete pós-suspensão'
+                : tipo === 'reajuste-anual'
+                  ? 'Reajuste anual do plano'
+                  : tipo === 'renovacao-automatica'
+                    ? 'Renovação automática do contrato'
+                : 'Cobrança pendente';
 
     return `
     <div style="font-family: Arial, sans-serif; background-color: #f4f5f7; padding: 24px;">
@@ -914,6 +923,16 @@ export class NotificacaoRecorrenteService {
         `Cobrança de ${valor} vencida em ${vencimento} (${descricao}).`,
         `Regularize o pagamento para reativar o plano: ${urlCobranca}`,
       ],
+      'reajuste-anual': [
+        `Olá, ${destinatario.nome}`,
+        `O seu plano foi reajustado pelo IGPM. Novo valor: ${valor}.`,
+        'Em caso de dúvida, fale com nosso time.',
+      ],
+      'renovacao-automatica': [
+        `Olá, ${destinatario.nome}`,
+        'Seu contrato será renovado automaticamente por mais 60 meses.',
+        'Em caso de dúvida, fale com nosso time.',
+      ],
       'pendencia-periodica': [
         `Olá, ${destinatario.nome}`,
         `Sua cobrança gerada por ${displayName} no valor de ${valor} vence em ${vencimento}.`,
@@ -1011,6 +1030,10 @@ export class NotificacaoRecorrenteService {
         return 'Aviso de suspensão';
       case 'pos-suspensao':
         return 'Plano suspenso: regularize para reativação';
+      case 'reajuste-anual':
+        return 'Reajuste anual do plano';
+      case 'renovacao-automatica':
+        return 'Renovação automática do contrato';
       default:
         return 'Cobrança pendente';
     }
@@ -1087,6 +1110,14 @@ export class NotificacaoRecorrenteService {
         base.push(
           'Assim que o pagamento for regularizado, seu plano poderá ser reativado.',
         );
+        break;
+      case 'reajuste-anual':
+        base.push(`O seu plano foi reajustado pelo IGPM. Novo valor: ${valorTotal}.`);
+        base.push('Em caso de dúvida, fale com nosso time.');
+        break;
+      case 'renovacao-automatica':
+        base.push('Seu contrato será renovado automaticamente por mais 60 meses.');
+        base.push('Em caso de dúvida, fale com nosso time.');
         break;
       default:
         base.push(
@@ -1179,6 +1210,10 @@ export class NotificacaoRecorrenteService {
 
   private async buscarPendencias(tipo: NotificationFlowType): Promise<ContaReceberComCliente[]> {
     const regras = await this.obterRegrasNegocio();
+
+    if (tipo === 'reajuste-anual' || tipo === 'renovacao-automatica') {
+      return this.buscarNotificacoesContrato(tipo, regras);
+    }
     const contas = await this.prisma.contaReceber.findMany({
       where: {
         status: {
@@ -1222,18 +1257,23 @@ export class NotificacaoRecorrenteService {
         case 'atraso-7-dias':
           return diasAtraso === 7;
         case 'aviso-vencimento':
-          return diasParaVencer >= 0 && diasParaVencer <= diasAvisoVencimento;
+          return diasParaVencer === diasAvisoVencimento;
         case 'aviso-pendencia':
           return diasAtraso >= diasAvisoPendencia;
         case 'suspensao-preventiva':
-          return diasAtraso >= diasSuspensaoPreventiva;
+          return diasAtraso === diasSuspensaoPreventiva;
         case 'suspensao':
-          return diasAtraso >= diasSuspensao;
+          return diasAtraso === diasSuspensao;
         case 'pos-suspensao':
-          return diasAtraso >= diasPosSuspensao;
+          return diasAtraso === diasPosSuspensao;
         case 'pendencia-periodica':
         default:
-          return diasAtraso >= Math.max(0, diasAvisoPendencia);
+          return (
+            diasAtraso >= Math.max(0, diasAvisoPendencia) &&
+            (diasAtraso - Math.max(0, diasAvisoPendencia)) %
+              Math.max(1, regras?.repeticaoPendenciaDias ?? DEFAULT_REPETICAO_PENDENCIA_DIAS) ===
+              0
+          );
       }
     });
 
@@ -1243,6 +1283,74 @@ export class NotificacaoRecorrenteService {
     return contasFiltradas.filter(
       (conta) => !referenciasEnviadas.has(this.buildReferenciaEnvio(tipo, conta.id)),
     );
+  }
+
+  /**
+   * Reaproveita o mesmo pipeline de destinatário, template, canal e logs para
+   * avisos contratuais. Não há novo armazenamento: a data de contratação e o
+   * valor contratual já existentes são a fonte de verdade.
+   */
+  private async buscarNotificacoesContrato(
+    tipo: 'reajuste-anual' | 'renovacao-automatica',
+    regras: BusinessRulesModel | null,
+  ): Promise<ContaReceberComCliente[]> {
+    const habilitado =
+      tipo === 'reajuste-anual'
+        ? regras?.avisoReajusteAnual !== false
+        : regras?.avisoRenovacaoAutomatica !== false;
+    if (!habilitado) return [];
+
+    const titulares = await this.prisma.titular.findMany({
+      where: { statusPlano: { not: 'CANCELADO' } },
+      select: {
+        id: true,
+        nome: true,
+        email: true,
+        telefone: true,
+        dataContratacao: true,
+        valorTotalContrato: true,
+        bloquearNotificacaoRecorrente: true,
+        metodoNotificacaoRecorrente: true,
+        plano: { select: { valorMensal: true } },
+      },
+    });
+    const diasAntecedencia = Math.max(
+      0,
+      tipo === 'reajuste-anual'
+        ? (regras?.diasAntesReajusteAnual ?? 0)
+        : (regras?.diasAntesRenovacao ?? 0),
+    );
+    const hoje = this.inicioDoDia(new Date());
+
+    return titulares
+      .filter((titular: any) => {
+        const dataBase = new Date(titular.dataContratacao);
+        const proximaData = new Date(dataBase);
+        if (tipo === 'reajuste-anual') {
+          proximaData.setFullYear(hoje.getFullYear());
+          if (proximaData < hoje) proximaData.setFullYear(hoje.getFullYear() + 1);
+        } else {
+          proximaData.setMonth(proximaData.getMonth() + 60);
+        }
+        proximaData.setDate(proximaData.getDate() - diasAntecedencia);
+        return this.inicioDoDia(proximaData).getTime() === hoje.getTime();
+      })
+      .map((titular: any) => ({
+        id: titular.id,
+        descricao:
+          tipo === 'reajuste-anual' ? 'Reajuste anual do plano pelo IGPM' : 'Renovação automática do contrato',
+        valor: Number(titular.valorTotalContrato ?? titular.plano?.valorMensal ?? 0),
+        vencimento: hoje,
+        status: 'PENDENTE',
+        paymentUrl: null,
+        cliente: titular,
+      })) as ContaReceberComCliente[];
+  }
+
+  private inicioDoDia(data: Date) {
+    const resultado = new Date(data);
+    resultado.setHours(0, 0, 0, 0);
+    return resultado;
   }
 
   private mapearDestinatarios(
