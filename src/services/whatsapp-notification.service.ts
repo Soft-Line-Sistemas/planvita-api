@@ -93,6 +93,22 @@ const DEFAULT_RULES = [
     triggerType: 'FLOW',
     offsetDays: 0,
   },
+  {
+    key: 'REAJUSTE_ANUAL',
+    title: 'Reajuste anual',
+    flow: 'reajuste-anual',
+    priority: 110,
+    triggerType: 'FLOW',
+    offsetDays: 0,
+  },
+  {
+    key: 'RENOVACAO_AUTOMATICA',
+    title: 'Renovação automática',
+    flow: 'renovacao-automatica',
+    priority: 120,
+    triggerType: 'FLOW',
+    offsetDays: 0,
+  },
 ] as const;
 
 type WhatsappAutomationConfigModel = any;
