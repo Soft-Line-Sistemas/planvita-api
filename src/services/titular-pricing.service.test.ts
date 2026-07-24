@@ -57,6 +57,7 @@ describe('TitularPricingService', () => {
   let service: TitularPricingService;
 
   beforeEach(() => {
+    jest.restoreAllMocks();
     jest.clearAllMocks();
     service = new TitularPricingService('tenant-123');
     (prismaMock.contaReceber.findMany as jest.Mock).mockResolvedValue([]);
@@ -109,7 +110,7 @@ describe('TitularPricingService', () => {
             { valorAdicionalMensal: 9.9 },
             { valorAdicionalMensal: 19.9 },
             { valorAdicionalMensal: 49 },
-            { valorAdicionalMensal: 0 },
+            { valorAdicionalMensal: 9.9 },
           ],
         });
 
@@ -130,12 +131,12 @@ describe('TitularPricingService', () => {
       }));
       expect(prismaMock.dependente.update).toHaveBeenNthCalledWith(4, expect.objectContaining({
         where: { id: 14 },
-        data: expect.objectContaining({ foraGradeFamiliar: false, valorAdicionalMensal: 0 }),
+        data: expect.objectContaining({ foraGradeFamiliar: false, valorAdicionalMensal: 9.9 }),
       }));
 
       expect(prismaMock.titular.update).toHaveBeenCalledWith({
         where: { id: 1 },
-        data: { valorTotalContrato: 178.8 },
+        data: { valorTotalContrato: 188.7 },
       });
     });
 
@@ -292,7 +293,7 @@ describe('TitularPricingService', () => {
       );
     });
 
-    it('plano sem beneficiários definidos trata todos como dentro da grade (sem cobrança)', async () => {
+    it('plano sem beneficiários definidos ainda aplica adicional por idade', async () => {
       (prismaMock.businessRules.findFirst as jest.Mock).mockResolvedValue({
         valorAdicionalDependenteForaGradeFaixasJson: JSON.stringify([{ idadeMaxima: null, valor: 49 }]),
         valorAdicionalDependenteForaGrade: 14.9,
@@ -310,15 +311,15 @@ describe('TitularPricingService', () => {
           id: 6,
           plano: { valorMensal: 100 },
           servicosAdicionaisJson: null,
-          dependentes: [{ valorAdicionalMensal: 0 }],
+          dependentes: [{ valorAdicionalMensal: 49 }],
         });
 
       await service.recalcularDependentesDoTitular(6);
 
       expect(prismaMock.dependente.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ foraGradeFamiliar: false, valorAdicionalMensal: 0 }) }),
+        expect.objectContaining({ data: expect.objectContaining({ foraGradeFamiliar: false, valorAdicionalMensal: 49 }) }),
       );
-      expect(prismaMock.titular.update).toHaveBeenCalledWith({ where: { id: 6 }, data: { valorTotalContrato: 100 } });
+      expect(prismaMock.titular.update).toHaveBeenCalledWith({ where: { id: 6 }, data: { valorTotalContrato: 149 } });
     });
 
     it('atualiza conta a receber aberta no Asaas com novo valor quando faixa muda', async () => {
@@ -352,7 +353,7 @@ describe('TitularPricingService', () => {
       expect(mockAsaasIntegration.updatePaymentForContaReceber).toHaveBeenCalledWith(99, { value: 130 });
     });
 
-    it('bloqueia tarifação progressiva quando dependente adicional não possui data válida', async () => {
+    it('não cobra adicional quando o dependente não possui idade válida', async () => {
       (prismaMock.businessRules.findFirst as jest.Mock).mockResolvedValue({
         valorAdicionalDependenteForaGradeFaixasJson: JSON.stringify([
           { idadeMaxima: 60, valor: 9.9 },
@@ -371,13 +372,13 @@ describe('TitularPricingService', () => {
         ],
       });
 
-      await expect(service.recalcularDependentesDoTitular(1)).rejects.toMatchObject({
-        status: 400,
-        code: 'DEPENDENTE_DATA_NASCIMENTO_INVALIDA',
-      });
+      await expect(service.recalcularDependentesDoTitular(1)).resolves.toBeUndefined();
 
-      expect(prismaMock.dependente.update).not.toHaveBeenCalled();
-      expect(prismaMock.titular.update).not.toHaveBeenCalled();
+      expect(prismaMock.dependente.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ valorAdicionalMensal: 0 }),
+        }),
+      );
     });
 
     it('sem dependentes calcula apenas valor do plano', async () => {

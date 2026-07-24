@@ -168,11 +168,6 @@ export class TitularPricingService {
     return canonicalizeRelationship(args.relacionamento) === 'titular';
   }
 
-  private isCorresponsavelSemAdicional(relacionamento?: string | null): boolean {
-    const parentescoNormalizado = canonicalizeRelationship(relacionamento);
-    return parentescoNormalizado === 'conjuge';
-  }
-
   private calcularAdicionalCorresponsavel(
     titular: {
       nome?: string | null;
@@ -198,10 +193,6 @@ export class TitularPricingService {
         relacionamento: corresponsavel.relacionamento,
       })
     ) {
-      return 0;
-    }
-
-    if (this.isCorresponsavelSemAdicional(corresponsavel.relacionamento)) {
       return 0;
     }
 
@@ -251,25 +242,8 @@ export class TitularPricingService {
       );
       const idadeDependente = this.calcularIdade(dependente.dataNascimento);
 
-      if (
-        foraGradeFamiliar &&
-        !dependente.excluirCobrancaAdicional &&
-        idadeDependente === null
-      ) {
-        const err: any = new Error(
-          `Dependente ${dependente.nome} está sem data de nascimento válida para tarifação progressiva.`,
-        );
-        err.status = 400;
-        err.code = 'DEPENDENTE_DATA_NASCIMENTO_INVALIDA';
-        err.meta = {
-          dependenteId: dependente.id,
-          titularId: titular.id,
-        };
-        throw err;
-      }
-
       const valorAdicionalMensal =
-        foraGradeFamiliar && !dependente.excluirCobrancaAdicional
+        !dependente.excluirCobrancaAdicional && idadeDependente !== null
           ? this.obterValorAdicionalPorFaixaEtaria(idadeDependente as number, matrizTarifacao)
           : 0;
 
