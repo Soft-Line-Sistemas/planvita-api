@@ -2,6 +2,7 @@ const prismaMock = {
   consultor: {
     findMany: jest.fn(),
     findUnique: jest.fn(),
+    findUniqueOrThrow: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
     delete: jest.fn(),
@@ -15,6 +16,7 @@ const prismaMock = {
 const getPrismaForTenantMock = jest.fn();
 const getConfiguredPublicTenantsMock = jest.fn();
 const getTenantLabelMock = jest.fn();
+const ensureConsultorCodeMock = jest.fn();
 
 jest.mock('../utils/prisma', () => ({
   getPrismaForTenant: (...args: unknown[]) => getPrismaForTenantMock(...args),
@@ -24,6 +26,14 @@ jest.mock('../utils/prisma', () => ({
 jest.mock('../utils/tenants', () => ({
   getConfiguredPublicTenants: () => getConfiguredPublicTenantsMock(),
   getTenantLabel: (...args: unknown[]) => getTenantLabelMock(...args),
+}));
+
+jest.mock('../utils/consultor-code', () => ({
+  ensureConsultorCode: (...args: unknown[]) => ensureConsultorCodeMock(...args),
+  normalizeConsultorCode: (value?: string | null) =>
+    String(value ?? '')
+      .trim()
+      .toUpperCase(),
 }));
 
 import { ConsultorService } from './consultor.service';
@@ -36,6 +46,10 @@ describe('ConsultorService', () => {
     getPrismaForTenantMock.mockReturnValue(prismaMock);
     getConfiguredPublicTenantsMock.mockReturnValue([]);
     getTenantLabelMock.mockImplementation((tenantId: string) => tenantId);
+    ensureConsultorCodeMock.mockImplementation(
+      async (_tenantId: string, consultor: { codigo?: string | null }) =>
+        consultor.codigo ?? 'CODE123',
+    );
     service = new ConsultorService('tenant-123');
   });
 
@@ -53,7 +67,10 @@ describe('ConsultorService', () => {
   // ── getAll ──────────────────────────────────────────────────────────────
   describe('getAll', () => {
     it('retorna lista de consultores', async () => {
-      const lista = [{ id: 1, nome: 'Ana' }, { id: 2, nome: 'Bruno' }];
+      const lista = [
+        { id: 1, nome: 'Ana' },
+        { id: 2, nome: 'Bruno' },
+      ];
       prismaMock.consultor.findMany.mockResolvedValue(lista);
       expect(await service.getAll()).toEqual(lista);
     });
@@ -62,28 +79,47 @@ describe('ConsultorService', () => {
   // ── getPublicOptions ─────────────────────────────────────────────────────
   describe('getPublicOptions', () => {
     it('retorna apenas id e nome ordenados por nome', async () => {
-      const options = [{ id: 1, nome: 'Ana' }, { id: 2, nome: 'Bruno' }];
+      const options = [
+        { id: 1, codigo: 'ANA123', nome: 'Ana', whatsapp: null, user: null },
+        { id: 2, codigo: 'BRU123', nome: 'Bruno', whatsapp: null, user: null },
+      ];
       prismaMock.consultor.findMany.mockResolvedValue(options);
 
       const result = await service.getPublicOptions();
 
       expect(prismaMock.consultor.findMany).toHaveBeenCalledWith({
-        select: { id: true, nome: true },
+        select: {
+          id: true,
+          codigo: true,
+          nome: true,
+          whatsapp: true,
+          user: { select: { id: true, nome: true, email: true, avatarUrl: true } },
+        },
         orderBy: { nome: 'asc' },
       });
       expect(result).toEqual([
         {
           id: 1,
+          codigo: 'ANA123',
           nome: 'Ana (tenant-123)',
           nomeCompleto: 'Ana',
+          whatsapp: null,
+          email: null,
+          avatarUrl: null,
+          userId: null,
           tenantId: 'tenant-123',
           tenantLabel: 'tenant-123',
           selectionKey: 'tenant-123:1',
         },
         {
           id: 2,
+          codigo: 'BRU123',
           nome: 'Bruno (tenant-123)',
           nomeCompleto: 'Bruno',
+          whatsapp: null,
+          email: null,
+          avatarUrl: null,
+          userId: null,
           tenantId: 'tenant-123',
           tenantLabel: 'tenant-123',
           selectionKey: 'tenant-123:2',
@@ -109,8 +145,9 @@ describe('ConsultorService', () => {
       };
 
       getConfiguredPublicTenantsMock.mockReturnValue(['tenant-b', 'tenant-a']);
-      getTenantLabelMock.mockImplementation((tenantId: string) =>
-        ({ 'tenant-a': 'Unidade A', 'tenant-b': 'Unidade B' })[tenantId] ?? tenantId,
+      getTenantLabelMock.mockImplementation(
+        (tenantId: string) =>
+          ({ 'tenant-a': 'Unidade A', 'tenant-b': 'Unidade B' })[tenantId] ?? tenantId,
       );
       getPrismaForTenantMock.mockImplementation((tenantId: string) => {
         if (tenantId === 'tenant-a') return prismaTenantA;
@@ -118,37 +155,66 @@ describe('ConsultorService', () => {
         return prismaMock;
       });
 
-      const result = await ConsultorService.getGlobalPublicOptions();
+      const result = await ConsultorService.getGlobalPublicOptions('Ana');
 
       expect(prismaTenantA.consultor.findMany).toHaveBeenCalledWith({
-        select: { id: true, nome: true },
+        where: { nome: { contains: 'Ana' } },
+        select: {
+          id: true,
+          codigo: true,
+          nome: true,
+          whatsapp: true,
+          user: { select: { id: true, nome: true, email: true, avatarUrl: true } },
+        },
         orderBy: { nome: 'asc' },
       });
       expect(prismaTenantB.consultor.findMany).toHaveBeenCalledWith({
-        select: { id: true, nome: true },
+        where: { nome: { contains: 'Ana' } },
+        select: {
+          id: true,
+          codigo: true,
+          nome: true,
+          whatsapp: true,
+          user: { select: { id: true, nome: true, email: true, avatarUrl: true } },
+        },
         orderBy: { nome: 'asc' },
       });
       expect(result).toEqual([
         {
           id: 1,
+          codigo: 'CODE123',
           nome: 'Ana Maria (Unidade A)',
           nomeCompleto: 'Ana Maria',
+          whatsapp: null,
+          email: null,
+          avatarUrl: null,
+          userId: null,
           tenantId: 'tenant-a',
           tenantLabel: 'Unidade A',
           selectionKey: 'tenant-a:1',
         },
         {
           id: 2,
+          codigo: 'CODE123',
           nome: 'Bruno Silva (Unidade A)',
           nomeCompleto: 'Bruno Silva',
+          whatsapp: null,
+          email: null,
+          avatarUrl: null,
+          userId: null,
           tenantId: 'tenant-a',
           tenantLabel: 'Unidade A',
           selectionKey: 'tenant-a:2',
         },
         {
           id: 3,
+          codigo: 'CODE123',
           nome: 'Carlos Souza (Unidade B)',
           nomeCompleto: 'Carlos Souza',
+          whatsapp: null,
+          email: null,
+          avatarUrl: null,
+          userId: null,
           tenantId: 'tenant-b',
           tenantLabel: 'Unidade B',
           selectionKey: 'tenant-b:3',
@@ -176,6 +242,7 @@ describe('ConsultorService', () => {
     it('cria consultor com os dados fornecidos', async () => {
       const data = { nome: 'Carlos', userId: 5 } as any;
       prismaMock.consultor.create.mockResolvedValue({ id: 3, ...data });
+      prismaMock.consultor.findUniqueOrThrow.mockResolvedValue({ id: 3, ...data });
 
       const result = await service.create(data);
       expect(prismaMock.consultor.create).toHaveBeenCalledWith({ data });
@@ -187,8 +254,12 @@ describe('ConsultorService', () => {
   describe('update', () => {
     it('atualiza consultor pelo id', async () => {
       prismaMock.consultor.update.mockResolvedValue({ id: 1, nome: 'Atualizado' });
+      prismaMock.consultor.findUniqueOrThrow.mockResolvedValue({ id: 1, nome: 'Atualizado' });
       const result = await service.update(1, { nome: 'Atualizado' } as any);
-      expect(prismaMock.consultor.update).toHaveBeenCalledWith({ where: { id: 1 }, data: { nome: 'Atualizado' } });
+      expect(prismaMock.consultor.update).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: { nome: 'Atualizado' },
+      });
       expect(result).toEqual(expect.objectContaining({ id: 1 }));
     });
   });
@@ -236,7 +307,10 @@ describe('ConsultorService', () => {
 
     it('usa 0 quando _sum.valor é null', async () => {
       prismaMock.consultor.findUnique.mockResolvedValue({
-        id: 1, nome: 'Ana', userId: 5, user: { id: 5, nome: 'Ana', email: 'ana@test.com' },
+        id: 1,
+        nome: 'Ana',
+        userId: 5,
+        user: { id: 5, nome: 'Ana', email: 'ana@test.com' },
       });
       prismaMock.comissao.aggregate
         .mockResolvedValueOnce({ _sum: { valor: null } })

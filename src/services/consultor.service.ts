@@ -50,12 +50,9 @@ function buildSelectionKey(tenantId: string, consultorId: number) {
 }
 
 function formatConsultorDisplayName(nome: string, tenantId: string) {
-  const partes = String(nome)
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const partes = String(nome).trim().split(/\s+/).filter(Boolean);
   const resumido =
-    partes.length <= 1 ? partes[0] ?? '' : `${partes[0]} ${partes[partes.length - 1]}`;
+    partes.length <= 1 ? (partes[0] ?? '') : `${partes[0]} ${partes[partes.length - 1]}`;
   return `${resumido} (${getTenantLabel(tenantId)})`.trim();
 }
 
@@ -72,7 +69,9 @@ export class ConsultorService {
 
   async getAll(): Promise<ConsultorType[]> {
     const consultores = await this.prisma.consultor.findMany();
-    await Promise.all(consultores.map((consultor) => ensureConsultorCode(this.tenantId, consultor)));
+    await Promise.all(
+      consultores.map((consultor) => ensureConsultorCode(this.tenantId, consultor)),
+    );
     return this.prisma.consultor.findMany();
   }
 
@@ -97,27 +96,37 @@ export class ConsultorService {
       },
     })) as ConsultorPublicOptionType[];
 
-    return Promise.all(options.map(async (option) => ({
-      id: option.id,
-      codigo: await ensureConsultorCode(this.tenantId, option),
-      nome: formatConsultorDisplayName(option.nome, this.tenantId),
-      nomeCompleto: option.nome,
-      whatsapp: option.whatsapp ?? null,
-      email: option.user?.email ?? null,
-      avatarUrl: option.user?.avatarUrl ?? null,
-      userId: option.user?.id ?? null,
-      tenantId: this.tenantId,
-      tenantLabel: getTenantLabel(this.tenantId),
-      selectionKey: buildSelectionKey(this.tenantId, option.id),
-    })));
+    return Promise.all(
+      options.map(async (option) => ({
+        id: option.id,
+        codigo: await ensureConsultorCode(this.tenantId, option),
+        nome: formatConsultorDisplayName(option.nome, this.tenantId),
+        nomeCompleto: option.nome,
+        whatsapp: option.whatsapp ?? null,
+        email: option.user?.email ?? null,
+        avatarUrl: option.user?.avatarUrl ?? null,
+        userId: option.user?.id ?? null,
+        tenantId: this.tenantId,
+        tenantLabel: getTenantLabel(this.tenantId),
+        selectionKey: buildSelectionKey(this.tenantId, option.id),
+      })),
+    );
   }
 
-  static async getGlobalPublicOptions(): Promise<ConsultorPublicOption[]> {
+  static async getGlobalPublicOptions(nome = ''): Promise<ConsultorPublicOption[]> {
     const tenants = getConfiguredPublicTenants();
+    const nomeBusca = String(nome).trim();
     const resultados = await Promise.all(
       tenants.map(async (tenantId) => {
         const prisma = getPrismaForTenant(tenantId);
         const consultores = (await prisma.consultor.findMany({
+          where: nomeBusca
+            ? {
+                nome: {
+                  contains: nomeBusca,
+                },
+              }
+            : undefined,
           select: {
             id: true,
             codigo: true,
@@ -137,19 +146,21 @@ export class ConsultorService {
           },
         })) as ConsultorPublicOptionType[];
 
-        return Promise.all(consultores.map(async (consultor) => ({
-          id: consultor.id,
-          codigo: await ensureConsultorCode(tenantId, consultor),
-          nome: formatConsultorDisplayName(consultor.nome, tenantId),
-          nomeCompleto: consultor.nome,
-          whatsapp: consultor.whatsapp ?? null,
-          email: consultor.user?.email ?? null,
-          avatarUrl: consultor.user?.avatarUrl ?? null,
-          userId: consultor.user?.id ?? null,
-          tenantId,
-          tenantLabel: getTenantLabel(tenantId),
-          selectionKey: buildSelectionKey(tenantId, consultor.id),
-        })));
+        return Promise.all(
+          consultores.map(async (consultor) => ({
+            id: consultor.id,
+            codigo: await ensureConsultorCode(tenantId, consultor),
+            nome: formatConsultorDisplayName(consultor.nome, tenantId),
+            nomeCompleto: consultor.nome,
+            whatsapp: consultor.whatsapp ?? null,
+            email: consultor.user?.email ?? null,
+            avatarUrl: consultor.user?.avatarUrl ?? null,
+            userId: consultor.user?.id ?? null,
+            tenantId,
+            tenantLabel: getTenantLabel(tenantId),
+            selectionKey: buildSelectionKey(tenantId, consultor.id),
+          })),
+        );
       }),
     );
 
@@ -204,7 +215,9 @@ export class ConsultorService {
   }
 
   static async resolvePublicByLegacyId(id: number, tenantId?: string | null) {
-    const normalizedTenant = String(tenantId ?? '').trim().toLowerCase();
+    const normalizedTenant = String(tenantId ?? '')
+      .trim()
+      .toLowerCase();
     if (!Number.isInteger(id) || id <= 0 || !normalizedTenant) return null;
 
     const prisma = getPrismaForTenant(normalizedTenant);
