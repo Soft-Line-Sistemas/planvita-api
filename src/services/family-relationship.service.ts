@@ -16,6 +16,30 @@ const normalizeText = (value?: string | null): string => {
 let cachedMap: RelationshipMap | null = null;
 let cachedReverse: Map<string, string> | null = null;
 
+// Vínculos que nunca geram adicional de parentesco, conforme a política
+// comercial. A grade do plano continua sendo usada para os demais vínculos.
+const RELATIONSHIPS_WITHOUT_ADDITIONAL = new Set([
+  'filho',
+  'neto',
+  'pai',
+  'mae',
+  'irmao',
+  'avo',
+  'tio',
+  'primeiro_grau',
+  'segundo_grau',
+]);
+
+const RELATIONSHIP_ALIASES_WITHOUT_ADDITIONAL = new Set([
+  'filho', 'filha', 'filho a', 'enteado', 'enteada', 'enteado a',
+  'neto', 'neta', 'neto a',
+  'pai', 'mae', 'padrasto', 'madrasta', 'sogro', 'sogra', 'sogro a',
+  'irmao', 'irma', 'irmao a',
+  'avo', 'avos', 'avo avo',
+  'tio', 'tia', 'tio a',
+  '1 grau', '1o grau', '2 grau', '2o grau',
+]);
+
 const possiblePaths = (): string[] => {
   return [
     path.resolve(__dirname, '../config/family-relationship-map.json'),
@@ -86,6 +110,15 @@ export const isRelationshipInGrade = (
   planBeneficiaries: Array<string | null | undefined>,
 ): boolean => {
   const normalizedDependent = canonicalizeRelationship(dependentRelationship);
+  const normalizedRawDependent = normalizeText(dependentRelationship);
+
+  if (
+    RELATIONSHIPS_WITHOUT_ADDITIONAL.has(normalizedDependent) ||
+    RELATIONSHIP_ALIASES_WITHOUT_ADDITIONAL.has(normalizedRawDependent)
+  ) {
+    return true;
+  }
+
   const rawBeneficiaries = planBeneficiaries
     .map((value) => String(value ?? '').trim())
     .filter((value) => value.length > 0);

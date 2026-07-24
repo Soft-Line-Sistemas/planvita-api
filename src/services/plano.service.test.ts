@@ -146,7 +146,7 @@ describe('PlanoService.sugerirPlano', () => {
     expect(ignorando).toMatchObject([{ id: 1, nome: 'Bosque Social' }, { id: 2, nome: 'Bosque Premium' }]);
   });
 
-  it('retorna Social e Essencial juntos quando todos os participantes permitidos têm até 55 anos', async () => {
+  it('mantém Social e Essencial para titular e corresponsável até 55 anos', async () => {
     mockPrisma.plano.findMany.mockResolvedValue([
       makePlano({ id: 1, nome: 'Bosque Social', valorMensal: 49.99, idadeMaxima: 55 }),
       makePlano({ id: 2, nome: 'Bosque Essencial', valorMensal: 69.9, idadeMaxima: 60 }),
@@ -154,11 +154,24 @@ describe('PlanoService.sugerirPlano', () => {
     ]);
 
     const resultado = await service.sugerirPlano([
-      { idade: 40, parentesco: 'Titular' },
-      { idade: 38, parentesco: 'Cônjuge' },
-      { idade: 12, parentesco: 'Filho' },
+      { idade: 40, parentesco: 'Titular', papel: 'titular' },
+      { idade: 38, parentesco: 'Outro', papel: 'corresponsavel' },
     ], false);
     expect(resultado).toMatchObject({ id: 1, nome: 'Bosque Social' });
+  });
+
+  it('oculta Social quando há dependente, mesmo dentro da faixa etária', async () => {
+    mockPrisma.plano.findMany.mockResolvedValue([
+      makePlano({ id: 1, nome: 'Bosque Social', valorMensal: 49.99, idadeMaxima: 55 }),
+      makePlano({ id: 2, nome: 'Bosque Essencial', valorMensal: 69.9, idadeMaxima: 60 }),
+    ]);
+
+    const resultado = await service.sugerirPlano([
+      { idade: 35, parentesco: 'Titular', papel: 'titular' },
+      { idade: 10, parentesco: '1° Grau', papel: 'dependente' },
+    ], false);
+
+    expect(resultado).toMatchObject({ id: 2, nome: 'Bosque Essencial' });
   });
 
   it('oculta Social quando existe participante acima de 55 anos', async () => {
@@ -241,16 +254,17 @@ describe('PlanoService.sugerirPlano', () => {
     expect(Array.isArray(resultado) ? resultado : [resultado]).toMatchObject([expect.objectContaining({ id: 1 })]);
   });
 
-  it('participante com parentesco "Neto" é elegível Social quando idade ≤ 55', async () => {
+  it('dependente Neto é direcionado ao Essencial mesmo quando idade ≤ 55', async () => {
     mockPrisma.plano.findMany.mockResolvedValue([
       makePlano({ id: 1, nome: 'Bosque Social', valorMensal: 50, idadeMaxima: 55 }),
+      makePlano({ id: 2, nome: 'Bosque Essencial', valorMensal: 70, idadeMaxima: 60 }),
     ]);
 
     const resultado = await service.sugerirPlano([
-      { idade: 35, parentesco: 'Titular' },
-      { idade: 10, parentesco: 'Neto' },
+      { idade: 35, parentesco: 'Titular', papel: 'titular' },
+      { idade: 10, parentesco: 'Neto', papel: 'dependente' },
     ], false);
-    expect(resultado).toMatchObject({ id: 1, nome: 'Bosque Social' });
+    expect(resultado).toMatchObject({ id: 2, nome: 'Bosque Essencial' });
   });
 
   it('participante com parentesco "Sogra" não é elegível Social mas cai no fallback por faixa de idade', async () => {
@@ -260,8 +274,8 @@ describe('PlanoService.sugerirPlano', () => {
     ]);
 
     const resultado = await service.sugerirPlano([
-      { idade: 35, parentesco: 'Titular' },
-      { idade: 50, parentesco: 'Sogra' },
+      { idade: 35, parentesco: 'Titular', papel: 'titular' },
+      { idade: 50, parentesco: 'Sogra', papel: 'dependente' },
     ], false);
     // Sogra não é elegível para Social por composição, então seleção normal por faixa de idade.
     // Com maiorIdade=50, a primeira faixa compatível é 55 (Social) via fallback.
@@ -277,8 +291,8 @@ describe('PlanoService.sugerirPlano', () => {
     ]);
 
     const resultado = await service.listarPlanosCompativeis([
-      { idade: 35, parentesco: 'Titular' },
-      { idade: 10, parentesco: 'Irmão(ã)' },
+      { idade: 35, parentesco: 'Titular', papel: 'titular' },
+      { idade: 10, parentesco: 'Irmão(ã)', papel: 'dependente' },
     ]);
 
     expect(resultado).toMatchObject([{ id: 2, nome: 'Bosque Essencial' }]);

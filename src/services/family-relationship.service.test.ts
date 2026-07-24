@@ -129,6 +129,17 @@ describe('family-relationship.service', () => {
       expect(isRelationshipInGrade('filho', [])).toBe(true);
     });
 
+    it('mantém parentescos isentos na grade mesmo quando ausentes no plano', () => {
+      expect(isRelationshipInGrade('Filho(a)', ['Cônjuge'])).toBe(true);
+      expect(isRelationshipInGrade('Neto(a)', ['Cônjuge'])).toBe(true);
+      expect(isRelationshipInGrade('Pai', ['Cônjuge'])).toBe(true);
+      expect(isRelationshipInGrade('Sogro(a)', ['Cônjuge'])).toBe(true);
+      expect(isRelationshipInGrade('Irmão(ã)', ['Cônjuge'])).toBe(true);
+      expect(isRelationshipInGrade('Avô/Avó', ['Cônjuge'])).toBe(true);
+      expect(isRelationshipInGrade('Tio(a)', ['Cônjuge'])).toBe(true);
+      expect(isRelationshipInGrade('2° Grau', ['Cônjuge'])).toBe(true);
+    });
+
     it('retorna true quando beneficiário está na lista (correspondência direta)', () => {
       // Sem mapa externo, canonicaliza para a string normalizada
       // Ambos são normalizados igualmente, então devem corresponder

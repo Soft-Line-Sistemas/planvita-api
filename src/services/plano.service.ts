@@ -13,6 +13,7 @@ export type ParticipanteInput = {
   idade?: number | null;
   nome?: string | null;
   parentesco?: string | null;
+  papel?: 'titular' | 'corresponsavel' | 'dependente';
 };
 
 export class PlanoService {
@@ -465,17 +466,13 @@ export class PlanoService {
   private isElegivelSocialEssencial(participantes: ParticipanteInput[]): boolean {
     if (!participantes.length) return false;
 
-    const parentescosPermitidos = new Set(['titular', 'conjuge', 'filho', 'neto']);
     const idades = this.normalizarIdades(participantes);
 
     if (idades.some((idade) => !Number.isFinite(idade) || idade > 55)) {
       return false;
     }
 
-    return participantes.every((participante) => {
-      const parentesco = canonicalizeRelationship(participante.parentesco);
-      return parentescosPermitidos.has(parentesco);
-    });
+    return participantes.every((participante) => participante.papel !== 'dependente');
   }
 
   private selecionarPlanosCompativeisPorMaiorIdade<T extends { idadeMaxima: number | null; nome?: string | null }>(
