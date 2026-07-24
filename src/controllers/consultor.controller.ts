@@ -32,24 +32,38 @@ export class ConsultorController {
       if (codigo) {
         const resolved = await ConsultorService.resolvePublicByCode(codigo);
         if (!resolved) {
-          return res.status(404).json({ message: 'Consultor não encontrado para o código informado.' });
+          return res
+            .status(404)
+            .json({ message: 'Consultor não encontrado para o código informado.' });
         }
         return res.json(resolved);
       }
 
       const legacyId = Number(req.query?.consultorId);
-      const legacyTenant = String(req.query?.consultorTenant ?? '').trim().toLowerCase();
+      const legacyTenant = String(req.query?.consultorTenant ?? '')
+        .trim()
+        .toLowerCase();
       if (Number.isInteger(legacyId) && legacyId > 0 && legacyTenant) {
         const resolved = await ConsultorService.resolvePublicByLegacyId(legacyId, legacyTenant);
         if (!resolved) {
-          return res.status(404).json({ message: 'Consultor não encontrado para o link informado.' });
+          return res
+            .status(404)
+            .json({ message: 'Consultor não encontrado para o link informado.' });
         }
         return res.json(resolved);
       }
 
-      const scope = String(req.query?.scope ?? '').trim().toLowerCase();
+      const scope = String(req.query?.scope ?? '')
+        .trim()
+        .toLowerCase();
       if (scope === 'global') {
-        const result = await ConsultorService.getGlobalPublicOptions();
+        const nome = String(req.query?.nome ?? '').trim();
+        if (nome && nome.length < 3) {
+          return res
+            .status(400)
+            .json({ message: 'Informe ao menos 3 caracteres para buscar pelo nome.' });
+        }
+        const result = await ConsultorService.getGlobalPublicOptions(nome);
         return res.json(result);
       }
 
@@ -86,7 +100,10 @@ export class ConsultorController {
         this.logger.error('Failed to download public consultor avatar', error);
       }
       return res.status(status).json({
-        message: status === 404 ? 'Foto do consultor não encontrada.' : 'Não foi possível carregar a foto do consultor.',
+        message:
+          status === 404
+            ? 'Foto do consultor não encontrada.'
+            : 'Não foi possível carregar a foto do consultor.',
       });
     }
   }
