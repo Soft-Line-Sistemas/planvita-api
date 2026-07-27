@@ -125,8 +125,11 @@ describe('family-relationship.service', () => {
       isRelationshipInGrade = mod.isRelationshipInGrade;
     });
 
-    it('retorna true quando lista de beneficiários está vazia (plano aceita todos)', () => {
+    it('mantém familiares na grade e Outro fora dela mesmo quando não há beneficiários no plano', () => {
       expect(isRelationshipInGrade('filho', [])).toBe(true);
+      expect(isRelationshipInGrade('Cônjuge', [])).toBe(true);
+      expect(isRelationshipInGrade('Companheiro(a)', [])).toBe(true);
+      expect(isRelationshipInGrade('Outro', [])).toBe(false);
     });
 
     it('mantém parentescos isentos na grade mesmo quando ausentes no plano', () => {
