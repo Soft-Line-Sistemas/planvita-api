@@ -107,7 +107,7 @@ describe('TitularPricingService', () => {
           plano: { valorMensal: 100 },
           servicosAdicionaisJson: null,
           dependentes: [
-            { valorAdicionalMensal: 9.9 },
+            { valorAdicionalMensal: 0 },
             { valorAdicionalMensal: 19.9 },
             { valorAdicionalMensal: 49 },
             { valorAdicionalMensal: 9.9 },
@@ -131,12 +131,12 @@ describe('TitularPricingService', () => {
       }));
       expect(prismaMock.dependente.update).toHaveBeenNthCalledWith(4, expect.objectContaining({
         where: { id: 14 },
-        data: expect.objectContaining({ foraGradeFamiliar: false, valorAdicionalMensal: 9.9 }),
+        data: expect.objectContaining({ foraGradeFamiliar: false, valorAdicionalMensal: 0 }),
       }));
 
       expect(prismaMock.titular.update).toHaveBeenCalledWith({
         where: { id: 1 },
-        data: { valorTotalContrato: 188.7 },
+        data: { valorTotalContrato: 178.8 },
       });
     });
 
@@ -293,7 +293,7 @@ describe('TitularPricingService', () => {
       );
     });
 
-    it('plano sem beneficiários definidos ainda aplica adicional por idade', async () => {
+    it('cobra adicional de fora da grade para Outro mesmo sem beneficiários definidos no plano', async () => {
       (prismaMock.businessRules.findFirst as jest.Mock).mockResolvedValue({
         valorAdicionalDependenteForaGradeFaixasJson: JSON.stringify([{ idadeMaxima: null, valor: 49 }]),
         valorAdicionalDependenteForaGrade: 14.9,
@@ -317,7 +317,7 @@ describe('TitularPricingService', () => {
       await service.recalcularDependentesDoTitular(6);
 
       expect(prismaMock.dependente.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ foraGradeFamiliar: false, valorAdicionalMensal: 49 }) }),
+        expect.objectContaining({ data: expect.objectContaining({ foraGradeFamiliar: true, valorAdicionalMensal: 49 }) }),
       );
       expect(prismaMock.titular.update).toHaveBeenCalledWith({ where: { id: 6 }, data: { valorTotalContrato: 149 } });
     });

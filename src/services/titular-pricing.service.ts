@@ -14,7 +14,7 @@ const MATRIZ_PROGRESSIVA_PADRAO: FaixaTarifacaoDependente[] = [
   { idadeMaxima: 60, valor: 9.9 },
   { idadeMaxima: 70, valor: 19.9 },
   { idadeMaxima: 80, valor: 29.9 },
-  { idadeMaxima: null, valor: 49 },
+  { idadeMaxima: null, valor: 49.9 },
 ];
 
 export class TitularPricingService {
@@ -243,7 +243,9 @@ export class TitularPricingService {
       const idadeDependente = this.calcularIdade(dependente.dataNascimento);
 
       const valorAdicionalMensal =
-        !dependente.excluirCobrancaAdicional && idadeDependente !== null
+        foraGradeFamiliar &&
+        !dependente.excluirCobrancaAdicional &&
+        idadeDependente !== null
           ? this.obterValorAdicionalPorFaixaEtaria(idadeDependente as number, matrizTarifacao)
           : 0;
 

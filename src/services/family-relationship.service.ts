@@ -19,6 +19,7 @@ let cachedReverse: Map<string, string> | null = null;
 // Vínculos que nunca geram adicional de parentesco, conforme a política
 // comercial. A grade do plano continua sendo usada para os demais vínculos.
 const RELATIONSHIPS_WITHOUT_ADDITIONAL = new Set([
+  'conjuge',
   'filho',
   'neto',
   'pai',
@@ -31,6 +32,7 @@ const RELATIONSHIPS_WITHOUT_ADDITIONAL = new Set([
 ]);
 
 const RELATIONSHIP_ALIASES_WITHOUT_ADDITIONAL = new Set([
+  'conjuge', 'companheiro', 'companheira', 'companheiro a',
   'filho', 'filha', 'filho a', 'enteado', 'enteada', 'enteado a',
   'neto', 'neta', 'neto a',
   'pai', 'mae', 'padrasto', 'madrasta', 'sogro', 'sogra', 'sogro a',
@@ -111,6 +113,12 @@ export const isRelationshipInGrade = (
 ): boolean => {
   const normalizedDependent = canonicalizeRelationship(dependentRelationship);
   const normalizedRawDependent = normalizeText(dependentRelationship);
+
+  // "Outro" representa uma pessoa sem vínculo familiar e, por regra comercial,
+  // sempre recebe o adicional de fora da grade.
+  if (normalizedDependent === 'outro' || normalizedRawDependent === 'outro') {
+    return false;
+  }
 
   if (
     RELATIONSHIPS_WITHOUT_ADDITIONAL.has(normalizedDependent) ||

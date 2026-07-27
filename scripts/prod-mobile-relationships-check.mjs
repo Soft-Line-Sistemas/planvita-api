@@ -4,7 +4,7 @@ const URL = "https://app.campodobosque.com.br/cliente/cadastro";
 
 const BASE_TITULAR = {
   nome: "Cliente Teste Producao",
-  cpf: "12345678901",
+  cpf: "52998224725",
   dataNascimento: "1991-07-16",
   sexo: "Masculino",
   naturalidade: "Salvador",
@@ -16,9 +16,9 @@ const BASE_TITULAR = {
 
 const BASE_RESPONSAVEL = {
   nome: "Responsavel Teste",
-  cpf: "98765432100",
+  cpf: "11144477735",
   dataNascimento: "1985-01-01",
-  parentesco: "Outro",
+  parentesco: "Cônjuge",
   sexo: "Feminino",
   naturalidade: "Salvador",
   situacaoConjugal: "Casado(a)",
@@ -55,11 +55,7 @@ const ALL_RELATIONSHIPS = [
   "Outro",
 ];
 
-const DIRECT_RELATIONSHIPS = new Set(
-  ALL_RELATIONSHIPS.filter((value) => value !== "Outro"),
-);
-
-const scenarios = [
+const RELATIONSHIP_SCENARIOS = [
   ...ALL_RELATIONSHIPS.map((relationship) => ({
     label: `${relationship} - 25 anos`,
     relationship,
@@ -87,12 +83,27 @@ const scenarios = [
   },
 ];
 
+const PLAN_SUGGESTION_SCENARIOS = [
+  { label: "Titular 35 anos, sem dependentes" },
+  { label: "Titular 35 anos, filho de 10 anos", relationship: "Filho(a)", birthDate: "2016-07-16" },
+  { label: "Titular 35 anos, irmão de 10 anos", relationship: "Irmão(ã)", birthDate: "2016-07-16" },
+  { label: "Titular 35 anos, outro de 25 anos", relationship: "Outro", birthDate: "2001-07-16" },
+  { label: "Titular 35 anos, outro de 60 anos", relationship: "Outro", birthDate: "1966-07-16" },
+  { label: "Titular 35 anos, outro de 61 anos", relationship: "Outro", birthDate: "1965-07-16" },
+  { label: "Titular 35 anos, outro de 81 anos", relationship: "Outro", birthDate: "1945-07-16" },
+  { label: "Titular 56 anos, sem dependentes", titularBirthDate: "1970-07-16" },
+];
+
+const scenarios =
+  process.env.TEST_MODE === "plan_suggestions"
+    ? PLAN_SUGGESTION_SCENARIOS
+    : RELATIONSHIP_SCENARIOS;
+
 function expectedAdditional(relationship, age) {
-  if (DIRECT_RELATIONSHIPS.has(relationship)) return "R$ 0,00";
   if (age <= 60) return "R$ 9,90";
   if (age <= 70) return "R$ 19,90";
   if (age <= 80) return "R$ 29,90";
-  return "R$ 49,00";
+  return "R$ 49,90";
 }
 
 function expectedPlanFamily(age, relationship) {
@@ -105,13 +116,13 @@ function expectedPlanFamily(age, relationship) {
   ]);
 
   if (age <= 55 && socialEligible.has(relationship)) {
-    return ["Bosque Social", "Bosque Essencial"];
+    return ["PLANO SOCIAL", "PLANO ESSENCIAL"];
   }
-  if (age <= 60) return ["Bosque Essencial"];
-  if (age <= 70) return ["Bosque Plus"];
-  if (age <= 80) return ["Bosque Família"];
-  if (age <= 85) return ["Bosque Sênior"];
-  return ["Bosque Premium"];
+  if (age <= 60) return ["PLANO ESSENCIAL"];
+  if (age <= 70) return ["PLANO PLUS"];
+  if (age <= 80) return ["PLANO FAMÍLIA"];
+  if (age <= 85) return ["PLANO SÊNIOR"];
+  return ["PLANO PREMIUM"];
 }
 
 async function visibleHandles(page, selector) {
@@ -228,7 +239,28 @@ async function selectVisible(page, value, index = 0) {
   if (!handle) {
     throw new Error(`Select index=${index} não encontrado`);
   }
-  await handle.select(value);
+  const selected = await handle.select(value);
+  if (selected.length > 0) return;
+
+  const optionValue = await handle.evaluate((el, label) => {
+    const normalize = (value) =>
+      String(value ?? "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "")
+        .trim();
+    const target = normalize(label);
+    const option = Array.from(el.options).find(
+      (item) =>
+        normalize(item.value) === target || normalize(item.textContent) === target,
+    );
+    return option?.value ?? null;
+  }, value);
+  if (!optionValue) {
+    throw new Error(`Opção "${value}" não encontrada no select ${index}`);
+  }
+  await handle.select(optionValue);
 }
 
 async function clickButtonByText(page, expectedText) {
@@ -271,18 +303,39 @@ async function waitForAnyText(page, texts) {
   );
 }
 
-async function fillTitular(page, email) {
-  await fillVisibleByPlaceholder(page, "nome completo", BASE_TITULAR.nome);
-  await fillVisibleByPlaceholder(page, "000.000.000-00", BASE_TITULAR.cpf, 0);
-  await setVisibleDateInput(page, BASE_TITULAR.dataNascimento, 0);
-  await selectVisible(page, BASE_TITULAR.sexo, 0);
-  await fillVisibleByPlaceholder(page, "cidade onde nasceu", BASE_TITULAR.naturalidade);
-  await selectVisible(page, BASE_TITULAR.situacaoConjugal, 1);
-  await fillVisibleByPlaceholder(page, "sua profissão", BASE_TITULAR.profissao, 0);
-  await fillVisibleByPlaceholder(page, "00000-0000", BASE_TITULAR.telefone, 0);
-  await fillVisibleByPlaceholder(page, "00000-0000", BASE_TITULAR.whatsapp, 1);
+async function fillTitular(page, email, titular = BASE_TITULAR) {
+  await fillVisibleByPlaceholder(page, "nome completo", titular.nome);
+  await fillVisibleByPlaceholder(page, "000.000.000-00", titular.cpf, 0);
+  await setVisibleDateInput(page, titular.dataNascimento, 0);
+  await selectVisible(page, titular.sexo, 0);
+  await fillVisibleByPlaceholder(page, "cidade onde nasceu", titular.naturalidade);
+  await selectVisible(page, titular.situacaoConjugal, 1);
+  await fillVisibleByPlaceholder(page, "sua profissão", titular.profissao, 0);
+  await fillVisibleByPlaceholder(page, "00000-0000", titular.telefone, 0);
+  await fillVisibleByPlaceholder(page, "00000-0000", titular.whatsapp, 1);
   await fillVisibleByPlaceholder(page, "email", email, 0);
   await clickButtonByText(page, "Continuar");
+  try {
+    await waitForText(page, "Endereço");
+  } catch {
+    const diagnostic = await page.evaluate(() => ({
+      errors: Array.from(document.querySelectorAll(".error, [role='alert']"))
+        .map((el) => el.textContent?.trim() ?? "")
+        .filter(Boolean),
+      fields: Array.from(document.querySelectorAll("input, select"))
+        .filter((el) => {
+          const style = window.getComputedStyle(el);
+          return style.display !== "none" && style.visibility !== "hidden";
+        })
+        .map((el) => ({
+          placeholder: el.getAttribute("placeholder"),
+          value: el.value,
+          valid: el.checkValidity(),
+          message: el.validationMessage,
+        })),
+    }));
+    throw new Error(`Não avançou da etapa Titular. Diagnóstico: ${JSON.stringify(diagnostic)}`);
+  }
 }
 
 async function fillAddressStep(page) {
@@ -355,7 +408,15 @@ async function addDependent(page, relationship, birthDate, index) {
       `Dependente não confirmado para ${relationship}. Erros: ${dependentState.errorTexts.join(" | ") || "não identificados"}`,
     );
   }
+  const additional = await page.evaluate((label) => {
+    const cards = Array.from(document.querySelectorAll(".cm-cad-dep-resumo-card"));
+    const card = cards.find((item) =>
+      item.textContent?.includes(`Parentesco: ${label}`),
+    );
+    return card?.querySelector(".cm-cad-dep-adicional-pill")?.textContent?.trim() ?? null;
+  }, relationship);
   await clickButtonByText(page, "Continuar");
+  return additional;
 }
 
 async function collectPlanStep(page) {
@@ -478,7 +539,11 @@ async function runScenario(browser, scenario, index) {
     console.error(`[${scenario.label}] abrindo cadastro`);
     await page.goto(URL, { waitUntil: "networkidle2", timeout: 60000 });
     console.error(`[${scenario.label}] preenchendo titular`);
-    await fillTitular(page, `cliente.${emailSuffix}@example.com`);
+    const titular = {
+      ...BASE_TITULAR,
+      dataNascimento: scenario.titularBirthDate ?? BASE_TITULAR.dataNascimento,
+    };
+    await fillTitular(page, `cliente.${emailSuffix}@example.com`, titular);
     console.error(`[${scenario.label}] endereco titular`);
     await waitForVisiblePlaceholder(page, ["00000-000"]);
     await fillAddressStep(page);
@@ -490,15 +555,54 @@ async function runScenario(browser, scenario, index) {
     await fillAddressStep(page);
     console.error(`[${scenario.label}] dependente`);
     await waitForAnyText(page, ["Dependentes", "Adicionar"]);
-    await addDependent(page, scenario.relationship, scenario.birthDate, index);
+    let dependentAdditionalAtStep = null;
+    const age = scenario.birthDate ? parseAge(scenario.birthDate) : null;
+    const expectedAdditionalValue =
+      age === null ? null : expectedAdditional(scenario.relationship, age);
+
+    if (scenario.relationship) {
+      dependentAdditionalAtStep = await addDependent(
+        page,
+        scenario.relationship,
+        scenario.birthDate,
+        index,
+      );
+    } else {
+      await clickButtonByText(page, "Continuar");
+    }
+
+    if (process.env.STOP_AFTER_DEPENDENT === "1") {
+      return {
+        scenario: scenario.label,
+        relationship: scenario.relationship,
+        age,
+        expectedAdditional: expectedAdditionalValue,
+        confirmation: { dependentAdditional: dependentAdditionalAtStep },
+        registerRequests,
+        additionalMatches:
+          dependentAdditionalAtStep === `Adicional: ${expectedAdditionalValue}`,
+      };
+    }
     console.error(`[${scenario.label}] planos`);
     const planStep = await collectPlanStep(page);
+    if (process.env.STOP_AFTER_PLANS === "1") {
+      return {
+        scenario: scenario.label,
+        relationship: scenario.relationship ?? null,
+        age,
+        expectedAdditional: expectedAdditionalValue,
+        dependentAdditional: dependentAdditionalAtStep,
+        planStep,
+        registerRequests,
+        additionalMatches:
+          expectedAdditionalValue === null ||
+          dependentAdditionalAtStep === `Adicional: ${expectedAdditionalValue}`,
+      };
+    }
     console.error(`[${scenario.label}] confirmacao`);
     await goToConfirmation(page);
     const confirmation = await collectConfirmation(page, scenario.relationship);
 
-    const age = parseAge(scenario.birthDate);
-    const expectedAdditionalValue = expectedAdditional(scenario.relationship, age);
     const expectedPlans = expectedPlanFamily(age, scenario.relationship);
     const actualAdditionalValue = confirmation.additionalLine
       ?.replace("Adicionais:", "")
@@ -515,11 +619,14 @@ async function runScenario(browser, scenario, index) {
       actualAdditional: actualAdditionalValue,
       planResponses: planResponses.length,
       registerRequests,
-      additionalMatches: actualAdditionalValue === expectedAdditionalValue,
+      additionalMatches:
+        confirmation.dependentAdditional === `Adicional: ${expectedAdditionalValue}`,
       hasConflictMessage:
         planStep.planNames.length > 0 && planStep.hasNoCompatibleMessage,
       expectedPlanMatched: expectedPlans.some((value) =>
-        planStep.planNames.includes(value),
+        planStep.planNames.some((name) =>
+          name.toLowerCase().includes(value.toLowerCase()),
+        ),
       ),
     };
   } catch (error) {
