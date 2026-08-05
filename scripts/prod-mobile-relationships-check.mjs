@@ -94,12 +94,36 @@ const PLAN_SUGGESTION_SCENARIOS = [
   { label: "Titular 56 anos, sem dependentes", titularBirthDate: "1970-07-16" },
 ];
 
+const COMPREHENSIVE_SCENARIOS = [
+  ...ALL_RELATIONSHIPS.filter((relationship) => relationship !== "Outro").map(
+    (relationship) => ({
+      label: `Titular 35 anos, ${relationship} de 25 anos`,
+      relationship,
+      birthDate: "2001-07-16",
+    }),
+  ),
+  { label: "Titular 35 anos, Outro de 25 anos", relationship: "Outro", birthDate: "2001-07-16" },
+  { label: "Titular 35 anos, Outro de 60 anos", relationship: "Outro", birthDate: "1966-07-16" },
+  { label: "Titular 35 anos, Outro de 61 anos", relationship: "Outro", birthDate: "1965-07-16" },
+  { label: "Titular 35 anos, Outro de 71 anos", relationship: "Outro", birthDate: "1955-07-16" },
+  { label: "Titular 35 anos, Outro de 81 anos", relationship: "Outro", birthDate: "1945-07-16" },
+  { label: "Titular 35 anos, Outro de 86 anos", relationship: "Outro", birthDate: "1940-07-16" },
+  { label: "Titular de 17 anos, sem dependentes", titularBirthDate: "2009-07-16" },
+  { label: "Titular de 35 anos, sem dependentes", titularBirthDate: "1991-07-16" },
+  { label: "Titular de 56 anos, sem dependentes", titularBirthDate: "1970-07-16" },
+  { label: "Titular de 61 anos, sem dependentes", titularBirthDate: "1965-07-16" },
+  { label: "Titular de 66 anos, sem dependentes", titularBirthDate: "1960-07-16" },
+];
+
 const scenarios =
-  process.env.TEST_MODE === "plan_suggestions"
-    ? PLAN_SUGGESTION_SCENARIOS
-    : RELATIONSHIP_SCENARIOS;
+  process.env.TEST_MODE === "comprehensive"
+    ? COMPREHENSIVE_SCENARIOS
+    : process.env.TEST_MODE === "plan_suggestions"
+      ? PLAN_SUGGESTION_SCENARIOS
+      : RELATIONSHIP_SCENARIOS;
 
 function expectedAdditional(relationship, age) {
+  if (relationship !== "Outro") return null;
   if (age <= 60) return "R$ 9,90";
   if (age <= 70) return "R$ 19,90";
   if (age <= 80) return "R$ 29,90";
@@ -537,7 +561,11 @@ async function runScenario(browser, scenario, index) {
 
   try {
     console.error(`[${scenario.label}] abrindo cadastro`);
-    await page.goto(URL, { waitUntil: "networkidle2", timeout: 60000 });
+    await page.setCacheEnabled(false);
+    await page.goto(`${URL}?qa=${emailSuffix}`, {
+      waitUntil: "networkidle2",
+      timeout: 60000,
+    });
     console.error(`[${scenario.label}] preenchendo titular`);
     const titular = {
       ...BASE_TITULAR,
@@ -580,7 +608,9 @@ async function runScenario(browser, scenario, index) {
         confirmation: { dependentAdditional: dependentAdditionalAtStep },
         registerRequests,
         additionalMatches:
-          dependentAdditionalAtStep === `Adicional: ${expectedAdditionalValue}`,
+          expectedAdditionalValue === null
+            ? dependentAdditionalAtStep === null
+            : dependentAdditionalAtStep === `Adicional: ${expectedAdditionalValue}`,
       };
     }
     console.error(`[${scenario.label}] planos`);
@@ -595,8 +625,10 @@ async function runScenario(browser, scenario, index) {
         planStep,
         registerRequests,
         additionalMatches:
-          expectedAdditionalValue === null ||
-          dependentAdditionalAtStep === `Adicional: ${expectedAdditionalValue}`,
+          !scenario.relationship ||
+          (expectedAdditionalValue === null
+            ? dependentAdditionalAtStep === null
+            : dependentAdditionalAtStep === `Adicional: ${expectedAdditionalValue}`),
       };
     }
     console.error(`[${scenario.label}] confirmacao`);
@@ -635,7 +667,7 @@ async function runScenario(browser, scenario, index) {
     return {
       scenario: scenario.label,
       relationship: scenario.relationship,
-      age: parseAge(scenario.birthDate),
+      age: scenario.birthDate ? parseAge(scenario.birthDate) : null,
       error: error instanceof Error ? error.message : String(error),
       screenshotPath,
       planResponses: planResponses.length,
