@@ -396,6 +396,8 @@ model ParceriaVantagem {
   descricaoCompleta   String?
   tipo                String
   valorDesconto       Float?
+  valorMensal         Float?   @default(0)
+  disponivelContratacao Boolean @default(false)
   codigoCupom         String?
   linkResgate         String?
   instrucoesResgate   String?

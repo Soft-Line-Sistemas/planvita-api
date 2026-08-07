@@ -293,12 +293,11 @@ export class TitularPricingService {
       matrizTarifacao,
     );
 
-    const telemedicinaContratada = this.normalizarServicosAdicionais(
+    const valorServicosAdicionais = await this.obterValorServicosAdicionais(
       titular.servicosAdicionaisJson,
-    ).includes('telemedicina');
-    const valorTelemedicina = telemedicinaContratada ? 19.9 : 0;
+    );
     const valorTotalMensal = this.arredondarMoeda(
-      valorPlano + valorAdicionais + valorAdicionalCorresponsavel + valorTelemedicina,
+      valorPlano + valorAdicionais + valorAdicionalCorresponsavel + valorServicosAdicionais,
     );
 
     await this.prisma.titular.update({
@@ -350,5 +349,28 @@ export class TitularPricingService {
     } catch {
       return [];
     }
+  }
+
+  private async obterValorServicosAdicionais(raw?: string | null): Promise<number> {
+    const slugs = this.normalizarServicosAdicionais(raw);
+    if (!slugs.length) return 0;
+
+    const vantagens = await this.prisma.parceriaVantagem.findMany({
+      where: {
+        slug: { in: slugs },
+        status: 'PUBLICADO',
+        disponivelContratacao: true,
+        parceiro: { ativo: true },
+      },
+      select: { valorMensal: true },
+    });
+
+    return this.arredondarMoeda(
+      vantagens.reduce(
+        (total: number, vantagem: { valorMensal: number | null }) =>
+          total + Math.max(0, Number(vantagem.valorMensal ?? 0)),
+        0,
+      ),
+    );
   }
 }

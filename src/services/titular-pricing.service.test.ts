@@ -14,6 +14,9 @@ const prismaMock = {
     findMany: jest.fn(),
     update: jest.fn(),
   },
+  parceriaVantagem: {
+    findMany: jest.fn(),
+  },
 };
 
 jest.mock('../utils/prisma', () => ({
@@ -61,6 +64,7 @@ describe('TitularPricingService', () => {
     jest.clearAllMocks();
     service = new TitularPricingService('tenant-123');
     (prismaMock.contaReceber.findMany as jest.Mock).mockResolvedValue([]);
+    (prismaMock.parceriaVantagem.findMany as jest.Mock).mockResolvedValue([]);
   });
 
   // ── constructor ─────────────────────────────────────────────────────────────
@@ -509,6 +513,9 @@ describe('TitularPricingService', () => {
       );
       (prismaMock.titular.update as jest.Mock).mockResolvedValue({ id: 1, valorTotalContrato: 150 });
       (prismaMock.contaReceber.findMany as jest.Mock).mockResolvedValue([]);
+      (prismaMock.parceriaVantagem.findMany as jest.Mock).mockResolvedValue([
+        { valorMensal: 19.9 },
+      ]);
 
       const result = await service.recalcularFinanceiroTitular(1);
       expect(typeof result).toBe('number');
@@ -534,6 +541,9 @@ describe('TitularPricingService', () => {
       });
       (prismaMock.titular.update as jest.Mock).mockResolvedValue({ id: 1, valorTotalContrato: 119.9 });
       (prismaMock.contaReceber.findMany as jest.Mock).mockResolvedValue([]);
+      (prismaMock.parceriaVantagem.findMany as jest.Mock).mockResolvedValue([
+        { valorMensal: 19.9 },
+      ]);
 
       const result = await service.recalcularFinanceiroTitular(1);
       expect(result).toBeGreaterThan(100);
