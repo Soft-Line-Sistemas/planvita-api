@@ -5,6 +5,9 @@ import { authenticate, authorize } from '../middlewares/auth.middleware';
 const router = Router();
 const controller = new RoleController();
 
+// Lista de cargos usada pelo cadastro/edição de colaboradores. Não permite
+// criar, alterar ou administrar permissões de cargos.
+router.get('/operacional', authenticate, authorize(['user.view']), controller.getAll.bind(controller));
 router.get('/', authenticate, authorize(['role.view']), controller.getAll.bind(controller));
 router.get('/:id', authenticate, authorize(['role.view']), controller.getById.bind(controller));
 router.post('/', authenticate, authorize(['role.create']), controller.create.bind(controller));
