@@ -226,6 +226,8 @@ export class AuthController {
 
   async register(req: TenantRequest, res: Response) {
     try {
+      // O catálogo público pode vir de uma base principal, mas o consultor
+      // define o tenant que receberá o cliente.
       const targetTenant =
         normalizeTenantId(req.body?.targetTenantId) ||
         normalizeTenantId(req.body?.consultorTenantId) ||
