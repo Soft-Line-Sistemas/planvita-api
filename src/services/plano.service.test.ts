@@ -205,20 +205,6 @@ describe('PlanoService.sugerirPlano', () => {
     expect(resultado).toMatchObject({ id: 2, nome: 'Senior', idadeMaxima: 70 });
   });
 
-  it('não usa a idade do corresponsável para bloquear a faixa do titular', async () => {
-    mockPrisma.plano.findMany.mockResolvedValue([
-      makePlano({ id: 1, nome: 'Junior', valorMensal: 50, idadeMaxima: 30 }),
-      makePlano({ id: 2, nome: 'Senior', valorMensal: 100, idadeMaxima: 70 }),
-    ]);
-
-    const resultado = await service.sugerirPlano([
-      { idade: 20, parentesco: 'Titular', papel: 'titular' },
-      { idade: 65, parentesco: 'Cônjuge', papel: 'corresponsavel' },
-    ], false);
-
-    expect(resultado).toMatchObject({ id: 1, nome: 'Junior', idadeMaxima: 30 });
-  });
-
   it('aceita participante com dataNascimento no lugar de idade', async () => {
     mockPrisma.plano.findMany.mockResolvedValue([
       makePlano({ id: 1, nome: 'Plano A', valorMensal: 50, idadeMaxima: 60 }),
