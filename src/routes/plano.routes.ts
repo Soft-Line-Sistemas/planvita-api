@@ -24,7 +24,7 @@ router.post('/sugerir', (req, res) => controller.sugerir(req as any, res));
 router.patch(
   '/titulares/:titularId/plano',
   authenticate,
-  authorize(['plano.update']),
+  authorize(['titular.update']),
   (req, res) => controller.vincularAoTitular(req as any, res),
 );
 
