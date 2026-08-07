@@ -412,11 +412,15 @@ export class PlanoService {
   }
 
   private normalizarIdades(participantes: ParticipanteInput[]): number[] {
-    return participantes.map((p) => {
-      if (p?.idade != null) return Number(p.idade);
-      if (p?.dataNascimento) return this.calcularIdade(p.dataNascimento);
-      return 0; // fallback; personalize caso idade seja obrigatória
-    });
+    // O corresponsável participa da composição familiar, mas não deve elevar
+    // a faixa etária necessária para o plano do titular.
+    return participantes
+      .filter((p) => p?.papel !== 'corresponsavel')
+      .map((p) => {
+        if (p?.idade != null) return Number(p.idade);
+        if (p?.dataNascimento) return this.calcularIdade(p.dataNascimento);
+        return 0; // fallback; personalize caso idade seja obrigatória
+      });
   }
 
   private selecionarPlanoPorMaiorIdade<T extends { idadeMaxima: number | null }>(
