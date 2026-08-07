@@ -3108,12 +3108,11 @@ export class TitularService {
   private normalizarServicosAdicionais(raw: unknown): string[] {
     if (!Array.isArray(raw)) return [];
 
-    const permitidos = new Set(['telemedicina']);
     const normalizados = raw
       .map((item) => String(item ?? '').trim().toLowerCase())
       .filter((item, index, array) => item.length > 0 && array.indexOf(item) === index);
 
-    return normalizados.filter((item) => permitidos.has(item));
+    return normalizados;
   }
 
   private async atualizarStatusContratoConformePagamentoEAssinaturas(titularId: number) {

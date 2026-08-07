@@ -20,6 +20,18 @@ export class RegrasController {
     return res.status(500).json({ error: fallbackMessage });
   }
 
+  /** Regras expostas ao cadastro público, sempre da base central Bosque. */
+  async getPublicBosque(_req: TenantRequest, res: Response) {
+    try {
+      const service = new RegrasService('bosque');
+      const rules = await service.getAll();
+      res.json(rules);
+    } catch (err) {
+      this.logger.error('Failed to get public Bosque business rules', err);
+      res.status(500).json({ error: 'Erro ao buscar regras de negócio' });
+    }
+  }
+
   async getAll(req: TenantRequest, res: Response) {
     try {
       if (!req.tenantId) return res.status(400).json({ error: 'Tenant unknown' });

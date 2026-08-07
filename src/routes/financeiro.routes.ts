@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { FinanceiroController } from '../controllers/financeiro.controller';
-import { authenticate } from '../middlewares/auth.middleware';
+import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { authenticateCliente } from '../middlewares/cliente-auth.middleware';
 
 const router = Router();
 const controller = new FinanceiroController();
 
 router.get('/cliente/contas', authenticateCliente, controller.getContasCliente.bind(controller));
+// Todas as rotas administrativas financeiras exigem a permissão do módulo.
+router.use(authenticate, authorize(['finance.view']));
 router.get('/contas', authenticate, controller.getContas.bind(controller));
 router.post('/contas/pagar', authenticate, controller.createContaPagar.bind(controller));
 router.post('/contas/receber', authenticate, controller.createContaReceber.bind(controller));

@@ -137,6 +137,11 @@ export class ParceriasService {
         payload?.valorDesconto !== undefined && payload?.valorDesconto !== null
           ? Number(payload.valorDesconto)
           : null,
+      valorMensal:
+        payload?.valorMensal !== undefined && payload?.valorMensal !== null
+          ? Math.max(0, Number(payload.valorMensal) || 0)
+          : 0,
+      disponivelContratacao: Boolean(payload?.disponivelContratacao ?? false),
       codigoCupom: payload?.codigoCupom ? String(payload.codigoCupom) : null,
       linkResgate: payload?.linkResgate ? String(payload.linkResgate) : null,
       instrucoesResgate: payload?.instrucoesResgate ? String(payload.instrucoesResgate) : null,
@@ -192,6 +197,8 @@ export class ParceriasService {
       descricaoCurta: v.descricaoCurta,
       tipo: v.tipo,
       valorDesconto: v.valorDesconto,
+      valorMensal: v.valorMensal,
+      disponivelContratacao: v.disponivelContratacao,
       validadeFim: v.validadeFim,
       destaque: v.destaque,
       elegivel,
@@ -317,6 +324,7 @@ export class ParceriasService {
     const list = await this.prisma.parceriaVantagem.findMany({
       where: {
         status: 'PUBLICADO',
+        disponivelContratacao: true,
         parceiro: { ativo: true },
         publico: { in: ['PUBLICO', 'CLIENTES_ATIVOS', 'PLANOS_ESPECIFICOS'] },
         AND: [

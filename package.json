@@ -13,6 +13,7 @@
     "prisma:generate": "prisma generate",
     "sync:status-plano": "ts-node src/scripts/sync-status-plano.ts",
     "sync:dependentes-adicionais": "ts-node src/scripts/recalcular-adicionais-dependentes.ts",
+    "sync:central-management-permissions": "ts-node src/scripts/sync-central-management-permissions.ts",
     "test": "jest",
     "test:python": "bash tests/integration_python/run_tests.sh",
     "lint": "eslint 'src/**/*.{ts,js}'",

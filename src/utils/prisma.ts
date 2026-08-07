@@ -39,7 +39,8 @@ export function getPrismaForTenant(tenantId: string): PrismaClient {
   const envVarName = `DATABASE_URL_${tenantId}`;
   const databaseUrl = process.env[envVarName];
 
-  dbLogger.info(`[TENANT-LOADER] tenantId=${tenantId} | env=${envVarName} | url=${process.env[envVarName]}`);
+  // Nunca registre a URL: ela contém credenciais de acesso ao banco.
+  dbLogger.info(`[TENANT-LOADER] tenantId=${tenantId} | env=${envVarName} | configured=${Boolean(databaseUrl)}`);
 
   if (!databaseUrl) {
     throw new Error(
