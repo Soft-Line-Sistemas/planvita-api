@@ -602,9 +602,17 @@ export class PlanoService {
       ].join('|');
 
     // 1) Filtra por composicao familiar. A faixa etaria e resolvida na selecao final.
-    const elegiveis = ignorarComposicao
+    let elegiveis = ignorarComposicao
       ? planosAtivos
       : planosAtivos.filter((pl) => this.elegivelPorComposicao(pl, participantes));
+
+    // Um vínculo fora da grade familiar não pode deixar o cadastro sem
+    // recomendação. Quando nenhuma grade comportar a composição, a escolha
+    // continua sendo feita pela faixa etária; o participante fora da grade é
+    // precificado como adicional no fluxo de contratação.
+    if (elegiveis.length === 0) {
+      elegiveis = planosAtivos;
+    }
 
     // 2) Deduplica por (nome|valorMensal|idadeMaxima-normalizada),
     //    escolhendo a "melhor" cópia pelo score; empate por id DESC.

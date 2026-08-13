@@ -133,7 +133,7 @@ describe('PlanoService.sugerirPlano', () => {
     ]);
   });
 
-  it('permite ignorar composição no cadastro para sempre sugerir plano', async () => {
+  it('mantém a sugestão quando a composição fica fora da grade', async () => {
     mockPrisma.plano.findMany.mockResolvedValue([
       makePlano({ id: 1, nome: 'Bosque Social', valorMensal: 49.99, idadeMaxima: 55, beneficiarios: [{ id: 1, nome: 'Titular' }, { id: 2, nome: 'Cônjuge' }] }),
       makePlano({ id: 2, nome: 'Bosque Premium', valorMensal: 129.9, idadeMaxima: null, beneficiarios: [{ id: 3, nome: 'Titular' }] }),
@@ -142,8 +142,41 @@ describe('PlanoService.sugerirPlano', () => {
     const semIgnorar = await service.sugerirPlano([{ idade: 35, parentesco: 'Titular' }, { idade: 30, parentesco: 'Outro' }], true, false);
     const ignorando = await service.sugerirPlano([{ idade: 35, parentesco: 'Titular' }, { idade: 30, parentesco: 'Outro' }], true, true);
 
-    expect(semIgnorar).toEqual([]);
+    expect(semIgnorar).toMatchObject([{ id: 1, nome: 'Bosque Social' }, { id: 2, nome: 'Bosque Premium' }]);
     expect(ignorando).toMatchObject([{ id: 1, nome: 'Bosque Social' }, { id: 2, nome: 'Bosque Premium' }]);
+  });
+
+  it('faz fallback pela faixa etária quando nenhuma grade comporta a composição', async () => {
+    mockPrisma.plano.findMany.mockResolvedValue([
+      makePlano({
+        id: 1,
+        nome: 'Bosque Família',
+        valorMensal: 99.9,
+        idadeMaxima: 80,
+        beneficiarios: [{ id: 1, nome: 'Titular' }],
+      }),
+      makePlano({
+        id: 2,
+        nome: 'Bosque Premium',
+        valorMensal: 139.9,
+        idadeMaxima: null,
+        beneficiarios: [{ id: 2, nome: 'Titular' }],
+      }),
+    ]);
+
+    const resultado = await service.sugerirPlano(
+      [
+        { idade: 73, parentesco: 'Titular', papel: 'titular' },
+        { idade: 73, parentesco: 'Outro', papel: 'dependente' },
+      ],
+      false,
+    );
+
+    expect(resultado).toMatchObject({
+      id: 1,
+      nome: 'Bosque Família',
+      idadeMaxima: 80,
+    });
   });
 
   it('mantém Social e Essencial para titular e corresponsável até 55 anos', async () => {
@@ -230,7 +263,7 @@ describe('PlanoService.sugerirPlano', () => {
     expect(compativeis).toHaveLength(2);
   });
 
-  it('retorna array vazio de compativeis quando todos excluídos por composição', async () => {
+  it('faz fallback de compatibilidade pela faixa etária quando a grade não comporta o vínculo', async () => {
     mockPrisma.plano.findMany.mockResolvedValue([
       makePlano({ id: 1, nome: 'Somente Titular', valorMensal: 50, idadeMaxima: 60, beneficiarios: [{ id: 1, nome: 'Titular' }] }),
     ]);
@@ -239,7 +272,9 @@ describe('PlanoService.sugerirPlano', () => {
       { idade: 30, parentesco: 'Titular' },
       { idade: 25, parentesco: 'Primo' },
     ]);
-    expect(compativeis).toEqual([]);
+    expect(compativeis).toMatchObject([
+      { id: 1, nome: 'Somente Titular', idadeMaxima: 60 },
+    ]);
   });
 
   it('plano sem beneficiários aceita qualquer composição familiar', async () => {
